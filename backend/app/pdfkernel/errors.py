@@ -17,10 +17,19 @@ class PDFKernelError(Exception):
 
     code = "PDF_KERNEL_ERROR"
 
-    def __init__(self, message: str, *, cause: BaseException | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        cause: BaseException | None = None,
+        detail: dict | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.cause = cause
+        #: Structured, non-sensitive diagnostics for the envelope. Never carries
+        #: provider response text or credentials.
+        self.detail: dict = detail or {}
 
     def to_dict(self) -> dict:
         """Render as the backend's standard error envelope.
@@ -28,7 +37,7 @@ class PDFKernelError(Exception):
         Present so the HTTP layer can translate a kernel failure directly, without
         every route handler growing its own mapping (docs/API_CONTRACT.md §0).
         """
-        return {"error": {"code": self.code, "message": self.message, "detail": {}}}
+        return {"error": {"code": self.code, "message": self.message, "detail": self.detail}}
 
 
 class PDFEngineUnsupportedError(PDFKernelError):

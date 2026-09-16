@@ -102,23 +102,39 @@ class FakeLLM(BaseHTTPRequestHandler):
     """A minimal OpenAI-compatible endpoint, on loopback only."""
 
     requests: list[dict] = []
-    #: How many 500s a "flaky" endpoint emits before it starts working.
+    #: How many failures a "flaky" endpoint emits before it starts working.
     failures_remaining = 0
 
     def log_message(self, *args):  # silence
         pass
+
+    def _fail(self, status: int, message: str) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"error": {"message": message}}).encode())
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length) or b"{}")
         FakeLLM.requests.append({"path": self.path, "auth": self.headers.get("Authorization"), "body": body})
 
+        # Path-routed failure modes, so one fake serves every scenario.
+        if "always500" in self.path:
+            self._fail(500, "persistent server error")
+            return
+        if "unauthorized" in self.path:
+            self._fail(401, "invalid api key")
+            return
+        if "forbidden" in self.path:
+            self._fail(403, "forbidden")
+            return
+        if "ratelimit" in self.path:
+            self._fail(429, "slow down")
+            return
         if "flaky" in self.path and FakeLLM.failures_remaining > 0:
             FakeLLM.failures_remaining -= 1
-            self.send_response(500)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"error": {"message": "upstream exploded"}}')
+            self._fail(500, "upstream exploded")
             return
 
         payload = {
@@ -167,6 +183,24 @@ def stub_upstream(monkeypatch):
         monkeypatch.setattr(high_level, "translate", func)
 
     return install
+
+
+def _failure_config(base_url: str, route: str) -> ProviderConfig:
+    """A provider config pointing at one of the fake's failure routes."""
+    return provider_config(base_url.replace("/v1", f"/{route}/v1"))
+
+
+@pytest.fixture
+def no_backoff(monkeypatch):
+    """Zero the retry backoff so failure tests are fast and deterministic.
+
+    Required by the criteria (AC-FIX-19): without it every failure case would
+    sleep 1s + 2s, and the suite would measure sleeps rather than behaviour.
+    """
+    from app.pdfkernel.bounded_translator import BoundedOpenAIlikedTranslator
+
+    monkeypatch.setattr(BoundedOpenAIlikedTranslator, "BACKOFF_SECONDS", (0.0, 0.0))
+    return BoundedOpenAIlikedTranslator
 
 
 def sha256(path: Path) -> str:
@@ -593,6 +627,403 @@ def test_failed_overwrite_leaves_the_previous_output_intact(
         )
 
     assert first.mono_path.read_bytes() == original_bytes, "the previous output was damaged"
+
+
+# --- DS-BE-FIX-002: bounded provider failure ---------------------------------
+#
+# The defect these cover: upstream wraps its per-paragraph worker in an
+# unbounded retry, so a failing provider caused the call to never return.
+#
+# Every test here asserts exact PROVIDER CALL COUNTS, not merely that an
+# exception surfaced. A run that produced no output because it never contacted
+# the provider would otherwise look identical to one that failed correctly.
+
+
+def test_persistent_500_fails_fast_with_bounded_retries(
+    fake_llm, no_backoff, tmp_path, source_pdf
+) -> None:
+    """AC-FIX-01 / AC-FIX-02 / AC-FIX-04 / AC-FIX-08.
+
+    Exactly 3 calls: one paragraph exhausts its budget, and every later paragraph
+    aborts without issuing a request.
+    """
+    before = sha256(source_pdf)
+    started = time.perf_counter()
+
+    with pytest.raises(TranslationServiceError) as excinfo:
+        asyncio.run(
+            translate_pdf(source_pdf, tmp_path / "out", "zh",
+                          _failure_config(fake_llm, "always500"), ignore_cache=True, threads=1)
+        )
+
+    elapsed = time.perf_counter() - started
+    assert len(FakeLLM.requests) == 3, f"expected 3 attempts, saw {len(FakeLLM.requests)}"
+    assert elapsed < 5.0, f"took {elapsed:.2f}s to give up"
+    assert excinfo.value.cause is not None
+    assert sha256(source_pdf) == before
+
+
+def test_unauthorized_fails_immediately_without_retry(
+    fake_llm, no_backoff, tmp_path, source_pdf
+) -> None:
+    """AC-FIX-03 / AC-FIX-08 — 401 cannot be fixed by retrying."""
+    with pytest.raises(TranslationServiceError):
+        asyncio.run(
+            translate_pdf(source_pdf, tmp_path / "out", "zh",
+                          _failure_config(fake_llm, "unauthorized"), ignore_cache=True, threads=1)
+        )
+
+    assert len(FakeLLM.requests) == 1, f"401 was retried: {len(FakeLLM.requests)} calls"
+
+
+def test_forbidden_fails_immediately_without_retry(
+    fake_llm, no_backoff, tmp_path, source_pdf
+) -> None:
+    """AC-FIX-03 — 403 is likewise terminal."""
+    with pytest.raises(TranslationServiceError):
+        asyncio.run(
+            translate_pdf(source_pdf, tmp_path / "out", "zh",
+                          _failure_config(fake_llm, "forbidden"), ignore_cache=True, threads=1)
+        )
+
+    assert len(FakeLLM.requests) == 1
+
+
+def test_rate_limit_is_retried_within_budget_then_fails(
+    fake_llm, no_backoff, tmp_path, source_pdf
+) -> None:
+    """AC-FIX-02 — 429 is retryable, but not indefinitely."""
+    with pytest.raises(TranslationServiceError):
+        asyncio.run(
+            translate_pdf(source_pdf, tmp_path / "out", "zh",
+                          _failure_config(fake_llm, "ratelimit"), ignore_cache=True, threads=1)
+        )
+
+    assert len(FakeLLM.requests) == 3
+
+
+def test_flaky_provider_recovers_within_the_retry_budget(
+    fake_llm, no_backoff, tmp_path, source_pdf
+) -> None:
+    """AC-FIX-02 / AC-FIX-11 — retrying must still be *useful*.
+
+    Two failures then success: the translation completes, which is the whole
+    reason retrying exists. Without this, the fix would be indistinguishable
+    from "give up immediately".
+    """
+    FakeLLM.failures_remaining = 2
+
+    result = asyncio.run(
+        translate_pdf(source_pdf, tmp_path / "out", "zh",
+                      _failure_config(fake_llm, "flaky"), ignore_cache=True, threads=1)
+    )
+
+    assert result.mono_path.is_file()
+    assert result.dual_path.is_file()
+    assert result.mono_page_count == result.source_page_count
+
+
+def test_the_sentinel_escapes_an_unbounded_tenacity_retry() -> None:
+    """AC-FIX-05 — the mechanism itself, isolated.
+
+    Upstream's worker is decorated with an unbounded ``@retry``. Anything that is
+    an ``Exception`` is retried forever; a ``BaseException`` is not. This asserts
+    the property the whole fix rests on, so that if tenacity's default predicate
+    ever changes, it fails here rather than as a hang in production.
+    """
+    from tenacity import retry, wait_fixed
+
+    from app.pdfkernel.abort import TranslationAbortSentinel
+
+    class _StopTheLoop(BaseException):
+        """A guard — must be a BaseException or tenacity would retry it too."""
+
+    attempts = {"exception": 0, "sentinel": 0}
+
+    @retry(wait=wait_fixed(0))
+    def raises_exception() -> None:
+        attempts["exception"] += 1
+        if attempts["exception"] > 5:
+            raise _StopTheLoop
+        raise ValueError("ordinary failure")
+
+    @retry(wait=wait_fixed(0))
+    def raises_sentinel() -> None:
+        attempts["sentinel"] += 1
+        raise TranslationAbortSentinel(ValueError("terminal"))
+
+    # An Exception is retried without bound — the defect, reproduced in isolation.
+    with pytest.raises(_StopTheLoop):
+        raises_exception()
+    assert attempts["exception"] == 6, "an Exception should be retried repeatedly"
+
+    # The sentinel is not.
+    with pytest.raises(TranslationAbortSentinel):
+        raises_sentinel()
+    assert attempts["sentinel"] == 1, "the sentinel must not be retried"
+
+    assert issubclass(TranslationAbortSentinel, BaseException)
+    assert not issubclass(TranslationAbortSentinel, Exception)
+
+
+def test_the_sentinel_never_escapes_the_kernel(fake_llm, no_backoff, tmp_path, source_pdf) -> None:
+    """AC-FIX-06 — callers see an ordinary Exception, never the sentinel."""
+    from app.pdfkernel.abort import TranslationAbortSentinel
+
+    with pytest.raises(TranslationServiceError) as excinfo:
+        asyncio.run(
+            translate_pdf(source_pdf, tmp_path / "out", "zh",
+                          _failure_config(fake_llm, "always500"), ignore_cache=True, threads=1)
+        )
+
+    error = excinfo.value
+    assert isinstance(error, PDFKernelError)
+    assert isinstance(error, Exception)
+    assert not isinstance(error, TranslationAbortSentinel)
+    assert error.to_dict()["error"]["code"] == "TRANSLATION_SERVICE_ERROR"
+
+
+def test_a_failed_translation_does_not_terminate_the_process(tmp_path, source_pdf) -> None:
+    """AC-FIX-07 — a failed translation is a task failure, not a server death.
+
+    Run in a subprocess so a process-level exit would actually be observable.
+    """
+    import os
+    import subprocess
+    import sys
+
+    from app.config import BACKEND_DIR
+
+    script = (
+        "import asyncio, tempfile, threading, json\n"
+        "from http.server import BaseHTTPRequestHandler, HTTPServer\n"
+        "from pathlib import Path\n"
+        "from app.llm.models import ProviderConfig\n"
+        "from app.pdfkernel import translate_pdf, TranslationServiceError\n"
+        "from app.pdfkernel.bounded_translator import BoundedOpenAIlikedTranslator\n"
+        "BoundedOpenAIlikedTranslator.BACKOFF_SECONDS = (0.0, 0.0)\n"
+        "class H(BaseHTTPRequestHandler):\n"
+        "    def log_message(self, *a): pass\n"
+        "    def do_POST(self):\n"
+        "        self.rfile.read(int(self.headers.get('Content-Length', 0)))\n"
+        "        self.send_response(500); self.send_header('Content-Type','application/json')\n"
+        "        self.end_headers(); self.wfile.write(b'{}')\n"
+        "s = HTTPServer(('127.0.0.1', 0), H)\n"
+        "threading.Thread(target=s.serve_forever, daemon=True).start()\n"
+        f"src = Path(r'{source_pdf}')\n"
+        "work = Path(tempfile.mkdtemp())\n"
+        "cfg = ProviderConfig(base_url=f'http://127.0.0.1:{s.server_address[1]}/v1',"
+        " api_key='sk-x', model='m', timeout_s=10)\n"
+        "try:\n"
+        "    asyncio.run(translate_pdf(src, work/'out', 'zh', cfg, ignore_cache=True, threads=1))\n"
+        "    print('UNEXPECTED_SUCCESS')\n"
+        "except TranslationServiceError:\n"
+        "    print('CONTROLLED_FAILURE')\n"
+        "s.shutdown()\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=BACKEND_DIR,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
+    )
+
+    assert result.returncode == 0, f"process died: {result.returncode}\n{result.stderr[-500:]}"
+    assert "CONTROLLED_FAILURE" in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("route", ["always500", "unauthorized", "forbidden", "ratelimit"])
+def test_source_is_immutable_across_every_failure_mode(
+    fake_llm, no_backoff, tmp_path, source_pdf, route: str
+) -> None:
+    """AC-FIX-09 — immutability must hold on the failure paths too."""
+    before_hash = sha256(source_pdf)
+    before_mtime = source_pdf.stat().st_mtime
+
+    with pytest.raises(TranslationServiceError):
+        asyncio.run(
+            translate_pdf(source_pdf, tmp_path / "out", "zh",
+                          _failure_config(fake_llm, route), ignore_cache=True, threads=1)
+        )
+
+    assert sha256(source_pdf) == before_hash
+    assert source_pdf.stat().st_mtime == before_mtime
+
+
+def test_provider_failure_leaves_no_partial_output(fake_llm, no_backoff, tmp_path, source_pdf) -> None:
+    """AC-FIX-15 — a half-written PDF would be mistaken for a finished one."""
+    out = tmp_path / "out"
+
+    with pytest.raises(TranslationServiceError):
+        asyncio.run(
+            translate_pdf(source_pdf, out, "zh",
+                          _failure_config(fake_llm, "always500"), ignore_cache=True, threads=1)
+        )
+
+    assert list(out.iterdir()) == [], f"left behind: {[p.name for p in out.iterdir()]}"
+
+
+def test_provider_failure_within_the_latency_ceiling(
+    fake_llm, no_backoff, tmp_path, source_pdf
+) -> None:
+    """AC-FIX-14 — with backoff zeroed, giving up must be quick."""
+    started = time.perf_counter()
+
+    with pytest.raises(TranslationServiceError):
+        asyncio.run(
+            translate_pdf(source_pdf, tmp_path / "out", "zh",
+                          _failure_config(fake_llm, "always500"), ignore_cache=True, threads=1)
+        )
+
+    assert time.perf_counter() - started < 5.0
+
+
+def test_the_failure_message_carries_no_secret(fake_llm, no_backoff, tmp_path, source_pdf) -> None:
+    """AC-FIX-10."""
+    with pytest.raises(TranslationServiceError) as excinfo:
+        asyncio.run(
+            translate_pdf(source_pdf, tmp_path / "out", "zh",
+                          _failure_config(fake_llm, "unauthorized"), ignore_cache=True, threads=1)
+        )
+
+    rendered = f"{excinfo.value} {excinfo.value.message} {excinfo.value.to_dict()}"
+    assert SECRET not in rendered
+
+
+def test_the_failure_names_the_underlying_provider_error(
+    fake_llm, no_backoff, tmp_path, source_pdf
+) -> None:
+    """AC-FIX-10 / AC-FIX-20 — a diagnosable failure, without leaking."""
+    with pytest.raises(TranslationServiceError) as excinfo:
+        asyncio.run(
+            translate_pdf(source_pdf, tmp_path / "out", "zh",
+                          _failure_config(fake_llm, "unauthorized"), ignore_cache=True, threads=1)
+        )
+
+    from app.llm.errors import LLMAuthenticationError
+
+    assert isinstance(excinfo.value.cause, LLMAuthenticationError)
+    assert "LLM_AUTHENTICATION_ERROR" in excinfo.value.message
+
+
+# --- AC-FIX-13 / AC-FIX-17 / AC-FIX-18 / AC-FIX-19: mechanics ----------------
+
+
+def test_upstream_source_is_never_modified() -> None:
+    """AC-FIX-13 — the fix lives entirely in our adapter (ADR-001)."""
+    import pdf2zh.converter
+    import pdf2zh.high_level
+
+    assert pdf2zh.converter.__file__.endswith(".py")
+    # The injected class is a *subclass* defined by us, not a patched upstream file.
+    from app.pdfkernel import adapter
+
+    adapter._ensure_upstream_patched()
+    from app.pdfkernel.bounded_translator import BoundedOpenAIlikedTranslator
+
+    assert pdf2zh.converter.OpenAIlikedTranslator is BoundedOpenAIlikedTranslator
+    assert BoundedOpenAIlikedTranslator.__module__ == "app.pdfkernel.bounded_translator"
+
+
+def test_injection_is_idempotent() -> None:
+    """AC-FIX-17 — repeated calls converge on the same substitution."""
+    from app.pdfkernel import adapter
+    from app.pdfkernel.bounded_translator import BoundedOpenAIlikedTranslator
+
+    adapter._ensure_upstream_patched()
+    adapter._ensure_upstream_patched()
+
+    import pdf2zh.converter
+
+    assert pdf2zh.converter.OpenAIlikedTranslator is BoundedOpenAIlikedTranslator
+
+
+def test_importing_the_kernel_does_not_patch_upstream(tmp_path) -> None:
+    """AC-FIX-17 — substitution is deferred, so importing stays cheap.
+
+    Checked in a subprocess: this process has already translated something, so
+    upstream is patched here by now.
+    """
+    import os
+    import subprocess
+    import sys
+
+    from app.config import BACKEND_DIR
+
+    script = (
+        "import app.pdfkernel, pdf2zh.converter, sys\n"
+        "patched = 'bounded_translator' in getattr(pdf2zh.converter.OpenAIlikedTranslator, '__module__', '')\n"
+        "print('PATCHED' if patched else 'UNPATCHED')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=BACKEND_DIR,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        # Decoding must be pinned: the child writes UTF-8, but this machine's
+        # locale is GBK, which would otherwise fail to decode its output.
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr[-400:]
+    assert "UNPATCHED" in result.stdout, "importing the kernel patched upstream eagerly"
+
+
+def test_backoff_is_configurable_for_fast_tests(no_backoff) -> None:
+    """AC-FIX-19 — the budget is real but the sleeping is not mandatory."""
+    assert no_backoff.BACKOFF_SECONDS == (0.0, 0.0)
+    assert no_backoff.RETRYABLE_ATTEMPTS == 3
+
+
+def test_failure_detail_is_structured_and_non_sensitive(
+    fake_llm, no_backoff, tmp_path, source_pdf
+) -> None:
+    """AC-FIX-20 — enough to diagnose, nothing that could leak."""
+    with pytest.raises(TranslationServiceError) as excinfo:
+        asyncio.run(
+            translate_pdf(source_pdf, tmp_path / "out", "zh",
+                          _failure_config(fake_llm, "always500"), ignore_cache=True, threads=1)
+        )
+
+    detail = excinfo.value.to_dict()["error"]["detail"]
+    assert detail["failed_phase"] == "paragraph_translation"
+    assert detail["provider_error_code"] == "LLM_SERVER_ERROR"
+    assert detail["retryable"] is True
+    assert SECRET not in json.dumps(detail)
+
+
+def test_cancellation_cleans_up_working_files(stub_upstream, tmp_path, source_pdf) -> None:
+    """AC-FIX-16 — abandoning a translation must not leave scratch directories."""
+    out = tmp_path / "out"
+
+    def slow(**kwargs):
+        time.sleep(1.5)
+
+    stub_upstream(slow)
+
+    async def scenario() -> None:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                translate_pdf(source_pdf, out, "zh", provider_config("http://127.0.0.1:1/v1")),
+                timeout=0.3,
+            )
+
+    asyncio.run(scenario())
+
+    leftovers = [p.name for p in out.iterdir() if p.name.startswith(".pdfkernel-")]
+    assert leftovers == [], f"work directory survived cancellation: {leftovers}"
+
+
+def test_upstream_still_reraises_base_exceptions(fake_llm, no_backoff, tmp_path, source_pdf) -> None:
+    """AC-FIX-18 — the contract our sentinel depends on, asserted end to end.
+
+    If upstream ever caught ``BaseException`` without re-raising, the sentinel
+    would be swallowed and this translation would appear to *succeed*. That the
+    persistent-500 case raises at all is the contract holding.
+    """
+    with pytest.raises(TranslationServiceError):
+        asyncio.run(
+            translate_pdf(source_pdf, tmp_path / "out", "zh",
+                          _failure_config(fake_llm, "always500"), ignore_cache=True, threads=1)
+        )
 
 
 # --- AC-07: the event loop stays free ----------------------------------------

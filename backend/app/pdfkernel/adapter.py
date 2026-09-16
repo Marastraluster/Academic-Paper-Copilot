@@ -24,6 +24,7 @@ import functools
 import os
 import shutil
 import tempfile
+import threading
 import time
 from concurrent.futures import Executor
 from pathlib import Path
@@ -32,6 +33,7 @@ import fitz  # PyMuPDF — already a dependency, used for page counting and vali
 
 from app.llm.errors import sanitize_message
 from app.llm.models import ProviderConfig
+from app.pdfkernel.abort import TranslationAbortSentinel
 from app.pdfkernel.errors import (
     LayoutModelUnavailableError,
     OutputFileExistsError,
@@ -88,6 +90,59 @@ def _page_count(path: Path) -> int:
         raise PDFSourceInvalidError(f"{path.name} could not be opened as a PDF.", cause=exc) from exc
 
 
+_PATCH_LOCK = threading.Lock()
+_UPSTREAM_PATCHED = False
+
+
+def _ensure_upstream_patched() -> None:
+    """Substitute our bounded translator into upstream's construction path.
+
+    Upstream builds its translator by matching a service name against classes it
+    imported, so substituting the class on ``pdf2zh.converter`` is the only way
+    to supply our own without editing upstream — which ADR-001 forbids.
+
+    Deferred until the first translation (so ``import app.pdfkernel`` stays free
+    of the PDF stack) and idempotent under concurrency.
+    """
+    global _UPSTREAM_PATCHED
+    if _UPSTREAM_PATCHED:
+        return
+
+    with _PATCH_LOCK:
+        if _UPSTREAM_PATCHED:
+            return
+        import pdf2zh.converter as converter
+
+        from app.pdfkernel.bounded_translator import BoundedOpenAIlikedTranslator
+
+        converter.OpenAIlikedTranslator = BoundedOpenAIlikedTranslator
+        _UPSTREAM_PATCHED = True
+
+
+def _abort_message(sentinel: TranslationAbortSentinel, api_key: str) -> str:
+    """A sanitised description of why the translation was aborted."""
+    error = sentinel.error
+    detail = getattr(error, "message", None) or (str(error) if error else "unknown error")
+    code = getattr(error, "code", None)
+    prefix = f"{code}: " if code else ""
+    return sanitize_message(f"Translation aborted after a provider failure — {prefix}{detail}", api_key)
+
+
+def _abort_detail(error: BaseException | None) -> dict:
+    """Structured diagnostics for the error envelope.
+
+    Deliberately narrow: a stable code and whether retrying could have helped.
+    Provider response text is *not* included — it can echo request content.
+    """
+    if error is None:
+        return {}
+    return {
+        "failed_phase": "paragraph_translation",
+        "provider_error_code": getattr(error, "code", "UNKNOWN"),
+        "retryable": bool(getattr(error, "retryable", False)),
+    }
+
+
 def _upstream_envs(config: ProviderConfig) -> dict[str, str]:
     """Map a neutral provider configuration onto upstream's ``openailiked`` service.
 
@@ -116,6 +171,8 @@ def _run_upstream(
     from pdf2zh.doclayout import ModelInstance, OnnxModel
     from pdf2zh.high_level import translate as upstream_translate
 
+    _ensure_upstream_patched()
+
     if ModelInstance.value is None:
         ModelInstance.value = OnnxModel.load_available()
 
@@ -136,6 +193,14 @@ def _run_upstream(
             model=ModelInstance.value,
             ignore_cache=ignore_cache,
         )
+    except TranslationAbortSentinel as exc:
+        # Our bounded translator gave up: a provider failure, not an upstream bug.
+        # This clause MUST precede `except BaseException` — the sentinel is one.
+        raise TranslationServiceError(
+            _abort_message(exc, api_key),
+            cause=exc.error,
+            detail=_abort_detail(exc.error),
+        ) from exc
     except Exception as exc:
         raise TranslationServiceError(
             sanitize_message(f"Upstream translation failed: {exc}", api_key), cause=exc
@@ -149,6 +214,18 @@ def _run_upstream(
             ),
             cause=exc,
         ) from exc
+
+    # Defence in depth: if upstream ever stops re-raising BaseException, the
+    # sentinel would be swallowed and the call would return normally with an
+    # untranslated document. The translator still recorded the failure, so check
+    # for it rather than trusting the absence of an exception.
+    from app.pdfkernel.bounded_translator import current_translator
+
+    translator = current_translator()
+    if translator is not None and translator.terminal_error is not None:
+        raise TranslationServiceError(
+            translator.failure_message(), cause=translator.terminal_error
+        )
 
 
 async def translate_pdf(
