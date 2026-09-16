@@ -1,0 +1,47 @@
+[project]
+name = "academic-pdf-copilot-backend"
+version = "0.1.0"
+description = "Local-first backend for Academic PDF Copilot"
+requires-python = ">=3.12,<3.13"
+
+# Deliberately minimal (AC-11). PDF, OCR, embedding, and LLM-SDK dependencies
+# arrive with the phases that use them, not before. `keyring` is declared now
+# because the credential store is the next task (DS-BE-005).
+dependencies = [
+    "fastapi~=0.141.0",
+    "uvicorn[standard]~=0.53.0",
+    "pydantic-settings~=2.15.0",
+    "keyring~=25.7.0",
+    # Declared explicitly as of DS-BE-002. It was previously only present
+    # transitively (via the upstream PDF library), which meant a dependency we
+    # actively program against could move without us choosing it.
+    "openai~=3.14.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest~=9.1.0",
+    "pytest-asyncio~=1.4.0",
+    "httpx~=0.28.1",
+]
+
+[tool.pytest.ini_options]
+# Makes `import app` resolve when pytest is run from backend/ (AC-12).
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error::DeprecationWarning:app.*"]
+# The LLM layer is async throughout; marking every test would be noise.
+asyncio_mode = "auto"
+markers = [
+    # Runs the real upstream PDF pipeline (ONNX layout model + PDF regeneration).
+    # Minutes, not milliseconds — deselect with `-m "not slow"`.
+    "slow: exercises the full upstream translation pipeline end to end",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
