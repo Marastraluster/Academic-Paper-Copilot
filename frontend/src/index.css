@@ -88,3 +88,46 @@
       focus-visible:ring-ring focus-visible:ring-offset-1;
   }
 }
+
+/*
+ * PDF.js text layer.
+ *
+ * Spans are positioned by PDF.js to sit exactly over the canvas glyphs, so the
+ * glyphs themselves must be invisible while remaining selectable. The selection
+ * highlight is the only thing the user should see — a visible text layer would
+ * double-render the page and look blurry.
+ *
+ * Declared here rather than imported from pdfjs-dist so the layer's geometry is
+ * ours to reason about: a mis-scaled overlay is worse than none, because
+ * selection silently lands on the wrong characters.
+ */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: transparent;
+  z-index: 1;
+}
+
+.textLayer span,
+.textLayer br {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.textLayer ::selection {
+  background: rgba(37, 99, 235, 0.28);
+}
+
+.pdf-page canvas {
+  position: relative;
+  z-index: 0;
+}

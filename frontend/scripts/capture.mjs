@@ -24,6 +24,27 @@ mkdirSync(outDir, { recursive: true });
 
 const BASE_URL = process.env.PREVIEW_URL ?? "http://127.0.0.1:4173";
 
+/**
+ * A real PDF to open in the viewer, produced by scripts/make-fixture-pdf.mjs.
+ *
+ * Without it the workspace is empty and the content-dependent checks — pane
+ * alignment, viewer scrolling — have nothing to measure. They are skipped with a
+ * stated reason rather than silently passing.
+ */
+const PDF_FIXTURE = process.env.CAPTURE_PDF ?? null;
+
+async function loadFixtureIntoViewers(page) {
+  if (!PDF_FIXTURE) return false;
+  const inputs = page.locator('[data-testid="pdf-file-input"]');
+  const count = await inputs.count();
+  for (let index = 0; index < count; index += 1) {
+    await inputs.nth(index).setInputFiles(PDF_FIXTURE);
+  }
+  await page.waitForSelector('[data-testid="pdf-page-container"]', { timeout: 15000 });
+  await page.waitForTimeout(600); // let the first canvases paint
+  return true;
+}
+
 /** Widths required by AC-11 / AC-12 / AC-13. */
 const VIEWPORTS = [
   { w: 1024, h: 768, file: "DS-FE-001-1024.png" },
@@ -85,6 +106,8 @@ for (const { w, h, file } of VIEWPORTS) {
   // Let the sidebar width transition settle before measuring.
   await page.waitForTimeout(400);
 
+  await loadFixtureIntoViewers(page);
+
   await checkNoWindowScroll(page, `${w}x${h}`);
   await page.screenshot({ path: resolve(outDir, file) });
 
@@ -129,12 +152,16 @@ const workspaceWidth = await page.evaluate(() => {
 if (!originalOnly) failures.push("original mode: viewer panel counts wrong (F-04)");
 if (sidebarWidth > 1) failures.push(`collapsed sidebar width ${sidebarWidth}px, expected ~0`);
 
+// Both panes must be loaded before comparing them: switching reader modes
+// unmounts a panel, and a remounted viewer starts empty.
+await loadFixtureIntoViewers(page);
+
 // The two panes are compared side by side, so their page surfaces must line up.
 // A visible vertical offset here reads as a rendering bug.
 const alignment = await page.evaluate(() => {
   const top = (id) => {
     const panel = document.querySelector(`[data-testid="${id}"]`);
-    const surface = panel?.querySelector('[data-testid="page-surface"]');
+    const surface = panel?.querySelector('[data-testid="pdf-page-container"]');
     return surface ? Math.round(surface.getBoundingClientRect().top) : -1;
   };
   return { original: top("viewer-original"), translated: top("viewer-translated") };
@@ -169,12 +196,35 @@ const perfPage = await browser.newPage({ viewport: { width: 1440, height: 900 } 
 await perfPage.goto(BASE_URL, { waitUntil: "load" });
 await perfPage.waitForSelector('[data-testid="reader-workspace"]');
 
-const perf = await perfPage.evaluate(() => {
+const perf = await perfPage.evaluate(async () => {
   const nav = performance.getEntriesByType("navigation")[0];
-  const paints = performance.getEntriesByType("paint");
-  const fcp = paints.find((p) => p.name === "first-contentful-paint");
+
+  // `getEntriesByType("paint")` occasionally comes back empty even after the
+  // page has painted — the buffered observer is the reliable read, so fall back
+  // to it rather than reporting a spurious -1.
+  let fcp = performance
+    .getEntriesByType("paint")
+    .find((p) => p.name === "first-contentful-paint")?.startTime;
+
+  if (fcp === undefined) {
+    fcp = await new Promise((resolve) => {
+      const observer = new PerformanceObserver((list) => {
+        const entry = list.getEntries().find((e) => e.name === "first-contentful-paint");
+        if (entry) {
+          observer.disconnect();
+          resolve(entry.startTime);
+        }
+      });
+      observer.observe({ type: "paint", buffered: true });
+      setTimeout(() => {
+        observer.disconnect();
+        resolve(-1);
+      }, 2000);
+    });
+  }
+
   return {
-    fcp: fcp ? Math.round(fcp.startTime) : -1,
+    fcp: Math.round(fcp),
     domInteractive: nav ? Math.round(nav.domInteractive) : -1,
     domContentLoaded: nav ? Math.round(nav.domContentLoadedEventEnd) : -1,
   };
@@ -230,6 +280,7 @@ results.push({
 const a11yPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await a11yPage.goto(BASE_URL, { waitUntil: "networkidle" });
 await a11yPage.waitForSelector('[data-testid="reader-workspace"]');
+await loadFixtureIntoViewers(a11yPage);
 
 // AC-38 runs FIRST, on a freshly loaded page where focus starts at the document
 // root — otherwise traversal only ever shows the tail of the sequence.
@@ -260,7 +311,7 @@ for (let i = 0; i < 10; i += 1) {
 const scrollState = await a11yPage.evaluate(() => {
   const conv = document.querySelector('[data-testid="conversation-area"]');
   const viewer = document.querySelector(
-    '[data-testid="viewer-original"] [data-testid="viewer-scroll"]',
+    '[data-testid="viewer-original"] [data-testid="pdf-viewer"]',
   );
   const win = document.documentElement;
   return {
@@ -311,7 +362,9 @@ const groupOf = (label) => {
   if (["设置", "搜索论文", "收起侧边栏", "展开侧边栏", "AI翻译"].some((k) => label.includes(k))) return "topbar";
   if (label.includes("quick-action")) return "sidebar";
   if (["对话记录", "向论文提问", "发送", "范围", "助手上下文范围"].some((k) => label.includes(k))) return "sidebar";
-  if (label.includes("viewer-scroll")) return "viewer";
+  // The scrollable page stack. Chromium makes a scroll container focusable, so
+  // it appears in the tab order without an explicit tabindex.
+  if (label.includes("pdf-viewer")) return "viewer";
   return "other";
 };
 const groups = new Set(tabsFromStart.map(groupOf));
@@ -374,7 +427,7 @@ await a11yPage.close();
 await browser.close();
 
 // --- Report ------------------------------------------------------------------
-console.log("\n=== DS-FE-001 layout verification ===\n");
+console.log("\n=== Layout verification ===\n");
 for (const r of results) {
   const mark = r.pass ? "PASS" : "FAIL";
   console.log(`[${mark}] ${r.label}${r.detail ? ` — ${r.detail}` : ""}`);
