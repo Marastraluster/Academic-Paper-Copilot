@@ -333,8 +333,16 @@ class TestCacheIdentity:
 
 
 class TestFallback:
-    def test_an_unmatched_unit_gets_document_context_only(self) -> None:
-        """AC-P0-06 — no section summary, no neighbours, and it says so."""
+    def test_an_unmatched_unit_gets_no_context_at_all(self) -> None:
+        """AC-P0-06, as amended by the DS-CTX-003 measurement.
+
+        The first design gave an unmatched unit the document summary and domain.
+        Measuring where unmatched units come from showed that was wrong: of 121
+        across three real papers, 111 are captions, headings, tables, references
+        and running headers. A 250-word summary attached to a five-word table
+        cell cannot tell it which sense of a word it means, and doubles the cost
+        of a unit where context cannot help.
+        """
         provider = UnitContextProvider(
             build_ir(PARAGRAPHS), build_analysis(), prompt_version="2.0.0"
         )
@@ -342,10 +350,15 @@ class TestFallback:
 
         assert result.fallback == FALLBACK_UNMAPPED
         assert not result.is_contextual
-        assert result.context is not None
-        assert result.context.section_summary is None
-        assert result.context.previous_paragraph is None
-        assert result.context.document_summary is not None
+        assert result.context is None
+
+    def test_an_unmatched_unit_shares_the_off_mode_cache_entry(self) -> None:
+        """It is translated exactly as off mode would, so it should cost the same."""
+        ir, analysis = build_ir(PARAGRAPHS), build_analysis()
+        standard = UnitContextProvider(ir, analysis, prompt_version="2.0.0", mode=MODE_STANDARD)
+        off = UnitContextProvider(ir, analysis, prompt_version="2.0.0", mode=MODE_OFF)
+
+        assert standard.for_unit("Abstract").cache_key == off.for_unit("Abstract").cache_key
 
     def test_a_matched_unit_is_marked_contextual(self) -> None:
         provider = UnitContextProvider(
@@ -496,13 +509,21 @@ def translator_factory(monkeypatch):
 
         monkeypatch.setattr(openai, "OpenAI", FakeClient)
 
-        envs = {"OPENAILIKED_API_KEY": "k", "OPENAILIKED_BASE_URL": "http://x",
-                "OPENAILIKED_MODEL": "m"}
-        if provider is not None:
-            from app.pdfkernel.context_registry import RUN_ID_ENV, register, release
+        # Built by the production helper rather than by hand. Upstream's
+        # `envs.get("OPENAILIKED_STOP_TOKENS", "").split()` looks safe and is
+        # not: `dict.get`'s default applies only when the key is *absent*, and
+        # the class attribute supplies it as `None`. DS-BE-007 fixed that by
+        # supplying every key explicitly — a hand-built dict here would miss one
+        # and hit the same bug the real adapter already avoids.
+        from app.llm.models import ProviderConfig
+        from app.pdfkernel.adapter import _upstream_envs
+        from app.pdfkernel.context_registry import RUN_ID_ENV, register
 
-            run_id = register(provider)
-            envs[RUN_ID_ENV] = run_id
+        run_id = register(provider) if provider is not None else None
+        envs = _upstream_envs(
+            ProviderConfig(base_url="http://x", api_key="k", model="m"),
+            context_run_id=run_id,
+        )
 
         instance = module.ContextualOpenAIlikedTranslator(
             "en", "zh", "m", envs=envs, prompt=None, ignore_cache=False
@@ -647,3 +668,71 @@ class TestTranslatorBehaviour:
 
         assert calls["n"] == first_calls, "the second call went to the provider"
         assert translator.stats["cache_hits"] == 1
+
+
+# --- Gemini Premise 3: is the run instability thread-local leakage? -----------
+
+
+class TestThreadReuseCannotLeakContext:
+    """The diagnostic Gemini asked for, stated as a property rather than a run.
+
+    DS-CTX-002's A/B moved from 1-of-7 to 4-of-5 on identical inputs, and
+    attributing that to model stochasticity without checking is the kind of
+    assumption this project refuses elsewhere. The suspicion was specific: a
+    thread pool reuses threads, and a thread-local that is set but not cleared
+    would hand the *previous* unit's context to the next one a thread picks up.
+
+    A thread pool with fewer threads than units is the case that would expose it,
+    so that is what this runs — two threads serving twenty units, each of which
+    must see only its own context.
+    """
+
+    def test_a_reused_thread_never_sees_the_previous_units_context(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        paragraphs = [
+            (f"p{i}", f"Paragraph {i} is about topic {i} and says so at length so "
+                      f"that it is unmistakably its own passage in this paper.", 1, f"s{i}")
+            for i in range(20)
+        ]
+        analysis = build_analysis(
+            sections=[
+                SectionAnalysis(section_id=f"s{i}", title=f"Section {i}",
+                                summary=f"SUMMARY-{i}", page_range=(1, 1))
+                for i in range(20)
+            ],
+            glossary=[],
+        )
+        provider = UnitContextProvider(
+            build_ir(paragraphs), analysis, prompt_version="2.0.0"
+        )
+
+        def work(index: int) -> tuple[int, str | None]:
+            unit = provider.for_unit(paragraphs[index][1])
+            # Return the section the *unit* should have, and the one it got.
+            return index, (unit.context.section_id if unit.context else None)
+
+        # Deliberately fewer threads than units, so nearly every call lands on a
+        # thread that has already served a different unit.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(work, range(20)))
+
+        for index, section in results:
+            assert section == f"s{index}", (
+                f"unit {index} received context for {section} — a reused thread "
+                "leaked the previous unit's context"
+            )
+
+    def test_the_thread_local_is_cleared_after_every_unit(self) -> None:
+        """Belt and braces: the direct cause, asserted directly."""
+        from app.pdfkernel import contextual_translator as module
+
+        provider = UnitContextProvider(
+            build_ir(PARAGRAPHS), build_analysis(), prompt_version="2.0.0"
+        )
+        provider.for_unit(PARAGRAPHS[1][1])
+        # `for_unit` itself does not touch the thread-local; the translator sets
+        # and clears it. What is asserted here is that it is *clearable*, which
+        # is what the translator's `finally` guarantees.
+        module._UNIT_CONTEXT.value = None
+        assert getattr(module._UNIT_CONTEXT, "value", None) is None

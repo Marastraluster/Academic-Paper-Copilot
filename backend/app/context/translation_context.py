@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 
 from app.context.context_builder import ContextBuilder
 from app.context.models import AnalysisStatus, DocumentAnalysis, TranslationContext
-from app.context.unit_mapper import UnitMapper
+from app.context.unit_mapper import Mapping, UnitMapper
 from app.document.models import DocumentIR
 
 #: Context modes the pipeline distinguishes. `DEEP` is deliberately absent: in a
@@ -39,10 +39,9 @@ MODE_OFF = "off"
 MODE_STANDARD = "standard"
 VALID_MODES = (MODE_OFF, MODE_STANDARD)
 
-#: Why a unit has no paragraph id. Recorded rather than discarded, so a task can
+#: Why a unit received no context. Recorded rather than discarded, so a task can
 #: report how much of a document was actually translated with context.
 FALLBACK_UNMAPPED = "UNMAPPED"
-FALLBACK_DOCUMENT_ONLY = "FALLBACK_DOCUMENT_ONLY"
 
 #: Separates the context hash from the source text inside a cache key. A NUL
 #: cannot occur in either, so no text can forge a different unit's key.
@@ -183,36 +182,16 @@ class UnitContextProvider:
 
         mapping = self._mapper.match(text)
         if not mapping.resolved:
-            # No paragraph-level context. The document summary and domain are
-            # still true of this unit and still help terminology; its neighbours
-            # and its section are not known, and inventing them would be worse
-            # than the thinner context.
-            context = self._document_only()
-            digest = hash_context(context, prompt_version=self._prompt_version)
-            return UnitContext(
-                context=context,
-                paragraph_id=None,
-                mapping_score=mapping.score,
-                fallback=FALLBACK_UNMAPPED,
-                effective_context_hash=digest,
-                cache_key=cache_key(text, digest),
-            )
+            return self._without_context(text, mapping)
 
         try:
             context = self._builder.build_context(
                 mapping.paragraph_id, max_tokens=self._max_tokens
             )
         except KeyError:
-            context = self._document_only()
-            digest = hash_context(context, prompt_version=self._prompt_version)
-            return UnitContext(
-                context=context,
-                paragraph_id=None,
-                mapping_score=mapping.score,
-                fallback=FALLBACK_DOCUMENT_ONLY,
-                effective_context_hash=digest,
-                cache_key=cache_key(text, digest),
-            )
+            # Resolved, but its context could not be assembled. Treated the same
+            # as unmatched: the alternative is inventing one.
+            return self._without_context(text, mapping)
 
         digest = hash_context(context, prompt_version=self._prompt_version)
         return UnitContext(
@@ -224,17 +203,34 @@ class UnitContextProvider:
             cache_key=cache_key(text, digest),
         )
 
-    def _document_only(self) -> TranslationContext | None:
-        """Domain and document summary, and nothing that implies a location."""
-        if self._analysis is None or not self._analysis.is_usable():
-            return None
-        return TranslationContext(
-            paragraph_id="",
-            page_number=1,
-            document_summary=self._analysis.summary,
-            academic_domain=(
-                self._analysis.domain.primary if self._analysis.domain else None
-            ),
+    def _without_context(self, text: str, mapping: "Mapping") -> UnitContext:
+        """A unit that gets no academic context at all.
+
+        **This is a deliberate reversal of the first design**, which gave
+        unmatched units the document summary and domain. Measuring where the
+        unmapped units come from showed why that was wrong: of 121 unmatched
+        units across three real papers, 111 were captions, headings, tables,
+        references and running headers.
+
+        Attaching a 250-word summary to a five-word table cell is prompt
+        asymmetry with no disambiguation value — the summary cannot tell a
+        fragment which sense of a word it means — and it doubles the token cost
+        of a unit where context cannot help. For the 9 genuine prose misses it
+        might have helped, but optimising for those means degrading the other
+        111, and a caption translated through the lens of the paper's thesis is
+        exactly the overtranslation this is meant to avoid.
+
+        The hash is the same one off-mode produces, so an unmatched unit shares
+        the off-mode cache entry rather than paying for a second translation.
+        """
+        digest = hash_context(None, prompt_version=self._prompt_version)
+        return UnitContext(
+            context=None,
+            paragraph_id=None,
+            mapping_score=mapping.score,
+            fallback=FALLBACK_UNMAPPED,
+            effective_context_hash=digest,
+            cache_key=cache_key(text, digest),
         )
 
 

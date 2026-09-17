@@ -62,13 +62,35 @@ def normalize(text: str) -> str:
     return _NOT_WORD.sub(" ", without_markers).strip().casefold()
 
 
+#: Categorical confidence. Deliberately not a decimal: `0.83` implies a
+#: calibration nobody has performed, and a threshold on it would be a number
+#: chosen for looks. What is defensible is the *kind* of evidence.
+EXACT = "EXACT"           # the unit is a literal substring of the paragraph
+NORMALIZED = "NORMALIZED"  # it matches after folding placeholders and whitespace
+FALLBACK = "FALLBACK"     # resolved, but context could not be assembled
+UNMAPPED = "UNMAPPED"     # not resolved, and no context will be attached
+
+#: Why a unit did not resolve. Mutually exclusive, and each names something a
+#: different fix would address — which is the point of classifying them rather
+#: than reporting one number.
+TOO_SHORT = "UNIT_TOO_SHORT"
+BELOW_THRESHOLD = "BELOW_SCORE_THRESHOLD"
+DUPLICATE_TEXT = "DUPLICATE_SOURCE_TEXT"
+NO_CORRESPONDENCE = "NO_IR_CORRESPONDENCE"
+NO_PARAGRAPHS = "NO_IR_PARAGRAPHS"
+
+
 @dataclass(frozen=True)
 class Mapping:
     """The outcome of matching one unit."""
 
     paragraph_id: str | None
     score: float
-    #: Why there is no paragraph id, when there is not.
+    #: Categorical, never a decimal gate. See the constants above.
+    confidence: str = UNMAPPED
+    #: One of the cause constants when unresolved, otherwise ``None``.
+    cause: str | None = None
+    #: Human-readable detail. Not used for any decision.
     reason: str | None = None
 
     @property
@@ -93,9 +115,11 @@ class UnitMapper:
         """Find the IR paragraph this unit is, or say that it cannot be found."""
         unit = normalize(unit_text)
         if len(unit) < MIN_UNIT_CHARS:
-            return Mapping(None, 0.0, "unit too short to match reliably")
+            return Mapping(None, 0.0, cause=TOO_SHORT,
+                           reason="unit too short to match reliably")
         if not self._paragraphs:
-            return Mapping(None, 0.0, "document has no paragraphs")
+            return Mapping(None, 0.0, cause=NO_PARAGRAPHS,
+                           reason="document has no paragraphs")
 
         best_score = 0.0
         best: list[str] = []
@@ -108,12 +132,16 @@ class UnitMapper:
                 best.append(paragraph_id)
 
         if best_score < MIN_SCORE:
-            return Mapping(None, best_score, "no paragraph matched closely enough")
+            return Mapping(None, best_score, cause=BELOW_THRESHOLD,
+                           reason="no paragraph matched closely enough")
         if len(best) > 1:
             # Equally good candidates. Which one is "right" is not knowable from
             # the text, so none is chosen.
-            return Mapping(None, best_score, f"ambiguous: {len(best)} equally good matches")
-        return Mapping(best[0], best_score)
+            return Mapping(None, best_score, cause=DUPLICATE_TEXT,
+                           reason=f"ambiguous: {len(best)} equally good matches")
+
+        confidence = EXACT if best_score == 1.0 else NORMALIZED
+        return Mapping(best[0], best_score, confidence=confidence)
 
     @staticmethod
     def _score(unit: str, paragraph: str) -> float:
