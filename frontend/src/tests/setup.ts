@@ -80,6 +80,30 @@ if (typeof Blob !== "undefined" && typeof Blob.prototype.arrayBuffer !== "functi
   };
 }
 
+/*
+ * jsdom implements no scroll API on elements, so the viewer's page-jump — which
+ * asks its container to scroll — throws a TypeError from inside a click handler.
+ * The suite reported this as four uncaught exceptions while still printing
+ * "48 passed", which made the exit code meaningless. The stub preserves the
+ * behaviour actually under test: that jumping asks the container to scroll.
+ */
+if (typeof Element.prototype.scrollTo !== "function") {
+  Element.prototype.scrollTo = () => {};
+}
+
+/*
+ * jsdom implements neither object-URL method, and the object-URL lifecycle is
+ * precisely what AC-P0-15 is about — a translated document is fetched as a blob
+ * and must be revoked on switch, retranslation and teardown. Stubbing them (and
+ * leaving `revokeObjectURL` spy-able) is what makes that observable in a test
+ * rather than something that silently never happens.
+ */
+if (typeof URL.createObjectURL !== "function") {
+  let objectUrlSeq = 0;
+  URL.createObjectURL = () => `blob:jsdom-${++objectUrlSeq}`;
+  URL.revokeObjectURL = () => {};
+}
+
 /**
  * The workspace store is a module singleton, so component state would otherwise
  * leak between tests. Snapshot the initial state and restore it after each test.

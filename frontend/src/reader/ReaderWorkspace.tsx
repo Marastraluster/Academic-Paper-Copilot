@@ -1,35 +1,99 @@
-import { PdfWorkspace } from "@/pdf/PdfWorkspace";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useMemo } from "react";
+import { Languages } from "lucide-react";
+
+import { PdfWorkspace, type PdfSource } from "@/pdf/PdfWorkspace";
+import {
+  selectEffectiveMode,
+  selectActiveTranslation,
+  useWorkspaceStore,
+} from "@/stores/workspace";
+import { openDocument, noteTranslatedPageCount } from "@/translation/session";
+import { TranslationNotice } from "@/translation/TranslationNotice";
 
 /**
  * AC-04 — the workspace reconfigures between one and two panels as the reader
  * mode changes. This is real DOM restructuring, not a relabelling (failure F-04).
  *
  * Each panel is a self-contained `PdfWorkspace` with its own document, zoom and
- * page — which is what bilingual mode needs: two independent readers side by
- * side, not one shared viewer.
+ * page. Bilingual mode is two *independent* readers side by side: there is no
+ * shared PDF.js instance and no scroll lockstep, which is what AC-P1-01 asks for
+ * — it requires page 1 in both panes and independent navigation, not synchronised
+ * scrolling. Lockstep is a later enhancement.
  *
- * The `viewer-original` / `viewer-translated` hooks are kept from DS-FE-001 so
- * the existing mode-switch tests and the browser capture harness keep verifying
- * real behaviour rather than being deleted along with the old mock.
+ * The original pane is driven by the open document rather than by its own picker,
+ * so the app can register that file for translation. The picker still lives in
+ * the pane; picking a file routes back through `openDocument`.
  */
 export function ReaderWorkspace() {
-  const readerMode = useWorkspaceStore((s) => s.readerMode);
+  const document = useWorkspaceStore((s) => s.document);
+  const mode = useWorkspaceStore(selectEffectiveMode);
+  const translation = useWorkspaceStore(selectActiveTranslation);
 
-  const showOriginal = readerMode === "original" || readerMode === "bilingual";
-  const showTranslated =
-    readerMode === "translation" || readerMode === "bilingual";
+  const showOriginal = mode === "original" || mode === "bilingual";
+  const showTranslated = mode === "translation" || mode === "bilingual";
+
+  // Memoised on the store objects so the panes see a stable source identity and
+  // do not reload the document on every unrelated re-render.
+  const originalSource = useMemo<PdfSource | null>(
+    () =>
+      document ? { kind: "local", file: document.file, name: document.name } : null,
+    [document],
+  );
+
+  const monoUrl = translation?.monoUrl ?? null;
+  const translatedSource = useMemo<PdfSource | null>(
+    () =>
+      monoUrl ? { kind: "asset", url: monoUrl, name: `${document?.name ?? "文档"}（译文）` } : null,
+    [monoUrl, document?.name],
+  );
 
   return (
     <main
       data-testid="reader-workspace"
-      data-reader-mode={readerMode}
-      className="flex min-w-0 flex-1 gap-2 overflow-hidden bg-workspace p-2"
+      data-reader-mode={mode}
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden bg-workspace p-2"
     >
-      {showOriginal && <PdfWorkspace testId="viewer-original" label="Original PDF" />}
-      {showTranslated && (
-        <PdfWorkspace testId="viewer-translated" label="Translated PDF" />
-      )}
+      <TranslationNotice />
+
+      <div className="flex min-h-0 min-w-0 flex-1 gap-2">
+        {showOriginal && (
+          <PdfWorkspace
+            testId="viewer-original"
+            label="原文 PDF"
+            source={originalSource}
+            onFileChosen={openDocument}
+          />
+        )}
+        {showTranslated && (
+          <PdfWorkspace
+            testId="viewer-translated"
+            label="译文 PDF"
+            source={translatedSource}
+            onDocumentLoaded={({ pageCount }) => noteTranslatedPageCount(pageCount)}
+            emptyState={<TranslatedEmpty />}
+          />
+        )}
+      </div>
     </main>
+  );
+}
+
+/**
+ * Shown in the translated pane when there is no artifact to display.
+ *
+ * It carries no file picker: a translated document is produced by translating
+ * the original, and offering a drop target here would imply the two panes are
+ * independent inputs when in fact one is derived from the other.
+ */
+function TranslatedEmpty() {
+  return (
+    <div
+      data-testid="translated-empty-state"
+      className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-muted-foreground"
+    >
+      <Languages className="h-6 w-6 text-muted-foreground/60" aria-hidden="true" />
+      <p className="text-sm font-medium">尚无译文</p>
+      <p className="max-w-xs text-xs">点击顶部的「AI翻译」生成译文后，可在此与原文对照阅读。</p>
+    </div>
   );
 }

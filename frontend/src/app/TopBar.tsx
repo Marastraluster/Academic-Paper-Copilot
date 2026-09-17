@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { BookOpen, PanelLeft, Search, Settings, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,10 @@ import {
 } from "@/components/ui/tooltip";
 import { ReaderModeSwitch } from "@/reader/ReaderModeSwitch";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { ExportMenu } from "@/translation/ExportMenu";
+import { TranslateDialog } from "@/translation/TranslateDialog";
+import { useTranslationSession } from "@/translation/useTranslationSession";
+import type { TranslateOptions } from "@/translation/session";
 
 /**
  * AC-03 — top navigation bar.
@@ -19,9 +24,23 @@ import { useWorkspaceStore } from "@/stores/workspace";
  * pushed off-screen at 1024px (AC-11, AC-15).
  */
 export function TopBar() {
-  const documentName = useWorkspaceStore((s) => s.documentName);
+  const document = useWorkspaceStore((s) => s.document);
   const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen);
   const toggleSidebar = useWorkspaceStore((s) => s.toggleSidebar);
+  const { start, busy } = useTranslationSession();
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  // A translation needs somewhere to run: no document, or one whose backend
+  // identity is still being established, cannot be translated yet.
+  const canTranslate =
+    document !== null && document.registration === "ready" && document.documentId !== null;
+  const translating = busy && document?.registration === "ready";
+
+  const submit = (options: TranslateOptions) => {
+    setDialogOpen(false);
+    void start(options);
+  };
 
   return (
     <header className="flex h-11 shrink-0 items-center gap-2 border-b bg-card px-2.5">
@@ -57,10 +76,10 @@ export function TopBar() {
       {/* Document name — truncates rather than pushing controls off-screen */}
       <span
         className="min-w-0 max-w-[22ch] flex-1 truncate text-xs text-muted-foreground"
-        title={documentName}
+        title={document?.name ?? "未打开文档"}
         data-testid="document-name"
       >
-        {documentName}
+        {document?.name ?? "未打开文档"}
       </span>
 
       <ReaderModeSwitch />
@@ -82,10 +101,39 @@ export function TopBar() {
       </div>
 
       {/* AI translate */}
-      <Button size="sm" variant="outline" className="shrink-0 gap-1.5">
-        <Sparkles className="h-3.5 w-3.5" />
-        AI翻译
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="shrink-0">
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              data-testid="ai-translate"
+              aria-label="AI翻译"
+              // Disabled while a translation runs, so the same work cannot be
+              // queued twice. Retranslation becomes possible again once the task
+              // reaches a terminal state.
+              disabled={!canTranslate || translating}
+              onClick={() => setDialogOpen(true)}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              AI翻译
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          {document === null
+            ? "请先打开一个 PDF"
+            : document.registration === "pending"
+              ? "正在把文档注册到后端…"
+              : translating
+                ? "翻译进行中"
+                : "翻译当前文档"}
+        </TooltipContent>
+      </Tooltip>
+
+      {/* Export — the only place the 2N dual artifact is offered (§13). */}
+      <ExportMenu />
 
       {/* Settings */}
       <Tooltip>
@@ -101,6 +149,12 @@ export function TopBar() {
         </TooltipTrigger>
         <TooltipContent>设置</TooltipContent>
       </Tooltip>
+
+      <TranslateDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        onSubmit={submit}
+      />
     </header>
   );
 }
