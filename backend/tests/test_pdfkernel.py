@@ -349,11 +349,18 @@ def test_envs_carry_the_configuration_and_never_touch_upstream_config() -> None:
 
     envs = adapter_module._upstream_envs(config)
 
-    assert envs == {
-        "OPENAILIKED_BASE_URL": "https://api.example.com/v1",
-        "OPENAILIKED_API_KEY": SECRET,
-        "OPENAILIKED_MODEL": "m-1",
-    }
+    assert envs["OPENAILIKED_BASE_URL"] == "https://api.example.com/v1"
+    assert envs["OPENAILIKED_API_KEY"] == SECRET
+    assert envs["OPENAILIKED_MODEL"] == "m-1"
+
+    # DS-BE-007 supplies the remaining keys explicitly. Upstream reads some of
+    # them as a fallback (`api_key or envs["OPENAI_API_KEY"]`) and computes
+    # `.split()` on others, both of which fail on a missing or null value — so
+    # every key must be present and non-null, never inherited from its config.
+    for key, value in envs.items():
+        assert value is not None, f"{key} must never be None"
+    for required in ("OPENAILIKED_STOP_TOKENS", "OPENAILIKED_MAX_TOKENS", "OPENAI_API_KEY"):
+        assert required in envs, f"{required} must be supplied explicitly"
 
 
 # --- AC-16: output collision --------------------------------------------------
@@ -418,6 +425,8 @@ def test_only_recognised_arguments_are_passed_upstream(stub_upstream, tmp_path, 
     assert set(captured) == {
         "files", "output", "lang_in", "lang_out", "service",
         "thread", "envs", "model", "ignore_cache",
+        # Added by DS-BE-007 for progress and cancellation.
+        "callback", "cancellation_event",
     }, f"unexpected or missing upstream arguments: {sorted(captured)}"
 
     # And nothing adapter-local leaked in.

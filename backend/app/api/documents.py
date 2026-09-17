@@ -1,0 +1,414 @@
+"""Document and translation HTTP surface (docs/API_CONTRACT.md §2, §5).
+
+Three properties are load-bearing here:
+
+* **The user's file is never touched.** An upload is copied into a managed
+  directory; a path import is only ever read. Deleting a document removes our
+  copy and derived artifacts, never a file the user owns.
+* **Starting a translation returns immediately.** The kernel takes minutes, so
+  the request that starts it cannot be the one that waits for it.
+* **Progress and status are honest.** Only states the kernel distinguishes are
+  reported, and block counts are omitted rather than fabricated.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+from typing import Any
+
+import fitz
+from fastapi import APIRouter, File, Request, Response, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.documents.store import (
+    DocumentBusyError,
+    DocumentNotFoundError,
+    DocumentStore,
+    TaskAlreadyTerminalError,
+    TaskNotFoundError,
+)
+from app.documents.tasks import TaskRunner
+from app.errors import error_response
+
+router = APIRouter(tags=["documents"])
+
+PDF_MAGIC = b"%PDF-"
+SSE_KEEPALIVE_SECONDS = 15.0
+
+
+# --- dependencies ------------------------------------------------------------
+
+
+def get_document_store(request: Request) -> DocumentStore:
+    store = getattr(request.app.state, "document_store", None)
+    if store is None:
+        raise RuntimeError("DocumentStore is not initialized; the lifespan did not execute.")
+    return store
+
+
+def get_task_runner(request: Request) -> TaskRunner:
+    runner = getattr(request.app.state, "task_runner", None)
+    if runner is None:
+        raise RuntimeError("TaskRunner is not initialized; the lifespan did not execute.")
+    return runner
+
+
+# --- models ------------------------------------------------------------------
+
+
+class DocumentResponse(BaseModel):
+    """A document as returned to a client. Never carries a filesystem path."""
+
+    document_id: str
+    name: str
+    page_count: int
+    source: str  # "upload" | "path"
+    has_translation: bool
+    created_at: str
+
+
+class ImportByPathRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+
+
+class TranslateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: str
+    lang_in: str = "en"
+    lang_out: str = "zh"
+    engine: str = "fast"
+
+
+class TaskResponse(BaseModel):
+    task_id: str
+    document_id: str
+    status: str
+    lang_in: str
+    lang_out: str
+    engine: str
+    progress: dict[str, int] | None
+    error: dict[str, str] | None
+    created_at: str
+    updated_at: str
+
+
+def task_payload(task: Any) -> dict[str, Any]:
+    """Render a task without inventing anything it does not have."""
+    progress = None
+    if task.progress_page is not None and task.progress_page_count is not None:
+        # Per-page only. Block counters are deliberately absent: the kernel does
+        # not produce them, and a fabricated 0/0 would be worse than nothing.
+        progress = {"page": task.progress_page, "page_count": task.progress_page_count}
+
+    error = None
+    if task.error_code:
+        error = {"code": task.error_code, "message": task.error_message or ""}
+
+    return {
+        "task_id": task.id,
+        "document_id": task.document_id,
+        "status": task.status,
+        "lang_in": task.lang_in,
+        "lang_out": task.lang_out,
+        "engine": task.engine,
+        "progress": progress,
+        "error": error,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+    }
+
+
+def document_payload(store: DocumentStore, record: Any) -> dict[str, Any]:
+    return {
+        "document_id": record.id,
+        "name": record.name,
+        "page_count": record.page_count,
+        "source": "upload" if record.is_upload else "path",
+        "has_translation": store.mono_file(record.id).is_file(),
+        "created_at": record.created_at,
+    }
+
+
+# --- error handlers ----------------------------------------------------------
+
+
+def register_document_error_handlers(app: Any) -> None:
+    from app.errors import error_response as _envelope
+
+    @app.exception_handler(DocumentNotFoundError)
+    async def _missing(request: Request, exc: DocumentNotFoundError) -> Any:
+        return _envelope(404, "NOT_FOUND", str(exc))
+
+    @app.exception_handler(TaskNotFoundError)
+    async def _missing_task(request: Request, exc: TaskNotFoundError) -> Any:
+        return _envelope(404, "NOT_FOUND", str(exc))
+
+    @app.exception_handler(DocumentBusyError)
+    async def _busy(request: Request, exc: DocumentBusyError) -> Any:
+        return _envelope(409, "DOCUMENT_BUSY", str(exc))
+
+    @app.exception_handler(TaskAlreadyTerminalError)
+    async def _terminal(request: Request, exc: TaskAlreadyTerminalError) -> Any:
+        return _envelope(409, "TASK_ALREADY_TERMINAL", str(exc))
+
+
+# --- import ------------------------------------------------------------------
+
+
+def _validate_pdf_bytes(data: bytes) -> tuple[bool, str, str]:
+    """Return ``(ok, code, message)`` for an upload, without writing it."""
+    if len(data) == 0:
+        return False, "EMPTY_FILE", "The uploaded file is empty."
+    if not data.startswith(PDF_MAGIC):
+        return False, "UNSUPPORTED_MEDIA_TYPE", "The uploaded file is not a PDF."
+    try:
+        with fitz.open(stream=data, filetype="pdf") as document:
+            page_count = document.page_count
+    except Exception:  # noqa: BLE001
+        return False, "SOURCE_INVALID", "The PDF could not be read."
+    if page_count < 1:
+        return False, "SOURCE_INVALID", "The PDF contains no pages."
+    return True, "", str(page_count)
+
+
+@router.post("/documents", status_code=201)
+async def import_document(
+    request: Request,
+    file: UploadFile | None = File(default=None),
+) -> Any:
+    """Import a PDF.
+
+    Multipart upload is the browser's path — it holds a `File`, never a
+    filesystem path. The JSON `{path}` form imports a file in place, for local
+    callers, and never copies or modifies it.
+    """
+    store = get_document_store(request)
+    settings = request.app.state.settings
+
+    if file is not None:
+        data = await file.read()
+        if len(data) > settings.max_upload_bytes:
+            return error_response(
+                413,
+                "PAYLOAD_TOO_LARGE",
+                f"The file exceeds the {settings.max_upload_bytes // (1024 * 1024)} MiB limit.",
+            )
+        ok, code, detail = _validate_pdf_bytes(data)
+        if not ok:
+            status = {"EMPTY_FILE": 400, "UNSUPPORTED_MEDIA_TYPE": 415}.get(code, 422)
+            return error_response(status, code, detail)
+
+        name = Path(file.filename or "document.pdf").name  # strip any directory part
+        record = store.create_document(
+            name=name, page_count=int(detail), is_upload=True
+        )
+        store.source_file(record.id).write_bytes(data)
+        return document_payload(store, record)
+
+    # --- path import ------------------------------------------------------
+    body = await request.json()
+    try:
+        payload = ImportByPathRequest.model_validate(body)
+    except Exception:
+        return error_response(400, "BAD_REQUEST", "Provide either a file upload or a path.")
+
+    source = Path(payload.path)
+    if not source.is_file():
+        return error_response(404, "NOT_FOUND", "No file exists at the given path.")
+
+    try:
+        with fitz.open(str(source)) as document:
+            page_count = document.page_count
+    except Exception:  # noqa: BLE001
+        return error_response(422, "SOURCE_INVALID", "The file could not be read as a PDF.")
+
+    record = store.create_document(
+        name=source.name, page_count=page_count, is_upload=False, source_path=source
+    )
+    return document_payload(store, record)
+
+
+@router.get("/documents")
+async def list_documents(request: Request) -> list[dict[str, Any]]:
+    store = get_document_store(request)
+    return [document_payload(store, record) for record in store.list_documents()]
+
+
+@router.get("/documents/{document_id}")
+async def get_document(request: Request, document_id: str) -> dict[str, Any]:
+    store = get_document_store(request)
+    return document_payload(store, store.get_document(document_id))
+
+
+@router.get("/documents/{document_id}/file")
+async def original_file(request: Request, document_id: str) -> Any:
+    """Stream the original, read-only. The user's copy is never modified."""
+    store = get_document_store(request)
+    record = store.get_document(document_id)
+
+    path = store.source_file(record.id) if record.is_upload else record.source_path
+    if path is None or not Path(path).is_file():
+        return error_response(404, "NOT_FOUND", "The source file is no longer available.")
+    return FileResponse(path, media_type="application/pdf", filename=record.name)
+
+
+@router.get("/documents/{document_id}/translated")
+async def translated_file(request: Request, document_id: str) -> Any:
+    """Translated (mono) output — one page per source page."""
+    store = get_document_store(request)
+    store.get_document(document_id)
+    path = store.mono_file(document_id)
+    if not path.is_file():
+        return error_response(404, "NOT_FOUND", "No translation exists for this document yet.")
+    return FileResponse(path, media_type="application/pdf", filename="translated.pdf")
+
+
+@router.get("/documents/{document_id}/bilingual")
+async def bilingual_file(request: Request, document_id: str) -> Any:
+    """Interleaved (dual) output — 2N pages, for export."""
+    store = get_document_store(request)
+    store.get_document(document_id)
+    path = store.dual_file(document_id)
+    if not path.is_file():
+        return error_response(404, "NOT_FOUND", "No bilingual output exists yet.")
+    return FileResponse(path, media_type="application/pdf", filename="bilingual.pdf")
+
+
+@router.delete("/documents/{document_id}", status_code=204)
+async def delete_document(request: Request, document_id: str) -> Response:
+    """Remove the document and its derived artifacts.
+
+    A file the user imported by path is left exactly where it was.
+    """
+    store = get_document_store(request)
+    store.delete_document(document_id)
+    return Response(status_code=204)
+
+
+# --- translation -------------------------------------------------------------
+
+
+@router.post("/documents/{document_id}/translate", status_code=202)
+async def start_translation(
+    request: Request, document_id: str, payload: TranslateRequest
+) -> Any:
+    """Start a translation. Returns immediately with a task id."""
+    store = get_document_store(request)
+    runner = get_task_runner(request)
+    store.get_document(document_id)  # 404 before anything is scheduled
+
+    try:
+        task = runner.start(
+            document_id=document_id,
+            profile_id=payload.profile_id,
+            lang_in=payload.lang_in,
+            lang_out=payload.lang_out,
+            engine=payload.engine,
+        )
+    except DocumentBusyError:
+        return error_response(
+            409, "DOCUMENT_BUSY", "A translation is already running for this document."
+        )
+    except Exception as exc:  # noqa: BLE001 - e.g. credential store unavailable
+        from app.llm.errors import sanitize_message
+
+        return error_response(502, "PROVIDER_ERROR", sanitize_message(str(exc)))
+
+    return {"task_id": task.id, "document_id": document_id, "status": task.status}
+
+
+@router.get("/tasks/{task_id}")
+async def get_task(request: Request, task_id: str) -> dict[str, Any]:
+    store = get_document_store(request)
+    return task_payload(store.get_task(task_id))
+
+
+@router.get("/tasks/{task_id}/events")
+async def task_events(request: Request, task_id: str) -> Any:
+    """Server-sent progress. Closes once the task reaches a terminal state."""
+    store = get_document_store(request)
+    runner = get_task_runner(request)
+    store.get_task(task_id)  # 404 before opening the stream
+
+    async def stream() -> Any:
+        queue = runner.subscribe(task_id)
+        try:
+            # Send the current state first, so a client that connects late is not
+            # left waiting for the next page to learn where things stand.
+            yield _sse("snapshot", task_payload(store.get_task(task_id)))
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=SSE_KEEPALIVE_SECONDS)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                yield _sse(event.get("event", "message"), event)
+                if event.get("event") in ("done", "error", "cancelled"):
+                    break
+        finally:
+            runner.unsubscribe(task_id, queue)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _sse(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_task(request: Request, task_id: str) -> Any:
+    """Request cancellation at the next page boundary.
+
+    Honest about what it can promise: the current page finishes first, because
+    the kernel polls for cancellation once per page.
+    """
+    runner = get_task_runner(request)
+    try:
+        task = runner.cancel(task_id)
+    except TaskAlreadyTerminalError:
+        return error_response(
+            409, "TASK_ALREADY_TERMINAL", "The task has already finished."
+        )
+
+    return {
+        "task_id": task.id,
+        "status": "CANCELLING",
+        "message": (
+            "Cancellation requested. The current page will finish, then "
+            "translation will halt."
+        ),
+    }
+
+
+@router.post("/tasks/{task_id}/retry")
+async def retry_task(request: Request, task_id: str) -> Any:
+    """Not supported, and said so rather than pretended.
+
+    The kernel translates whole documents; it has no block-level retry or
+    resume. Re-running the document under a name that promises block retry would
+    mislead the caller.
+    """
+    get_document_store(request).get_task(task_id)  # 404 for an unknown task
+    return JSONResponse(
+        status_code=501,
+        content={
+            "error": {
+                "code": "NOT_IMPLEMENTED",
+                "message": (
+                    "Block-level retry is not supported by the translation kernel. "
+                    "Re-run translation via POST /api/documents/{id}/translate."
+                ),
+                "detail": {},
+            }
+        },
+    )

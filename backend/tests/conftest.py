@@ -100,6 +100,9 @@ def settings(tmp_path: Path) -> Settings:
         host="127.0.0.1",
         port=8000,
         database_path=tmp_path / "test-db.sqlite3",
+        # Imported documents and their artifacts must land in the temporary
+        # directory too — never the developer's real data directory.
+        documents_dir=tmp_path / "documents",
         log_level="INFO",
         cors_origins="http://localhost:5173",
         debug=True,

@@ -26,13 +26,16 @@ import shutil
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import Executor
 from pathlib import Path
+from typing import Any
 
 import fitz  # PyMuPDF — already a dependency, used for page counting and validation
 
 from app.llm.errors import sanitize_message
 from app.llm.models import ProviderConfig
+from app.llm.client import KEYLESS_API_KEY_PLACEHOLDER
 from app.pdfkernel.abort import TranslationAbortSentinel
 from app.pdfkernel.errors import (
     LayoutModelUnavailableError,
@@ -48,6 +51,11 @@ from app.pdfkernel.models import TranslationResult
 #: Only the in-process kernel is supported. ``precise`` needs a second repository
 #: and an isolated venv (docs/REPO_AUDIT.md §22.4), and is unavailable here.
 SUPPORTED_ENGINES = ("fast",)
+
+#: Reports ``(pages_done, pages_total)``. Upstream emits this once per page; it
+#: is the only progress signal the fast kernel produces, so it is the only one
+#: callers are given.
+ProgressCallback = Callable[[int, int], None]
 
 DEFAULT_THREADS = 4
 
@@ -143,16 +151,57 @@ def _abort_detail(error: BaseException | None) -> dict:
     }
 
 
+def _progress_bridge(
+    on_progress: ProgressCallback | None,
+) -> Callable[[Any], None] | None:
+    """Adapt upstream's per-page tqdm callback to a plain ``(page, total)`` call.
+
+    Upstream reports progress by handing a ``tqdm`` object to the callback, once
+    per page. Callers should not have to know that. Returns ``None`` when there is
+    no listener, so upstream does no work at all.
+    """
+    if on_progress is None:
+        return None
+
+    def report(progress: Any) -> None:
+        try:
+            on_progress(int(progress.n), int(progress.total))
+        except Exception:  # noqa: BLE001 - progress must never fail a translation
+            pass
+
+    return report
+
+
 def _upstream_envs(config: ProviderConfig) -> dict[str, str]:
     """Map a neutral provider configuration onto upstream's ``openailiked`` service.
 
     Passed per call. Upstream's ``ConfigManager`` is never used — it writes API
     keys to a plaintext config file (docs/REPO_AUDIT.md §16).
     """
+    # Every key the service reads is supplied, not just the three we care about.
+    #
+    # Upstream reads `self.envs.get("OPENAILIKED_STOP_TOKENS", "")` and then
+    # calls `.split()` on it — but `dict.get`'s default applies only when the key
+    # is *absent*. A persisted value of `null` reaches `.split()` and raises
+    # `'NoneType' object has no attribute 'split'`. Supplying explicit non-null
+    # values means upstream's config file can never inject one, and also stops
+    # our runs from depending on whatever it happens to have stored.
+    api_key = config.api_key.get_secret_value()
+
     return {
         "OPENAILIKED_BASE_URL": config.base_url,
-        "OPENAILIKED_API_KEY": config.api_key.get_secret_value(),
+        "OPENAILIKED_API_KEY": api_key,
         "OPENAILIKED_MODEL": config.model,
+        "OPENAILIKED_STOP_TOKENS": "",
+        "OPENAILIKED_MAX_TOKENS": "-1",
+        "OPENAILIKED_STREAM": "false",
+        # The plain `openai` aliases are set as well, because upstream reads them
+        # as a *fallback*: `api_key or self.envs["OPENAI_API_KEY"]`. A keyless
+        # profile — a local server, a supported configuration — leaves the first
+        # operand empty, so without these the fallback raises KeyError.
+        "OPENAI_BASE_URL": config.base_url,
+        "OPENAI_API_KEY": api_key or KEYLESS_API_KEY_PLACEHOLDER,
+        "OPENAI_MODEL": config.model,
     }
 
 
@@ -164,6 +213,8 @@ def _run_upstream(
     config: ProviderConfig,
     threads: int,
     ignore_cache: bool,
+    on_progress: ProgressCallback | None = None,
+    cancellation_event: asyncio.Event | None = None,
 ) -> None:
     """Invoke upstream synchronously. Called on a worker thread."""
     # Imported here, not at module scope, so that merely importing this package
@@ -192,6 +243,10 @@ def _run_upstream(
             envs=_upstream_envs(config),
             model=ModelInstance.value,
             ignore_cache=ignore_cache,
+            callback=_progress_bridge(on_progress),
+            # Upstream polls this once per page, so cancellation takes effect at
+            # a page boundary and never mid-page.
+            cancellation_event=cancellation_event,
         )
     except TranslationAbortSentinel as exc:
         # Our bounded translator gave up: a provider failure, not an upstream bug.
@@ -240,6 +295,8 @@ async def translate_pdf(
     threads: int = DEFAULT_THREADS,
     ignore_cache: bool = False,
     executor: Executor | None = None,
+    on_progress: ProgressCallback | None = None,
+    cancellation_event: asyncio.Event | None = None,
 ) -> TranslationResult:
     """Translate a PDF, producing translated and bilingual copies.
 
@@ -314,6 +371,8 @@ async def translate_pdf(
             provider_config,
             threads,
             ignore_cache,
+            on_progress,
+            cancellation_event,
         )
         started = time.perf_counter()
         if executor is not None:

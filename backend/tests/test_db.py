@@ -70,11 +70,13 @@ def test_only_expected_tables_exist(tmp_path: Path) -> None:
     finally:
         connection.close()
 
-    assert tables == ["profiles", "schema_version"]
+    # Grown by DS-BE-007. Still pinned to an exact set: a table for a phase
+    # that has not started is a failure, which was the original guard's point.
+    assert tables == ["documents", "profiles", "schema_version", "translation_tasks"]
 
     forbidden = {
-        "documents", "pages", "sections", "paragraphs", "glossary",
-        "translation_tasks", "tasks", "chat_sessions", "chat_messages", "chunks_fts",
+        "pages", "sections", "paragraphs", "glossary",
+        "tasks", "chat_sessions", "chat_messages", "chunks_fts",
     }
     assert not forbidden & set(tables), f"speculative tables present: {forbidden & set(tables)}"
 

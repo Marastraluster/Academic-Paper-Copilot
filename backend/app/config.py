@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     cors_origins: str = DEFAULT_CORS_ORIGINS
     debug: bool = False
 
+    #: Where imported documents and their derived artifacts live. One
+    #: subdirectory per document, named by its opaque id.
+    documents_dir: Path = Field(
+        default_factory=lambda: default_data_dir() / "documents"
+    )
+    #: Upload ceiling. A local single-user app, so this is a guard against
+    #: accidental enormous uploads rather than a security boundary.
+    max_upload_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
+
     @field_validator("host")
     @classmethod
     def _reject_non_loopback(cls, value: str) -> str:

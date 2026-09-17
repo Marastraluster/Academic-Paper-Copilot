@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 #: Current schema version. Bump when adding a migration below.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 #: The version every database starts at, before any migration runs.
 BASELINE_VERSION = 1
@@ -79,9 +79,59 @@ def _migration_002_create_profiles(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_003_create_documents_and_tasks(connection: sqlite3.Connection) -> None:
+    """Add documents and their translation tasks.
+
+    ``translation_tasks`` cascades on document delete so removing a document
+    cannot leave orphaned task rows pointing at nothing.
+
+    Note what is still absent: no column holds a file *path* for uploaded
+    documents beyond the id-addressed directory, and none holds credential
+    material. ``source_path`` exists only for path-imports, where the file stays
+    where the user put it.
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS documents (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            page_count  INTEGER NOT NULL,
+            is_upload   INTEGER NOT NULL DEFAULT 1,
+            source_path TEXT,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS translation_tasks (
+            id                  TEXT PRIMARY KEY,
+            document_id         TEXT NOT NULL
+                                REFERENCES documents(id) ON DELETE CASCADE,
+            profile_id          TEXT NOT NULL,
+            status              TEXT NOT NULL,
+            lang_in             TEXT NOT NULL,
+            lang_out            TEXT NOT NULL,
+            engine              TEXT NOT NULL,
+            progress_page       INTEGER,
+            progress_page_count INTEGER,
+            error_code          TEXT,
+            error_message       TEXT,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_document ON translation_tasks(document_id)"
+    )
+
+
 #: version -> migration. Each entry upgrades the database *to* that version.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migration_002_create_profiles,
+    3: _migration_003_create_documents_and_tasks,
 }
 
 

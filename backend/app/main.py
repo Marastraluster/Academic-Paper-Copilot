@@ -20,11 +20,14 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import health, profiles
+from app.api import documents, health, profiles
+from app.api.documents import register_document_error_handlers
 from app.api.profiles import register_profile_error_handlers
 from app.config import Settings
 from app.db import bootstrap_database
 from app.errors import register_exception_handlers
+from app.documents.store import DocumentStore
+from app.documents.tasks import TaskRunner
 from app.storage.profiles import ProfileStore
 from app.logging import (
     REQUEST_ID_HEADER,
@@ -56,6 +59,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # opening their own connection per request.
         app.state.profile_store = ProfileStore(connection)
 
+        document_store = DocumentStore(connection, resolved.documents_dir)
+        task_runner = TaskRunner(document_store, app.state.profile_store)
+        app.state.document_store = document_store
+        app.state.task_runner = task_runner
+
+        # A translation runs in memory, so a restart orphans whatever was in
+        # flight. Mark those as failed rather than leaving them looking active.
+        interrupted = document_store.reconcile_interrupted_tasks()
+        if interrupted:
+            logger.info(
+                "Marked interrupted translations as failed",
+                extra={"count": interrupted},
+            )
+
         logger.info(
             "Backend started",
             extra={
@@ -70,6 +87,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            # Ask any in-flight translation to stop before the connection closes.
+            await task_runner.shutdown()
             connection.close()
             logger.info("Backend stopped")
 
@@ -124,9 +143,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     register_profile_error_handlers(app)
+    register_document_error_handlers(app)
 
     app.include_router(health.router, prefix="/api")
     app.include_router(profiles.router, prefix="/api")
+    app.include_router(documents.router, prefix="/api")
     return app
 
 

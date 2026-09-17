@@ -69,7 +69,8 @@ def test_migration_creates_the_profiles_table(db_path: Path) -> None:
         connection.close()
 
     assert "profiles" in tables
-    assert versions[-1] == SCHEMA_VERSION == 2
+    # DS-BE-007 added documents and translation_tasks, raising this to 3.
+    assert versions[-1] == SCHEMA_VERSION == 3
 
 
 def test_migration_preserves_existing_v1_data(tmp_path: Path) -> None:
@@ -90,7 +91,7 @@ def test_migration_preserves_existing_v1_data(tmp_path: Path) -> None:
     finally:
         connection.close()
 
-    assert [row["version"] for row in rows] == [1, 2]
+    assert [row["version"] for row in rows] == [1, 2, 3]
     assert rows[0]["applied_at"] == "2026-01-01T00:00:00+00:00", "the original v1 row was altered"
     assert "profiles" in tables
 
