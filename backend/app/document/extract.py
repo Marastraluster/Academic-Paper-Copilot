@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -158,6 +159,16 @@ def extract_document_ir(
         sections = _detect_sections(ordered_blocks, document_id, document.page_count)
         _assign_sections(paragraphs, sections, ordered_blocks)
 
+        metadata = _read_metadata(document)
+        if metadata.title is None:
+            # PDF metadata has no usable title (or only a generator's name), so
+            # fall back to what the page itself shows. Measured on a real paper:
+            # arXiv PDFs routinely carry no title metadata at all, which is
+            # exactly when the layout title is worth having.
+            title_block = layout_title_block(ordered_blocks)
+            if title_block is not None:
+                metadata.title = join_wrapped_lines(title_block.text.split("\n")) or None
+
         has_text_layer = any(page.has_text for page in pages)
 
         ir = DocumentIR(
@@ -165,7 +176,7 @@ def extract_document_ir(
             content_hash=before[0],
             source_filename=source_filename or source.name,
             page_count=document.page_count,
-            metadata=_read_metadata(document),
+            metadata=metadata,
             sections=sections,
             pages=pages,
             paragraphs=paragraphs,
@@ -204,9 +215,17 @@ def _fingerprint(path: Path) -> tuple[str, int, float]:
 # --- page extraction ----------------------------------------------------------
 
 
-def _read_text_lines(page: fitz.Page) -> list[tuple[str, BoundingBox]]:
-    """Every text line on the page, with its bbox, in PyMuPDF's order."""
-    lines: list[tuple[str, BoundingBox]] = []
+def _read_text_lines(page: fitz.Page) -> list[tuple[str, BoundingBox, float]]:
+    """Every text line on the page, with its bbox and dominant font size.
+
+    Font size is kept because it is the only reliable way to tell a heading from
+    a table sub-label — both arrive from the layout model labelled `title`, and
+    neither geometry nor the surrounding blocks separate them. Measured on a real
+    paper: a heading is set larger than body text, a table label is set at body
+    size. Weighted by character count so one oversized glyph in a line does not
+    decide the line's size.
+    """
+    lines: list[tuple[str, BoundingBox, float]] = []
     for block in page.get_text("dict").get("blocks", []):
         if block.get("type") != 0:  # 0 = text; 1 = image
             continue
@@ -214,8 +233,13 @@ def _read_text_lines(page: fitz.Page) -> list[tuple[str, BoundingBox]]:
             text = "".join(span.get("text", "") for span in line.get("spans", []))
             if not text.strip():
                 continue
+            sizes: defaultdict[float, int] = defaultdict(int)
+            for span in line.get("spans", []):
+                if span.get("text", "").strip():
+                    sizes[round(float(span.get("size", 0.0)), 1)] += len(span["text"])
+            size = max(sizes, key=lambda value: sizes[value]) if sizes else 0.0
             x0, y0, x1, y1 = line["bbox"]
-            lines.append((text, (float(x0), float(y0), float(x1), float(y1))))
+            lines.append((text, (float(x0), float(y0), float(x1), float(y1)), size))
     return lines
 
 
@@ -236,10 +260,12 @@ def _extract_page_blocks(
     # Assign each line to the detected region containing its centre. A line
     # straddling two regions goes to the first match; a line in no region is
     # collected below rather than dropped, because AC-DOC-03 forbids losing text.
-    buckets: dict[int, list[str]] = {index: [] for index in range(len(detected))}
-    orphans: list[tuple[str, BoundingBox]] = []
+    buckets: dict[int, list[tuple[str, float]]] = {
+        index: [] for index in range(len(detected))
+    }
+    orphans: list[tuple[str, BoundingBox, float]] = []
 
-    for text, bbox in text_lines:
+    for text, bbox, size in text_lines:
         centre_x = (bbox[0] + bbox[2]) / 2
         centre_y = (bbox[1] + bbox[3]) / 2
         owner = None
@@ -249,23 +275,30 @@ def _extract_page_blocks(
                 owner = index
                 break
         if owner is None:
-            orphans.append((text, bbox))
+            orphans.append((text, bbox, size))
         else:
-            buckets[owner].append(text)
+            buckets[owner].append((text, size))
 
     blocks: list[TextBlockIR] = []
     for index, box in enumerate(detected):
-        lines = buckets[index]
-        if not lines:
+        collected = buckets[index]
+        if not collected:
             # A detected region with no text is still recorded: a figure has
             # geometry worth keeping even when it has no extractable words.
             if box.label == LAYOUT_FIGURE or box.label == LAYOUT_TABLE:
-                blocks.append(_block(document_id, page_index, page_number, len(blocks), box.label, box.bbox, ""))
+                blocks.append(
+                    _block(
+                        document_id, page_index, page_number, len(blocks),
+                        box.label, box.bbox, "", None,
+                    )
+                )
             continue
         blocks.append(
             _block(
                 document_id, page_index, page_number, len(blocks),
-                box.label, box.bbox, "\n".join(lines),
+                box.label, box.bbox,
+                "\n".join(text for text, _ in collected),
+                _dominant_size(collected),
             )
         )
 
@@ -276,12 +309,25 @@ def _extract_page_blocks(
         blocks.append(
             _block(
                 document_id, page_index, page_number, len(blocks),
-                LAYOUT_PLAIN_TEXT, _union([bbox for _, bbox in orphans]),
-                "\n".join(text for text, _ in orphans),
+                LAYOUT_PLAIN_TEXT,
+                _union([bbox for _, bbox, _ in orphans]),
+                "\n".join(text for text, _, _ in orphans),
+                _dominant_size([(text, size) for text, _, size in orphans]),
             )
         )
 
     return blocks
+
+
+def _dominant_size(lines: list[tuple[str, float]]) -> float | None:
+    """The font size most of the text is set in, weighted by character count."""
+    weights: defaultdict[float, int] = defaultdict(int)
+    for text, size in lines:
+        if size:
+            weights[size] += len(text)
+    if not weights:
+        return None
+    return max(weights, key=lambda value: weights[value])
 
 
 def _block(
@@ -292,6 +338,7 @@ def _block(
     layout_class: str,
     bbox: BoundingBox,
     text: str,
+    font_size: float | None,
 ) -> TextBlockIR:
     return TextBlockIR(
         id=f"b_{document_id}_p{page_number}_{ordinal:03d}",
@@ -300,6 +347,7 @@ def _block(
         layout_class=layout_class,
         bbox=bbox,
         text=text,
+        font_size=font_size,
     )
 
 
@@ -360,6 +408,35 @@ def order_blocks(blocks: list[TextBlockIR], *, page_width_pt: float) -> list[Tex
     span = max(right - left, 1.0)
     full_width_threshold = FULL_WIDTH_RATIO * span
 
+    # A block can also span the page without being wide relative to it: a line
+    # that crosses the gutter between two columns does. Measured on a real paper,
+    # an author-email line at y=184 between the byline and the abstract was
+    # ordered *after* prose at y=555 — it fitted neither column and became a
+    # column of its own, sorted last by x. Such a block belongs at its own
+    # vertical position, so it is treated the same way as a full-width one.
+    narrow = [
+        block
+        for block in text_blocks
+        if block.bbox[2] - block.bbox[0] < full_width_threshold
+    ]
+    gutter = (
+        _column_split(
+            narrow,
+            min(block.bbox[0] for block in narrow),
+            max(block.bbox[2] for block in narrow),
+        )
+        if len(narrow) >= 2
+        else None
+    )
+
+    def is_wide(block: TextBlockIR) -> bool:
+        if block.bbox[2] - block.bbox[0] >= full_width_threshold:
+            return True
+        if gutter is None:
+            return False
+        x0, _, x1, _ = block.bbox
+        return x0 < gutter - _GUTTER_REACH_PT and x1 > gutter + _GUTTER_REACH_PT
+
     ordered: list[TextBlockIR] = []
     band: list[TextBlockIR] = []
 
@@ -369,9 +446,9 @@ def order_blocks(blocks: list[TextBlockIR], *, page_width_pt: float) -> list[Tex
             band.clear()
 
     for block in sorted(text_blocks, key=lambda b: (b.bbox[1], b.bbox[0])):
-        if block.bbox[2] - block.bbox[0] >= full_width_threshold and len(band) > 0:
+        if is_wide(block) and len(band) > 0:
             flush()
-        if block.bbox[2] - block.bbox[0] >= full_width_threshold:
+        if is_wide(block):
             ordered.append(block)
         else:
             band.append(block)
@@ -384,39 +461,120 @@ def order_blocks(blocks: list[TextBlockIR], *, page_width_pt: float) -> list[Tex
     return ordered
 
 
+#: How far a block must reach across the gutter on each side before it is
+#: treated as spanning the columns. Large enough that a block merely touching a
+#: neighbouring column's edge is not counted as crossing.
+_GUTTER_REACH_PT = 12.0
+
+#: Narrower than this, an empty vertical channel is a gap between words rather
+#: than a gutter between columns.
+_MIN_GUTTER_PT = 8.0
+
+#: Resolution of the horizontal occupancy profile used to find the gutter.
+_PROFILE_CELLS = 200
+
+
+def _column_split(
+    blocks: list[TextBlockIR], left: float, right: float
+) -> float | None:
+    """The x of the gutter between two columns, or ``None`` if there is one column.
+
+    Found from an occupancy profile: project every block onto the x axis and look
+    for the widest empty vertical channel near the middle of the content. A
+    genuine gutter is a channel no text crosses.
+
+    This replaced a greedy "merge overlapping rectangles" grouping, which failed
+    on a real paper: a full-width line overlaps *both* columns, so it was merged
+    into whichever it happened to touch first, dragging the title, the byline and
+    the author emails into the right-hand column and interleaving the whole page.
+
+    Only two columns are resolved. That covers academic papers, which is what
+    this is for; a three-column layout degrades to "left half, right half"
+    rather than being mis-ordered in some more inventive way.
+    """
+    width = right - left
+    if width <= 0 or len(blocks) < 2:
+        return None
+
+    # The profile counts how many *distinct blocks* cover each x position, and the
+    # gutter is where that count is lowest — not necessarily zero.
+    #
+    # Requiring an empty channel fails on real papers. A title, a byline and an
+    # author-email line all cross the middle without being column content, so a
+    # strictly-empty test finds no gutter at all and collapses the page into one
+    # column; a 5pt page number sitting in the channel does the same. The gutter
+    # is instead the place fewest things cross.
+    minimum_column_width = max(10.0, 0.02 * width)
+    banner_width = 0.9 * width
+
+    counts = [0] * _PROFILE_CELLS
+    contributors = 0
+    for block in blocks:
+        block_width = block.bbox[2] - block.bbox[0]
+        # Slivers cannot be columns, and a near-full-width banner spans
+        # everything, so neither tells us anything about where a gutter is.
+        if block_width < minimum_column_width or block_width >= banner_width:
+            continue
+        contributors += 1
+        start = int((block.bbox[0] - left) / width * _PROFILE_CELLS)
+        end = int((block.bbox[2] - left) / width * _PROFILE_CELLS + 0.5)
+        for cell in range(max(0, start), min(_PROFILE_CELLS, max(end, start + 1))):
+            counts[cell] += 1
+
+    if contributors < 4:
+        return None
+
+    # Only the middle 60% is considered: the outer fifths are ragged from
+    # justification, and treating that as a gutter would split nothing.
+    lo, hi = _PROFILE_CELLS // 5, _PROFILE_CELLS * 4 // 5
+    lowest = min(counts[lo:hi])
+
+    # If even the quietest channel is crossed by most of the page, this is a
+    # single-column layout and there is nothing to split.
+    if lowest > max(1, int(0.35 * contributors)):
+        return None
+
+    best: tuple[int, int] | None = None
+    run_start: int | None = None
+    for cell in range(lo, hi + 1):
+        at_minimum = cell < hi and counts[cell] == lowest
+        if at_minimum:
+            if run_start is None:
+                run_start = cell
+        elif run_start is not None:
+            best = _wider(best, (run_start, cell))
+            run_start = None
+
+    if best is None or (best[1] - best[0]) / _PROFILE_CELLS * width < _MIN_GUTTER_PT:
+        return None
+
+    return left + (best[0] + best[1]) / 2 / _PROFILE_CELLS * width
+
+
+def _wider(current: tuple[int, int] | None, candidate: tuple[int, int]) -> tuple[int, int]:
+    if current is None:
+        return candidate
+    return candidate if (candidate[1] - candidate[0]) > (current[1] - current[0]) else current
+
+
 def _order_band(band: list[TextBlockIR]) -> list[TextBlockIR]:
     """Read one band column by column, left to right."""
-    columns = _columns_of(band)
-    result: list[TextBlockIR] = []
-    for column in columns:
-        result.extend(sorted(column, key=lambda b: (b.bbox[1], b.bbox[0])))
-    return result
+    left = min(block.bbox[0] for block in band)
+    right = max(block.bbox[2] for block in band)
+    split = _column_split(band, left, right)
 
+    if split is None:
+        return sorted(band, key=lambda b: (b.bbox[1], b.bbox[0]))
 
-def _columns_of(band: list[TextBlockIR]) -> list[list[TextBlockIR]]:
-    """Group blocks into vertical columns by horizontal overlap.
+    first: list[TextBlockIR] = []
+    second: list[TextBlockIR] = []
+    for block in band:
+        centre = (block.bbox[0] + block.bbox[2]) / 2
+        (first if centre < split else second).append(block)
 
-    Not a clustering algorithm: blocks whose rectangles overlap horizontally
-    belong together, and the merge order is left to right, which is the order
-    they are read.
-    """
-    columns: list[list[TextBlockIR]] = []
-    spans: list[list[float]] = []
-
-    for block in sorted(band, key=lambda b: b.bbox[0]):
-        x0, _, x1, _ = block.bbox
-        width = max(x1 - x0, 1.0)
-        for index, (span_x0, span_x1) in enumerate(spans):
-            overlap = min(x1, span_x1) - max(x0, span_x0)
-            if overlap > 0.5 * width:
-                spans[index] = [min(x0, span_x0), max(x1, span_x1)]
-                columns[index].append(block)
-                break
-        else:
-            spans.append([x0, x1])
-            columns.append([block])
-
-    return [column for _, column in sorted(zip(spans, columns), key=lambda pair: pair[0][0])]
+    return sorted(first, key=lambda b: (b.bbox[1], b.bbox[0])) + sorted(
+        second, key=lambda b: (b.bbox[1], b.bbox[0])
+    )
 
 
 # --- paragraphs ---------------------------------------------------------------
@@ -527,6 +685,75 @@ def _link_captions(pages: list[PageIR]) -> None:
 
 # --- sections -----------------------------------------------------------------
 
+#: How much larger than body text a `title` block must be set to count as a
+#: heading. Measured on a real paper: every genuine heading was at least 1pt
+#: larger, every table sub-label was exactly body size — so the gap is not a
+#: judgement call, and a small margin is enough to absorb rounding.
+_HEADING_SIZE_MARGIN = 0.4
+
+
+def _body_size_by_page(blocks: list[TextBlockIR]) -> dict[int, float]:
+    """The size a page's body prose is set in, weighted by character count.
+
+    Derived from the blocks the layout model called `plain text`, which is the
+    most direct evidence available for "what body text looks like here".
+    """
+    weights: dict[int, defaultdict[float, int]] = defaultdict(lambda: defaultdict(int))
+    for block in blocks:
+        if block.layout_class != LAYOUT_PLAIN_TEXT or block.font_size is None:
+            continue
+        weights[block.page_number][block.font_size] += len(block.text)
+
+    result: dict[int, float] = {}
+    for page_number, sizes in weights.items():
+        if sizes:
+            result[page_number] = max(sizes, key=lambda value: sizes[value])
+    return result
+
+
+def _is_heading_sized(block: TextBlockIR, body_sizes: dict[int, float]) -> bool:
+    """Whether a `title`-classified block is typographically a heading.
+
+    The layout model labels the paper's title, every section heading, *and*
+    table sub-labels such as "PASCAL VOC" as `title`. Geometry does not separate
+    them — measured, and both obvious heuristics failed: a table label sat within
+    zero points of a table while "Abstract" did too, and "followed by prose"
+    matched every one of the six spurious headings on a real paper.
+
+    Font size does separate them, cleanly: a heading is set larger than body
+    text, a sub-label is set at body size. On the paper this was validated
+    against, the rule accepted all 17 real headings and rejected all 6 spurious
+    ones.
+
+    Where the evidence is missing — a caller constructing blocks by hand, or a
+    PDF with no usable font metrics — the block is accepted. Rejecting on absent
+    evidence would silently drop real sections.
+    """
+    body = body_sizes.get(block.page_number)
+    if block.font_size is None or body is None:
+        return True
+    return block.font_size > body + _HEADING_SIZE_MARGIN
+
+
+def layout_title_block(blocks: list[TextBlockIR]) -> TextBlockIR | None:
+    """The largest `title` block on page one — the paper's own title.
+
+    Preferred over PDF metadata, which is frequently absent and occasionally
+    wrong. Font size decides, because the title is the largest thing on the
+    first page; the bounding-box height is only a tie-break.
+    """
+    first_page = [
+        block
+        for block in blocks
+        if block.page_number == 1 and block.layout_class == LAYOUT_TITLE and block.text.strip()
+    ]
+    if not first_page:
+        return None
+    return max(
+        first_page,
+        key=lambda block: (block.font_size or 0.0, block.bbox[3] - block.bbox[1]),
+    )
+
 
 def _detect_sections(
     blocks: list[TextBlockIR],
@@ -548,18 +775,14 @@ def _detect_sections(
     headings = [
         block
         for block in blocks
-        if block.layout_class == LAYOUT_TITLE and block.text.strip()
+        if block.layout_class == LAYOUT_TITLE
+        and block.text.strip()
+        and _is_heading_sized(block, _body_size_by_page(blocks))
     ]
     if not headings:
         return []
 
-    # The first page's tallest heading is the paper's title, not a section.
-    first_page = [heading for heading in headings if heading.page_number == 1]
-    title_block = (
-        max(first_page, key=lambda heading: heading.bbox[3] - heading.bbox[1])
-        if first_page
-        else None
-    )
+    title_block = layout_title_block(blocks)
     section_headings = [heading for heading in headings if heading is not title_block]
 
     sections: list[SectionIR] = []

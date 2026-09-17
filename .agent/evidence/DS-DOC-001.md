@@ -215,7 +215,7 @@ All 26 pass. The load-bearing ones:
 | AC-DOC-27 heading hierarchy | **PASS** — levels from numbering; unnumbered defaults to 1 |
 | AC-DOC-28 abstract detection | **PASS** — keyword-anchored; absent an anchor, nothing is invented |
 | AC-DOC-29 references boundary | **PASS** — flagged from the heading |
-| AC-DOC-30 title extraction | **PASS** — generic metadata rejected, `None` over a guess |
+| AC-DOC-30 title extraction | **CORRECTED — see the Gate 0 record.** Originally reported PASS. Only the *metadata* half was implemented: generic values were rejected and `None` was preferred to a guess. But the criterion's primary clause — take the title from the largest `title`-class layout block on page one, falling back to metadata — was never implemented at all, and no test covered it. Gate 0 caught it on a real arXiv paper, whose PDF carries no title metadata, so `metadata.title` came back `None` for a paper whose title is printed plainly on page 1. Now implemented, with its own regression test. |
 | AC-DOC-31 explicit trigger | **PASS** — `reused` honoured, `force` re-runs |
 | **AC-DOC-32 real-paper verification** | **PARTIAL — see below** |
 

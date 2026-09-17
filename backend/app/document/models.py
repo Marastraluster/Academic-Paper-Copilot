@@ -103,6 +103,15 @@ class TextBlockIR(BaseModel):
     bbox: BoundingBox
     text: str
 
+    #: Dominant font size in points, weighted by character count.
+    #:
+    #: Source-derived evidence, not interpretation: this is what the PDF says, so
+    #: it belongs in the IR rather than being recomputed from the file each time.
+    #: It is how a heading is told apart from a table label that the layout model
+    #: also called `title` — a heading is set larger than the body text, a table
+    #: sub-label is not.
+    font_size: float | None = None
+
     #: Set on a caption, naming the figure/table block it belongs to.
     caption_of: str | None = None
 

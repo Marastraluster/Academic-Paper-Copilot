@@ -518,6 +518,129 @@ def test_unnumbered_heading_defaults_to_level_one():
     assert sections[0].level == 1
 
 
+def test_title_block_at_body_size_is_not_a_heading():
+    """Gate 0 regression — a `title` block set at body size is a label, not a heading.
+
+    Found on a real 12-page paper: the layout model labels the paper title, all
+    17 genuine section headings, *and* five table sub-labels such as "PASCAL VOC"
+    as `title`. Promoting those produced five phantom sections. Font size is what
+    separates them — the headings were all ≥ 1pt larger than body text, the
+    sub-labels were exactly body size.
+    """
+    blocks = [
+        make_block("t", "A Paper Title", (72, 60, 540, 90), LAYOUT_TITLE).model_copy(
+            update={"font_size": 14.0}
+        ),
+        make_block("body", "Ordinary body prose here.", (72, 100, 540, 120)).model_copy(
+            update={"font_size": 10.0}
+        ),
+        make_block("h", "1. A Real Section", (72, 140, 300, 160), LAYOUT_TITLE).model_copy(
+            update={"font_size": 12.0}
+        ),
+        make_block("label", "PASCAL VOC", (72, 180, 200, 196), LAYOUT_TITLE).model_copy(
+            update={"font_size": 10.0}
+        ),
+    ]
+
+    from app.document.extract import _detect_sections
+
+    sections = _detect_sections(blocks, "doc_h", page_count=1)
+    titles = [section.title for section in sections]
+
+    assert "1. A Real Section" in titles
+    assert "PASCAL VOC" not in titles, "a body-size label was promoted to a section"
+
+
+def test_heading_sized_blocks_are_accepted_when_font_evidence_is_absent():
+    """A hand-built block carries no font size; it must not be silently dropped."""
+    blocks = [
+        make_block("t", "A Paper Title", (72, 60, 540, 90), LAYOUT_TITLE),
+        make_block("h", "1. Introduction", (72, 120, 300, 140), LAYOUT_TITLE),
+        make_block("b", "Body.", (72, 150, 540, 170)),
+    ]
+
+    from app.document.extract import _detect_sections
+
+    sections = _detect_sections(blocks, "doc_h", page_count=1)
+    assert [section.title for section in sections] == ["1. Introduction"]
+
+
+def test_narrow_block_crossing_the_gutter_keeps_its_position():
+    """Gate 0 regression — a line spanning both columns is read where it sits.
+
+    Measured on a real paper: an author-email line at y=184, between the byline
+    and the abstract, was ordered *after* prose at y=555 because it fitted
+    neither column and so became a column of its own, sorted last by x.
+    """
+    blocks = [
+        make_block("t", "Title", (152, 100, 443, 118), LAYOUT_TITLE),
+        make_block("byline", "A. Author", (136, 130, 459, 142)),
+        make_block("email", "a@b.com and c@d.com", (195, 150, 401, 162)),
+        make_block("abstract", "Abstract", (146, 180, 191, 192), LAYOUT_TITLE),
+        make_block("left1", "Left column prose one.", (49, 200, 287, 400)),
+        make_block("left2", "Left column prose two.", (49, 410, 287, 600)),
+        make_block("right1", "Right column prose one.", (308, 200, 546, 400)),
+        make_block("right2", "Right column prose two.", (308, 410, 546, 600)),
+    ]
+
+    ordered = [block.id for block in order_blocks(blocks, page_width_pt=612)]
+
+    assert ordered.index("email") < ordered.index("abstract"), (
+        "a gutter-crossing line was swept out of its reading position"
+    )
+    assert ordered.index("left2") < ordered.index("right1")
+
+
+def test_a_sliver_in_the_gutter_does_not_hide_the_column_split():
+    """Gate 0 regression — one stray numeral must not collapse a two-column page.
+
+    A 5pt page number sitting in the gutter filled the empty channel, so no
+    gutter was detected, the page read as one column, and every page interleaved.
+    """
+    blocks = [
+        make_block("left1", "Left column prose one.", (49, 200, 287, 400)),
+        make_block("left2", "Left column prose two.", (49, 410, 287, 600)),
+        make_block("right1", "Right column prose one.", (308, 200, 546, 400)),
+        make_block("right2", "Right column prose two.", (308, 410, 546, 600)),
+        make_block("page_num", "1", (295, 730, 300, 740)),
+        make_block("left3", "Left column prose three.", (49, 610, 287, 700)),
+    ]
+
+    ordered = [block.id for block in order_blocks(blocks, page_width_pt=612)]
+
+    assert ordered.index("left3") < ordered.index("right1"), (
+        "the stray numeral in the gutter collapsed the column split"
+    )
+
+
+def test_layout_title_fills_in_absent_pdf_metadata(tmp_path: Path):
+    """Gate 0 regression — AC-DOC-30.
+
+    arXiv PDFs routinely carry no title metadata, which is exactly when the
+    title printed on the page is worth having. Only the metadata half of this
+    criterion was implemented at first; the layout half is what makes it work on
+    a real paper.
+    """
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((150, 90), "Deep Residual Learning for Image Recognition", fontsize=15)
+    y = 140
+    for line in (
+        "The policy is optimized through multiple rollouts collected from a deployed",
+        "system, and we evaluate it on three benchmarks with identical settings.",
+    ):
+        page.insert_text((72, y), line, fontsize=10)
+        y += 14
+    source = tmp_path / "untitled.pdf"
+    document.set_metadata({"title": "", "producer": "LaTeX2e"})
+    document.save(str(source))
+    document.close()
+
+    ir = extract_document_ir(source, "doc_t")
+
+    assert ir.metadata.title == "Deep Residual Learning for Image Recognition"
+
+
 def test_references_section_flagged():
     """AC-DOC-29."""
     blocks = [
