@@ -30,6 +30,7 @@ from app.llm.errors import (
     LLMNotFoundError,
     LLMPermissionDeniedError,
     LLMRateLimitError,
+    LLMOutputTruncatedError,
     LLMServerError,
     LLMTimeoutError,
     sanitize_message,
@@ -177,6 +178,9 @@ def _provider_error_response(exc: LLMError) -> Any:
         (LLMPermissionDeniedError, 502, "PROVIDER_AUTH_FAILED", {"http_status": 403}),
         (LLMRateLimitError, 502, "PROVIDER_RATE_LIMITED", {"http_status": 429}),
         (LLMNotFoundError, 502, "PROVIDER_MODEL_NOT_FOUND", {"http_status": 404}),
+        # Truncation is not the provider failing — the budget given to it was
+        # too small. Reported as such so the fix is obvious.
+        (LLMOutputTruncatedError, 502, "PROVIDER_OUTPUT_TRUNCATED", {}),
         (LLMTimeoutError, 504, "PROVIDER_TIMEOUT", {}),
         (LLMConnectionError, 502, "PROVIDER_UNREACHABLE", {}),
         (LLMServerError, 502, "PROVIDER_ERROR", {}),

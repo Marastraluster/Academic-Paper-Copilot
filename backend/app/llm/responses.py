@@ -41,6 +41,7 @@ from app.llm.errors import (
     LLMBadRequestError,
     LLMError,
     LLMInvalidResponseError,
+    LLMOutputTruncatedError,
     LLMRateLimitError,
     LLMServerError,
     LLMTimeoutError,
@@ -136,6 +137,20 @@ class OpenAIResponsesProvider(LLMProvider):
 
         try:
             result = await self.generate(request)
+        except LLMOutputTruncatedError:
+            # The endpoint answered in the right schema and was cut off by the
+            # one-token probe budget — which is what a reasoning model does.
+            # Speaking the protocol is the question a probe asks, and it did.
+            return ConnectionReport(
+                ok=True,
+                latency_ms=(time.perf_counter() - started) * 1000.0,
+                message=(
+                    "Connection successful. The probe returned no text within one "
+                    "token — expected for a reasoning model, whose thinking is "
+                    "counted against the output budget."
+                ),
+                model=self._config.model,
+            )
         except LLMError as exc:
             return ConnectionReport(ok=False, latency_ms=None, message=f"{exc.code}: {exc.message}")
 
@@ -218,8 +233,15 @@ class OpenAIResponsesProvider(LLMProvider):
             raise LLMInvalidResponseError(f"Provider refused request: {refusal}")
 
         if getattr(response, "status", None) == "incomplete":
-            raise LLMInvalidResponseError(
-                "Provider returned incomplete response with no usable content"
+            # Incomplete is truncation, not an empty answer: the response was cut
+            # short before it produced text. Reported distinctly so a caller can
+            # raise the budget and retry instead of concluding the provider is
+            # broken — see `LLMOutputTruncatedError`.
+            details = getattr(response, "incomplete_details", None)
+            reason = getattr(details, "reason", None) or "unknown"
+            raise LLMOutputTruncatedError(
+                f"The model's response was incomplete ({reason}) before it produced "
+                "any usable content. Raise the output allowance and try again."
             )
 
         raise LLMInvalidResponseError("Provider returned empty content")

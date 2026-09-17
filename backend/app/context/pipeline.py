@@ -59,6 +59,7 @@ from app.llm.errors import (
     LLMError,
     LLMInvalidResponseError,
     LLMNotFoundError,
+    LLMOutputTruncatedError,
     LLMPermissionDeniedError,
     LLMRateLimitError,
     LLMServerError,
@@ -138,10 +139,13 @@ class AnalysisPipeline:
         output_allowance: int = DEFAULT_OUTPUT_ALLOWANCE,
         cancellation_event: asyncio.Event | None = None,
     ) -> None:
-        if context_budget <= output_allowance + MIN_INPUT_ALLOWANCE:
+        # Room for input *and* for doubling the output allowance on a truncated
+        # retry. Without the second part a chunk that truncates cannot be given
+        # more room, which is the failure this budget exists to prevent.
+        if context_budget <= 2 * output_allowance + MIN_INPUT_ALLOWANCE:
             raise ValueError(
-                "context_budget leaves no room for input after overhead and the "
-                "output allowance"
+                "context_budget leaves no room for input once the output allowance "
+                "and its retry headroom are reserved"
             )
         self._complete = completion
         self._target_language = target_language
@@ -327,7 +331,9 @@ class AnalysisPipeline:
         paragraph would hand the model half a sentence, and for a formula-heavy
         paragraph it could hand it half an equation.
         """
-        input_allowance = self._budget - self._output_allowance
+        # Sized so a truncated chunk can be retried at double the output
+        # allowance without exceeding the budget.
+        input_allowance = self._budget - 2 * self._output_allowance
         chunks: list[list[ParagraphIR]] = []
         current: list[ParagraphIR] = []
         size = input_allowance - MIN_INPUT_ALLOWANCE
@@ -480,10 +486,18 @@ class AnalysisPipeline:
         input_tokens = sum(
             estimate_tokens(message["content"]) for message in messages
         )
-        if input_tokens + self._output_allowance > self._budget:
+        # The allowance is per-request, not instance state. Growing it for one
+        # truncated reply and keeping it would starve every later request in the
+        # run, since each chunk is sized against the original figure — which is
+        # exactly how a request of 1731 tokens came to be reported as exceeding
+        # a 6000 budget.
+        allowance = self._output_allowance
+
+        if input_tokens + allowance > self._budget:
             raise AnalysisValidationError(
                 "BUDGET_EXCEEDED",
-                f"a request of {input_tokens} tokens exceeds the {self._budget} budget",
+                f"a request needs {input_tokens} input tokens plus {allowance} reserved "
+                f"for the answer, which exceeds the {self._budget} token budget",
             )
 
         # `attempts` counts calls to the provider, not retries, so the table
@@ -492,17 +506,35 @@ class AnalysisPipeline:
         # all — `_FATAL` raises before any allowance is consulted.
         attempts = 0
         repair_attempts_left = 1
+        #: Truncation is retried with a *larger* allowance, so it gets its own
+        #: small counter rather than sharing the transport one — a retry at the
+        #: same size would truncate the same way.
+        truncation_retries_left = 2
 
         while True:
             self._check_cancelled()
             attempts += 1
             try:
-                text = await self._complete(messages, self._output_allowance)
+                text = await self._complete(messages, allowance)
                 self._requests += 1
                 return self._parse(text)
             except _FATAL:
                 # A rejected key is rejected the same way next time. Fail now.
                 raise
+            except LLMOutputTruncatedError:
+                # The model was cut off before it wrote anything — for a
+                # reasoning model, because its thinking is billed against the
+                # same budget. Retrying identically would truncate identically,
+                # so the retry buys more room, taken from what this request has
+                # left. When there is none left, retrying cannot help and the
+                # unit fails honestly.
+                if truncation_retries_left <= 0:
+                    raise
+                grown = min(allowance * 2, self._budget - input_tokens)
+                if grown <= allowance:
+                    raise
+                truncation_retries_left -= 1
+                allowance = grown
             except AnalysisValidationError as exc:
                 # Structurally wrong JSON: one repair attempt, with the error fed
                 # back to the model, and then done. A model that produced

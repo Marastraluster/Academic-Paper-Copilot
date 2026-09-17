@@ -98,6 +98,25 @@ class LLMServerError(LLMError):
     retryable = True
 
 
+class LLMOutputTruncatedError(LLMError):
+    """The model was cut off before it produced an answer.
+
+    Distinct from an empty response, and the distinction is not pedantic. A
+    reasoning model emits its thinking *first*, and those tokens count against
+    the output budget: ask for one token and the model spends it thinking, then
+    returns ``finish_reason="length"`` with no content at all. The endpoint, the
+    key and the model are all working perfectly — our budget was simply too
+    small for how long this model likes to think.
+
+    Reporting that as "empty content" blames the provider for our own estimate
+    and tells the reader nothing they can act on. Retryable, because a reasoning
+    model's length varies run to run and the same request often succeeds.
+    """
+
+    code = "LLM_OUTPUT_TRUNCATED"
+    retryable = True
+
+
 # --- Catch-all --------------------------------------------------------------
 
 

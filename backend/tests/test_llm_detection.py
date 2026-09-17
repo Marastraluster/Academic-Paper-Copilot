@@ -49,20 +49,30 @@ SECRET = "sk-live-DETECTION-SECRET-4242"
 
 
 class ProbeRecorder:
-    """Stands in for the network probe, recording what detection tried."""
+    """Stands in for the network probe, recording what detection tried.
+
+    Mirrors the real probe's contract: it **returns whether the protocol produced
+    usable text**. A protocol that answers but is cut off before writing anything
+    returns ``False`` rather than raising — the distinction detection now uses to
+    prefer a protocol that actually works over one that merely replies. Tests
+    that do not care leave `produces_text` empty and get ``True`` for everything.
+    """
 
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.failures: dict[str, BaseException] = {}
         self.delay = 0.0
+        #: Protocols that answer with no text. Absent means "produced text".
+        self.silent: set[str] = set()
 
-    async def __call__(self, config: ProviderConfig, protocol: str) -> None:
+    async def __call__(self, config: ProviderConfig, protocol: str) -> bool:
         self.calls.append(protocol)
         if self.delay:
             await asyncio.sleep(self.delay)
         failure = self.failures.get(protocol)
         if failure is not None:
             raise failure
+        return protocol not in self.silent
 
     @property
     def response_calls(self) -> int:
@@ -437,9 +447,10 @@ async def test_cancellation_propagates_and_leaves_the_key_usable(
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def slow_probe(config: ProviderConfig, protocol: str) -> None:
+    async def slow_probe(config: ProviderConfig, protocol: str) -> bool:
         started.set()
         await release.wait()
+        return True
 
     monkeypatch.setattr(detection, "_probe", slow_probe)
     configured = config()
@@ -458,8 +469,10 @@ async def test_cancellation_propagates_and_leaves_the_key_usable(
     clear_detection_cache()
     assert detection.get_detection_cache_stats()["entries"] == 0
 
-    async def quick_probe(config: ProviderConfig, protocol: str) -> None:
-        return None
+    async def quick_probe(config: ProviderConfig, protocol: str) -> bool:
+        # The probe seam reports whether usable text came back. True here so
+        # detection settles on the first protocol, as it did before.
+        return True
 
     monkeypatch.setattr(detection, "_probe", quick_probe)
     assert (await resolve_provider(configured)).protocol == "responses"
@@ -473,9 +486,10 @@ async def test_cancelling_one_waiter_does_not_cancel_the_others(
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def slow_probe(config: ProviderConfig, protocol: str) -> None:
+    async def slow_probe(config: ProviderConfig, protocol: str) -> bool:
         started.set()
         await release.wait()
+        return True
 
     monkeypatch.setattr(detection, "_probe", slow_probe)
     configured = config()
@@ -618,3 +632,56 @@ async def test_detection_logs_no_secret(probe: ProbeRecorder, caplog: pytest.Log
 
     assert SECRET not in caplog.text
     assert SECRET not in json.dumps(get_detection_cache_stats())
+
+
+# --- DS-CTX-001-QA: detecting a reasoning model -------------------------------
+
+
+class TestReasoningModelDetection:
+    """A reasoning model answers the one-token probe with no text at all.
+
+    It spends the token thinking and is cut off, so *every* protocol it speaks
+    looks equally inconclusive. Detection must still choose correctly — and must
+    still cost a single request when the first protocol works, which is the
+    property the tests above pin.
+    """
+
+    async def test_a_silent_probe_falls_through_to_one_that_answers(
+        self, probe: ProbeRecorder
+    ) -> None:
+        probe.silent = {"responses"}
+
+        provider = await resolve_provider(config())
+
+        assert provider.protocol == "chat_completions"
+        assert probe.calls == ["responses", "chat_completions"]
+
+    async def test_both_silent_settles_on_the_wider_protocol(
+        self, probe: ProbeRecorder
+    ) -> None:
+        """Neither produced text. Chat Completions is the safer of two equals."""
+        probe.silent = {"responses", "chat_completions"}
+
+        provider = await resolve_provider(config())
+
+        assert provider.protocol == "chat_completions"
+
+    async def test_a_silent_responses_probe_is_kept_when_the_other_fails(
+        self, probe: ProbeRecorder
+    ) -> None:
+        """It answered, which is more than the alternative managed."""
+        probe.silent = {"responses"}
+        probe.failures["chat_completions"] = LLMNotFoundError("no such route")
+
+        provider = await resolve_provider(config())
+
+        assert provider.protocol == "responses"
+
+    async def test_a_working_first_probe_still_costs_exactly_one_request(
+        self, probe: ProbeRecorder
+    ) -> None:
+        """The efficiency property this change had to preserve."""
+        await resolve_provider(config())
+
+        assert probe.calls == ["responses"]
+        assert probe.chat_calls == 0

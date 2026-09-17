@@ -536,15 +536,42 @@ async def test_incomplete_with_text_succeeds() -> None:
     assert result.text == "partial answer"
 
 
-async def test_incomplete_without_text_raises() -> None:
-    """AC-12 / AC-29.18."""
+async def test_incomplete_without_text_raises_truncation() -> None:
+    """AC-12 / AC-29.18, refined by DS-CTX-001-QA.
+
+    An incomplete response is *truncation*, not an invalid one: the endpoint
+    answered correctly and was cut off. Reported distinctly so the caller can
+    give it more room and retry, rather than being told the provider is broken.
+
+    This assertion previously pinned `LLM_INVALID_RESPONSE`. It was changed
+    deliberately when a real reasoning model exposed the difference — with a
+    one-token budget it returns exactly this, and calling it an invalid response
+    made the endpoint look unusable when it was healthy.
+    """
+    from app.llm.errors import LLMOutputTruncatedError
+
     provider, _ = provider_with(response=build_response(text=None, status="incomplete"))
+
+    with pytest.raises(LLMOutputTruncatedError) as excinfo:
+        await ask(provider)
+
+    assert excinfo.value.code == "LLM_OUTPUT_TRUNCATED"
+    assert excinfo.value.retryable is True
+
+
+async def test_a_complete_response_with_no_text_is_still_invalid() -> None:
+    """The guard this replaced is intact: only *truncation* changed meaning.
+
+    A response that finished normally and still carries no text is a provider
+    returning nothing, and that remains an invalid response rather than
+    something to retry with a bigger budget.
+    """
+    provider, _ = provider_with(response=build_response(text=None, status="completed"))
 
     with pytest.raises(LLMInvalidResponseError) as excinfo:
         await ask(provider)
 
     assert excinfo.value.code == "LLM_INVALID_RESPONSE"
-    assert excinfo.value.retryable is False
 
 
 # --- AC-13: failed status (Q2) ----------------------------------------------

@@ -28,6 +28,7 @@ from app.llm.errors import (
     LLMAuthenticationError,
     LLMConnectionError,
     LLMError,
+    LLMOutputTruncatedError,
     LLMPermissionDeniedError,
     LLMRateLimitError,
     LLMTimeoutError,
@@ -85,41 +86,75 @@ def _build_provider(config: ProviderConfig, protocol: str) -> LLMProvider:
     raise ValueError(f"Unsupported protocol {protocol!r}; expected one of {_VALID_PROTOCOLS}")
 
 
-async def _probe(config: ProviderConfig, protocol: str) -> None:
-    """Send the minimal probe, letting failures raise.
+async def _probe(config: ProviderConfig, protocol: str) -> bool:
+    """Send the minimal probe. Returns whether it produced usable *text*.
 
     Deliberately not ``provider.test_connection()``: that returns a report rather
     than raising, which discards the error *type* — and the type is exactly what
     decides abort-versus-fall-through.
+
+    One error is *not* a failure of the protocol. The probe asks for a single
+    token; a reasoning model spends it thinking and is then cut off, returning a
+    perfectly well-formed completion with no text. That is evidence the endpoint
+    speaks the protocol — weak evidence. A probe that produces text is strong
+    evidence, and the caller prefers it, because an endpoint can implement a
+    protocol nominally without it being the right one to use.
     """
     provider = _build_provider(config, protocol)
-    await provider.generate(
-        LLMRequest(
-            messages=[{"role": "user", "content": PROBE_PROMPT}],
-            max_output_tokens=PROBE_MAX_TOKENS,
+    try:
+        await provider.generate(
+            LLMRequest(
+                messages=[{"role": "user", "content": PROBE_PROMPT}],
+                max_output_tokens=PROBE_MAX_TOKENS,
+            )
         )
-    )
+        return True
+    except LLMOutputTruncatedError:
+        # Answered correctly; the one-token budget went on reasoning.
+        return False
 
 
 async def _detect(config: ProviderConfig) -> str:
-    """Probe Responses first, then Chat Completions."""
+    """Probe Responses first, then Chat Completions — but stop early.
+
+    Detection must cost **one** request when the first protocol works, which is
+    the common case and a property tests pin. It only pays for a second probe
+    when the first answered without producing text.
+
+    That second case is not hypothetical: a reasoning model given the one-token
+    probe spends it thinking and is cut off, so *any* protocol it speaks looks
+    equally inconclusive. Falling through then lets real text be the tie-breaker,
+    rather than whichever shape happened to be tried first — which is how an
+    endpoint that nominally implements both ends up on the wrong one.
+    """
     try:
-        await _probe(config, RESPONSES)
-        return RESPONSES
+        if await _probe(config, RESPONSES):
+            return RESPONSES
+        responses_answered = True
+        responses_error: LLMError | None = None
     except _ABORT_ERRORS:
         raise
-    except LLMError as responses_error:
-        first_failure = responses_error
+    except LLMError as exc:
+        responses_answered = False
+        responses_error = exc
 
     try:
-        await _probe(config, CHAT_COMPLETIONS)
+        if await _probe(config, CHAT_COMPLETIONS):
+            return CHAT_COMPLETIONS
+        # Answered, but produced no text either. Chat Completions is by far the
+        # more widely implemented shape, so it is the safer of two weak answers.
         return CHAT_COMPLETIONS
     except _ABORT_ERRORS:
         raise
     except LLMError as chat_error:
+        if responses_answered:
+            # Responses answered correctly and only lacked text; it is the better
+            # supported of the two here.
+            return RESPONSES
+
         message = sanitize_message(
             "Auto-detection failed: "
-            f"Responses probe failed ({first_failure.code}: {first_failure.message}); "
+            f"Responses probe failed ({responses_error.code}: {responses_error.message}); "
             f"Chat Completions probe failed ({chat_error.code}: {chat_error.message})",
             config.api_key.get_secret_value(),
         )

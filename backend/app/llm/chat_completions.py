@@ -33,7 +33,12 @@ from app.llm.client import (
     PROBE_PROMPT,
 )
 from app.llm.client import build_client as _build_client
-from app.llm.errors import LLMError, LLMInvalidResponseError, normalize_exception
+from app.llm.errors import (
+    LLMError,
+    LLMInvalidResponseError,
+    LLMOutputTruncatedError,
+    normalize_exception,
+)
 from app.llm.models import (
     ConnectionReport,
     LLMRequest,
@@ -102,6 +107,24 @@ class OpenAIChatCompletionsProvider(LLMProvider):
 
         try:
             result = await self.generate(request)
+        except LLMOutputTruncatedError:
+            # The endpoint answered, correctly and in the right schema — it just
+            # spent the whole one-token probe budget thinking before writing
+            # anything, which is what a reasoning model does. A completion the
+            # SDK could parse into a typed object with a finish reason and usage
+            # is proof the protocol is spoken, and that is the question a probe
+            # asks. Failing here would make every reasoning model unusable at the
+            # detection step while the endpoint itself is perfectly healthy.
+            return ConnectionReport(
+                ok=True,
+                latency_ms=(time.perf_counter() - started) * 1000.0,
+                message=(
+                    "Connection successful. The probe returned no text within one "
+                    "token — expected for a reasoning model, whose thinking is "
+                    "counted against the output budget."
+                ),
+                model=self._config.model,
+            )
         except LLMError as exc:
             return ConnectionReport(ok=False, latency_ms=None, message=f"{exc.code}: {exc.message}")
 
@@ -170,6 +193,22 @@ class OpenAIChatCompletionsProvider(LLMProvider):
             # An empty or whitespace-only completion is not a usable translation,
             # summary, or answer. Treating it as success would push the problem
             # downstream where the cause is much harder to see.
+            #
+            # But *why* it is empty decides what the caller should do about it.
+            # A `length` finish means the budget ran out mid-answer; for a
+            # reasoning model that is the normal outcome of a small budget,
+            # because the thinking tokens are spent first and count the same as
+            # answer tokens. That is our estimate being too small, not the
+            # provider failing, and it is worth retrying rather than reporting
+            # as an unusable endpoint.
+            reason = getattr(choices[0], "finish_reason", None)
+            if reason == "length":
+                raise LLMOutputTruncatedError(
+                    "The model produced no answer within the output budget of "
+                    f"{self._config.max_output_tokens or 'the request'} tokens. A reasoning "
+                    "model spends this budget on its reasoning before writing any "
+                    "answer; raise the output allowance and try again."
+                )
             raise LLMInvalidResponseError("Provider returned empty content")
 
         return LLMResult(

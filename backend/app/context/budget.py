@@ -24,14 +24,23 @@ import math
 #: Default ceiling for everything the analysis pipeline sends in one request:
 #: prompt overhead + source text + room for the answer.
 #:
-#: Conservative on purpose (see AC_CHANGE_REQUEST 1 in the frozen criteria):
-#: model context windows are not modelled, so this is a floor that every
-#: OpenAI-compatible endpoint comfortably supports, not a guess at any model's
-#: real capacity.
-DEFAULT_CONTEXT_BUDGET = 6000
+#: Still a conservative floor rather than a guess at any model's capacity — model
+#: context windows are not modelled here (see AC_CHANGE_REQUEST 1 in the frozen
+#: criteria). It was raised from 6000 after measuring a real reasoning model:
+#: thinking is billed against the output budget, so a budget sized only for the
+#: answer leaves nothing for a model that thinks before it writes.
+DEFAULT_CONTEXT_BUDGET = 16000
 
 #: Room reserved for the model's own answer within a request's budget.
-DEFAULT_OUTPUT_ALLOWANCE = 1200
+#:
+#: Measured, not guessed. On a realistic section prompt a reasoning model spent
+#: 950-1500 tokens thinking and ~1000 characters answering; at 4000 it answered
+#: cleanly through both protocols. At the original 1200 it returned *nothing at
+#: all* — the whole budget went on reasoning and `content` came back empty.
+#:
+#: Models that do not reason simply use less of this; the cost of over-reserving
+#: is a smaller chunk, not a wasted request.
+DEFAULT_OUTPUT_ALLOWANCE = 4000
 
 #: A request must leave this much of the budget for input after overhead.
 MIN_INPUT_ALLOWANCE = 400

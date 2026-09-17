@@ -890,3 +890,85 @@ def test_openai_is_declared_explicitly() -> None:
     manifest = (BACKEND_DIR / "pyproject.toml").read_text(encoding="utf-8")
 
     assert "openai" in manifest.lower()
+
+
+# --- DS-CTX-001-QA: truncation is not an empty response -----------------------
+
+
+class TestOutputTruncationIsReportedDistinctly:
+    """A real reasoning model returns a *truncated* answer, not an empty one.
+
+    `deepseek-flash`, configured with a one-token budget, spends that token
+    thinking and is then cut off: `finish_reason="length"`, `content=""`. The
+    endpoint is healthy. Reporting that as "Provider returned empty content"
+    blamed the provider for our own budget and told the reader nothing they could
+    act on — and in protocol auto-detection it made every reasoning model look
+    unusable.
+    """
+
+    @pytest.mark.asyncio
+    async def test_length_finish_with_no_content_is_truncation(self) -> None:
+        from app.llm.errors import LLMOutputTruncatedError
+
+        provider, _ = provider_with(
+            response=make_response(
+                content="",
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=""), finish_reason="length"
+                    )
+                ],
+            )
+        )
+
+        with pytest.raises(LLMOutputTruncatedError) as excinfo:
+            await provider.generate(LLMRequest(messages=[{"role": "user", "content": "x"}], max_output_tokens=1))
+
+        assert excinfo.value.code == "LLM_OUTPUT_TRUNCATED"
+        assert excinfo.value.retryable is True
+        assert "budget" in excinfo.value.message
+
+    @pytest.mark.asyncio
+    async def test_a_normal_finish_with_no_content_is_still_invalid(self) -> None:
+        """The guard is unchanged where it should be: a truncated answer and a
+        model that simply returned nothing must not be conflated."""
+        from app.llm.errors import LLMInvalidResponseError
+
+        provider, _ = provider_with(
+            response=make_response(
+                content="",
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=""), finish_reason="stop"
+                    )
+                ],
+            )
+        )
+
+        with pytest.raises(LLMInvalidResponseError) as excinfo:
+            await provider.generate(LLMRequest(messages=[{"role": "user", "content": "x"}]))
+
+        assert excinfo.value.code == "LLM_INVALID_RESPONSE"
+
+    @pytest.mark.asyncio
+    async def test_the_probe_still_reports_a_healthy_endpoint(self) -> None:
+        """A probe asks whether the endpoint speaks the protocol, and it does.
+
+        `test_connection` must not fail here — that is the settings screen
+        telling a user their perfectly good provider is broken.
+        """
+        provider, _ = provider_with(
+            response=make_response(
+                content="",
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=""), finish_reason="length"
+                    )
+                ],
+            )
+        )
+
+        report = await provider.test_connection()
+
+        assert report.ok is True
+        assert "reasoning" in report.message
