@@ -37,6 +37,7 @@ from app.llm.errors import sanitize_message
 from app.llm.models import ProviderConfig
 from app.llm.client import KEYLESS_API_KEY_PLACEHOLDER
 from app.pdfkernel.abort import TranslationAbortSentinel
+from app.pdfkernel.context_registry import RUN_ID_ENV, register, release
 from app.pdfkernel.errors import (
     LayoutModelUnavailableError,
     OutputFileExistsError,
@@ -103,11 +104,15 @@ _UPSTREAM_PATCHED = False
 
 
 def _ensure_upstream_patched() -> None:
-    """Substitute our bounded translator into upstream's construction path.
+    """Substitute our translator into upstream's construction path.
 
     Upstream builds its translator by matching a service name against classes it
     imported, so substituting the class on ``pdf2zh.converter`` is the only way
     to supply our own without editing upstream — which ADR-001 forbids.
+
+    The class substituted is the context-aware one, which *extends* the bounded
+    one: bounded retries and the document-wide fast abort are inherited unchanged,
+    so a run without context behaves exactly as it did before.
 
     Deferred until the first translation (so ``import app.pdfkernel`` stays free
     of the PDF stack) and idempotent under concurrency.
@@ -121,9 +126,9 @@ def _ensure_upstream_patched() -> None:
             return
         import pdf2zh.converter as converter
 
-        from app.pdfkernel.bounded_translator import BoundedOpenAIlikedTranslator
+        from app.pdfkernel.contextual_translator import ContextualOpenAIlikedTranslator
 
-        converter.OpenAIlikedTranslator = BoundedOpenAIlikedTranslator
+        converter.OpenAIlikedTranslator = ContextualOpenAIlikedTranslator
         _UPSTREAM_PATCHED = True
 
 
@@ -172,7 +177,9 @@ def _progress_bridge(
     return report
 
 
-def _upstream_envs(config: ProviderConfig) -> dict[str, str]:
+def _upstream_envs(
+    config: ProviderConfig, *, context_run_id: str | None = None
+) -> dict[str, str]:
     """Map a neutral provider configuration onto upstream's ``openailiked`` service.
 
     Passed per call. Upstream's ``ConfigManager`` is never used — it writes API
@@ -202,6 +209,11 @@ def _upstream_envs(config: ProviderConfig) -> dict[str, str]:
         "OPENAI_BASE_URL": config.base_url,
         "OPENAI_API_KEY": api_key or KEYLESS_API_KEY_PLACEHOLDER,
         "OPENAI_MODEL": config.model,
+        # Read by the substituted translator class. An opaque id rather than the
+        # context itself: upstream threads `envs` through to the constructor, and
+        # a string key keeps the run discoverable without making the context
+        # globally reachable.
+        RUN_ID_ENV: context_run_id or "",
     }
 
 
@@ -215,6 +227,7 @@ def _run_upstream(
     ignore_cache: bool,
     on_progress: ProgressCallback | None = None,
     cancellation_event: asyncio.Event | None = None,
+    context_run_id: str | None = None,
 ) -> None:
     """Invoke upstream synchronously. Called on a worker thread."""
     # Imported here, not at module scope, so that merely importing this package
@@ -240,7 +253,7 @@ def _run_upstream(
             lang_out=lang_out,
             service="openailiked",
             thread=threads,
-            envs=_upstream_envs(config),
+            envs=_upstream_envs(config, context_run_id=context_run_id),
             model=ModelInstance.value,
             ignore_cache=ignore_cache,
             callback=_progress_bridge(on_progress),
@@ -297,17 +310,26 @@ async def translate_pdf(
     executor: Executor | None = None,
     on_progress: ProgressCallback | None = None,
     cancellation_event: asyncio.Event | None = None,
+    context_provider: Any | None = None,
 ) -> TranslationResult:
     """Translate a PDF, producing translated and bilingual copies.
 
+    ``context_provider`` supplies academic context per translation unit. When it
+    is ``None`` the run is byte-for-byte the translation this kernel performed
+    before context existed — the same prompt, the same behaviour — which is what
+    `context_mode="off"` means.
+
     The source file is never modified. Runs off the event loop.
 
-    ``ignore_cache`` forces fresh translations. Note that upstream's cache key is
-    ``(engine, params, source_text)`` and **does not include the endpoint**
-    (docs/REPO_AUDIT.md §12): the same paragraph translated through two different
-    providers returns whichever ran first. Until the Context Engine supplies a
-    context-aware cache key, treat the cache as shared across providers — which
-    matters most when a user switches provider or rotates a key.
+    ``ignore_cache`` forces fresh translations. Upstream's cache key is
+    ``(engine, params, source_text)`` and historically **did not include the
+    endpoint**, so the same paragraph translated through two providers returned
+    whichever ran first (docs/REPO_AUDIT.md §12). That is fixed in
+    :class:`~app.pdfkernel.contextual_translator.ContextualOpenAIlikedTranslator`,
+    which registers the endpoint, the model, the prompt version and the context
+    mode as cache parameters and namespaces per-unit identity into the key — so
+    ``ignore_cache`` is no longer the only way to be correct, and callers that
+    were passing it defensively no longer have to.
     """
     if engine not in SUPPORTED_ENGINES:
         raise PDFEngineUnsupportedError(
@@ -362,6 +384,11 @@ async def translate_pdf(
         staged_source = work_dir / source.name
         shutil.copy2(source, staged_source)
 
+        # Registered here and released in the `finally`, so an abandoned or
+        # failed run never leaves one document's analysis reachable from another.
+        context_run_id = (
+            register(context_provider) if context_provider is not None else None
+        )
         work = functools.partial(
             _run_upstream,
             staged_source,
@@ -373,12 +400,16 @@ async def translate_pdf(
             ignore_cache,
             on_progress,
             cancellation_event,
+            context_run_id,
         )
         started = time.perf_counter()
-        if executor is not None:
-            await asyncio.get_running_loop().run_in_executor(executor, work)
-        else:
-            await asyncio.to_thread(work)
+        try:
+            if executor is not None:
+                await asyncio.get_running_loop().run_in_executor(executor, work)
+            else:
+                await asyncio.to_thread(work)
+        finally:
+            release(context_run_id)
         elapsed = time.perf_counter() - started
 
         produced_mono = work_dir / mono.name

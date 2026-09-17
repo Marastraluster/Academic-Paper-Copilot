@@ -84,6 +84,11 @@ class TranslateRequest(BaseModel):
     lang_in: str = "en"
     lang_out: str = "zh"
     engine: str = "fast"
+    #: "off" translates each unit on its own, exactly as before. "standard"
+    #: supplies bounded academic context. There is no "deep": in a pipeline that
+    #: translates units independently and in parallel there is nothing for it to
+    #: mean beyond spending more tokens.
+    context_mode: str = "off"
 
 
 class TaskResponse(BaseModel):
@@ -589,6 +594,15 @@ async def start_translation(
     runner = get_task_runner(request)
     store.get_document(document_id)  # 404 before anything is scheduled
 
+    from app.context.translation_context import VALID_MODES
+
+    if payload.context_mode not in VALID_MODES:
+        return error_response(
+            422,
+            "VALIDATION_ERROR",
+            f"context_mode must be one of {list(VALID_MODES)}, not {payload.context_mode!r}.",
+        )
+
     try:
         task = runner.start(
             document_id=document_id,
@@ -596,6 +610,7 @@ async def start_translation(
             lang_in=payload.lang_in,
             lang_out=payload.lang_out,
             engine=payload.engine,
+            context_mode=payload.context_mode,
         )
     except DocumentBusyError:
         return error_response(

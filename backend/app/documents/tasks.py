@@ -42,6 +42,21 @@ logger = get_logger(__name__)
 _SUBSCRIBER_QUEUE_SIZE = 64
 
 
+class AnalysisRequiredError(Exception):
+    """Standard-mode translation was asked for and there is nothing to ground it in.
+
+    Distinct from a provider failure: nothing went wrong with the endpoint. The
+    paper simply has not been analysed, and the honest response is to say so
+    rather than to translate without context and report success.
+    """
+
+    code = "ANALYSIS_UNAVAILABLE"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
 class TaskRunner:
     """Schedules translations and publishes their progress."""
 
@@ -51,6 +66,11 @@ class TaskRunner:
         self._subscribers: dict[str, set[asyncio.Queue]] = {}
         self._cancel_events: dict[str, asyncio.Event] = {}
         self._runners: dict[str, asyncio.Task] = {}
+        #: Run options and diagnostics, per task. In memory for the same reason
+        #: the runners are: a task lives while it runs, and a restart reconciles
+        #: in-flight work to FAILED rather than pretending it survived.
+        self._options: dict[str, dict[str, Any]] = {}
+        self._diagnostics: dict[str, dict[str, Any]] = {}
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -62,6 +82,7 @@ class TaskRunner:
         lang_in: str,
         lang_out: str,
         engine: str,
+        context_mode: str = "off",
     ) -> TaskRecord:
         """Create a task record and schedule it. Returns immediately."""
         task = self._store.create_task(
@@ -71,6 +92,7 @@ class TaskRunner:
             lang_out=lang_out,
             engine=engine,
         )
+        self._options[task.id] = {"context_mode": context_mode}
         self._runners[task.id] = asyncio.create_task(self._run(task))
         return task
 
@@ -157,6 +179,19 @@ class TaskRunner:
             shutil.rmtree(work_dir, ignore_errors=True)
             work_dir.mkdir(parents=True, exist_ok=True)
 
+            context_mode = self._options.get(task.id, {}).get("context_mode", "off")
+            try:
+                context_provider = await asyncio.to_thread(
+                    self._build_context_provider, task.document_id, context_mode
+                )
+            except AnalysisRequiredError as exc:
+                # Standard mode was asked for and there is nothing to ground it
+                # in. Refusing is the honest answer: translating without context
+                # and reporting success would tell the user their translation was
+                # academic-context-aware when it was not.
+                self._fail(task.id, exc.code, exc.message)
+                return
+
             self._store.update_task(task.id, status=STATUS_TRANSLATING)
             self._publish(task.id, {"event": "progress", "status": STATUS_TRANSLATING,
                                     "progress": {"page": 0, "page_count": record.page_count}})
@@ -170,14 +205,21 @@ class TaskRunner:
                     source_lang=task.lang_in,
                     engine=task.engine,
                     overwrite=True,
-                    # The upstream cache is keyed without the endpoint, so a hit
-                    # could return a translation produced by a *different*
-                    # provider. Re-running is the safe default until the cache
-                    # phase fixes the key.
-                    ignore_cache=True,
+                    # The contextual translator now puts the endpoint, the model,
+                    # the prompt version and the per-unit context into the cache
+                    # key, so the cache no longer returns another provider's work
+                    # — and `ignore_cache` is no longer the only way to be right.
+                    ignore_cache=False,
+                    context_provider=context_provider,
                     on_progress=on_progress,
                     cancellation_event=cancel_event,
                 )
+                # What the run did with context, taken from the provider the
+                # worker threads reported into. Absent for an off-mode run,
+                # because nothing was built to report to.
+                if context_provider is not None:
+                    self._diagnostics[task.id] = dict(context_provider.diagnostics)
+
                 # Moved out of the work directory *before* it is cleaned up —
                 # otherwise the finally below would delete the results.
                 if not cancel_event.is_set():
@@ -218,6 +260,52 @@ class TaskRunner:
         finally:
             self._cancel_events.pop(task.id, None)
             self._runners.pop(task.id, None)
+
+    def _build_context_provider(self, document_id: str, mode: str):
+        """Assemble the academic context a Standard-mode run will use.
+
+        Runs on a worker thread because reading the IR and the analysis is file
+        I/O and the event loop should not wait for it. Returns ``None`` for
+        ``off``, which is what keeps that mode byte-identical to the translation
+        this kernel performed before context existed.
+        """
+        if mode == "off":
+            return None
+
+        from app.context.persistence import read_analysis
+        from app.context.prompts import TRANSLATION_PROMPT_VERSION
+        from app.context.translation_context import UnitContextProvider, analysis_is_usable
+        from app.document.persistence import read_ir
+
+        directory = self._store.document_dir(document_id)
+        ir = read_ir(directory)
+        if ir is None:
+            raise AnalysisRequiredError(
+                "This paper has no document structure yet, so there is nothing to "
+                "build academic context from."
+            )
+
+        analysis = read_analysis(directory)
+        if not analysis_is_usable(analysis):
+            state = analysis.status.value if analysis is not None else "not analysed"
+            raise AnalysisRequiredError(
+                f"Academic context was requested but this paper is {state.lower()}. "
+                "Analyse it first, or translate without context."
+            )
+
+        # PARTIAL is accepted deliberately: most of the paper is understood, and
+        # refusing to use it because two sections were truncated would discard
+        # work the user already paid for.
+        return UnitContextProvider(
+            ir,
+            analysis,
+            prompt_version=TRANSLATION_PROMPT_VERSION,
+            mode=mode,
+        )
+
+    def diagnostics(self, task_id: str) -> dict[str, Any]:
+        """What a run actually did, or an empty dict if it has not finished."""
+        return dict(self._diagnostics.get(task_id, {}))
 
     def _record_progress(self, task_id: str, page: int, total: int) -> None:
         try:

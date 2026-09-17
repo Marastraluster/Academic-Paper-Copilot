@@ -214,3 +214,146 @@ def repair_messages(previous: str, error: str) -> list[dict[str, str]]:
             ),
         },
     ]
+
+
+# --- context-aware translation -----------------------------------------------
+
+#: Bump when the envelope below changes what the model is asked to produce. Part
+#: of the translation cache identity, so a prompt change cannot silently reuse
+#: translations produced under the previous wording.
+TRANSLATION_PROMPT_VERSION = "2.0.0"
+
+_REFERENCE_OPEN = "=== ACADEMIC CONTEXT (REFERENCE ONLY - DO NOT TRANSLATE) ==="
+_REFERENCE_CLOSE = "=== END ACADEMIC CONTEXT ==="
+_TARGET_OPEN = "=== TARGET SOURCE TEXT (TRANSLATE THIS ONLY) ==="
+_TARGET_CLOSE = "=== END TARGET SOURCE TEXT ==="
+_GLOSSARY_OPEN = "=== GLOSSARY (use these renderings where the term occurs) ==="
+_GLOSSARY_CLOSE = "=== END GLOSSARY ==="
+_PREV_OPEN = "=== PREVIOUS PARAGRAPH (reference only, do not translate) ==="
+_NEXT_OPEN = "=== NEXT PARAGRAPH (reference only, do not translate) ==="
+_NEIGHBOUR_CLOSE = "=== END NEIGHBOUR ==="
+
+_TRANSLATION_SYSTEM = """\
+You are a professional academic translator working on a research paper.
+
+Translate ONLY the text between TARGET SOURCE TEXT markers.
+
+Everything between the ACADEMIC CONTEXT, GLOSSARY and NEIGHBOUR markers is
+reference material. It is there so you can choose the right sense of a term and
+keep terminology consistent across the paper. It is NOT to be translated, quoted,
+summarised or mentioned. Never repeat it in your output.
+
+Where the glossary gives a rendering for a term that occurs in the target text,
+use it.
+
+Preserve exactly, without translation or alteration:
+- placeholders of the form {v0}, {v1}, ... — copy each one exactly, once, in place
+- mathematical notation and symbols
+- citation markers such as [12], [3, 7], (Figure 2), Eq. (4)
+- model, dataset, benchmark and framework names (ResNet, ImageNet, CIFAR-10, ...)
+- acronyms, code identifiers, URLs and DOIs
+
+Output only the translation of the target text. Do not summarise it, explain it,
+add notes, or wrap it in quotes or code fences. Do not write anything before or
+after the translation."""
+
+
+def _render_glossary(terms: list[tuple[str, str | None, bool]]) -> str:
+    lines = []
+    for source_term, translation, translatable in terms:
+        if not translatable or not translation:
+            lines.append(f"- {source_term}  (keep as-is; do not translate)")
+        else:
+            lines.append(f"- {source_term} -> {translation}")
+    return "\n".join(lines)
+
+
+def translation_messages(
+    *,
+    target_text: str,
+    target_language: str,
+    document_summary: str | None = None,
+    academic_domain: str | None = None,
+    section_title: str | None = None,
+    section_summary: str | None = None,
+    glossary: list[tuple[str, str | None, bool]] | None = None,
+    previous_paragraph: str | None = None,
+    next_paragraph: str | None = None,
+) -> list[dict[str, str]]:
+    """Build the delimited envelope for one context-aware translation unit.
+
+    The delimiters are the point. A model given a summary and a paragraph in one
+    undifferentiated block will translate the summary too — it has no way to know
+    which part is the job. Explicit markers that name the target as *the thing to
+    translate* and everything else as *reference you must not translate* are the
+    difference between context that helps and context that leaks into the PDF.
+    """
+    parts: list[str] = []
+
+    reference: list[str] = []
+    if academic_domain:
+        reference.append(f"Domain: {academic_domain}")
+    if document_summary:
+        reference.append(f"Document summary: {document_summary}")
+    if section_title:
+        reference.append(f"Current section: {section_title}")
+    if section_summary:
+        reference.append(f"Section summary: {section_summary}")
+    if reference:
+        parts.append(f"{_REFERENCE_OPEN}\n" + "\n\n".join(reference) + f"\n{_REFERENCE_CLOSE}")
+
+    if glossary:
+        parts.append(
+            f"{_GLOSSARY_OPEN}\n{_render_glossary(glossary)}\n{_GLOSSARY_CLOSE}"
+        )
+
+    if previous_paragraph:
+        parts.append(
+            f"{_PREV_OPEN}\n{previous_paragraph}\n{_NEIGHBOUR_CLOSE}"
+        )
+
+    parts.append(f"{_TARGET_OPEN}\n{target_text}\n{_TARGET_CLOSE}")
+
+    if next_paragraph:
+        parts.append(f"{_NEXT_OPEN}\n{next_paragraph}\n{_NEIGHBOUR_CLOSE}")
+
+    instruction = (
+        f"Translate the TARGET SOURCE TEXT into {target_language}. "
+        "Output the translation only."
+    )
+    return [
+        {"role": "system", "content": f"{_TRANSLATION_SYSTEM}\n\n{instruction}"},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]
+
+
+def placeholder_repair_messages(
+    *, target_text: str, bad_translation: str, hint: str, target_language: str
+) -> list[dict[str, str]]:
+    """One targeted repair, naming exactly which markers are wrong.
+
+    A model told "the placeholders were wrong" reproduces the mistake; a model
+    told "you dropped {v4}" fixes it. This is the single retry the criteria
+    allow, so it has to be specific.
+    """
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are correcting a translation whose formula placeholders are "
+                "wrong. Placeholders look like {v0}, {v1} and must appear exactly "
+                "once each, in the same positions as the source. Return only the "
+                "corrected translation, with nothing else."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"{hint}\n\n"
+                f"SOURCE (translate into {target_language}, keeping every "
+                f"placeholder):\n{target_text}\n\n"
+                f"INCORRECT TRANSLATION:\n{bad_translation}\n\n"
+                "Return the corrected translation only."
+            ),
+        },
+    ]

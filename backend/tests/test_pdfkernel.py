@@ -930,7 +930,15 @@ def test_upstream_source_is_never_modified() -> None:
     adapter._ensure_upstream_patched()
     from app.pdfkernel.bounded_translator import BoundedOpenAIlikedTranslator
 
-    assert pdf2zh.converter.OpenAIlikedTranslator is BoundedOpenAIlikedTranslator
+    # DS-CTX-002 substitutes a *subclass* that adds academic context and a
+    # context-aware cache key. The assertion is on subclassing rather than
+    # identity because that is the property that matters: everything this
+    # test is here to protect — the bounded retry budget, the document-wide
+    # abort — is inherited, and an unrelated class would still fail it.
+    injected = pdf2zh.converter.OpenAIlikedTranslator
+    assert injected is BoundedOpenAIlikedTranslator or issubclass(
+        injected, BoundedOpenAIlikedTranslator
+    )
     assert BoundedOpenAIlikedTranslator.__module__ == "app.pdfkernel.bounded_translator"
 
 
@@ -944,7 +952,15 @@ def test_injection_is_idempotent() -> None:
 
     import pdf2zh.converter
 
-    assert pdf2zh.converter.OpenAIlikedTranslator is BoundedOpenAIlikedTranslator
+    # DS-CTX-002 substitutes a *subclass* that adds academic context and a
+    # context-aware cache key. The assertion is on subclassing rather than
+    # identity because that is the property that matters: everything this
+    # test is here to protect — the bounded retry budget, the document-wide
+    # abort — is inherited, and an unrelated class would still fail it.
+    injected = pdf2zh.converter.OpenAIlikedTranslator
+    assert injected is BoundedOpenAIlikedTranslator or issubclass(
+        injected, BoundedOpenAIlikedTranslator
+    )
 
 
 def test_importing_the_kernel_does_not_patch_upstream(tmp_path) -> None:
