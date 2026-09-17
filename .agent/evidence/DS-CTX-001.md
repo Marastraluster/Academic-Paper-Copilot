@@ -150,26 +150,30 @@ Both were found by tests failing for reasons I had not predicted, and both were 
 rather than test bugs — the distinction is worth making because three other failures in the same
 run genuinely were test bugs (documents too short to take the hierarchical path).
 
-## §79 / §80 — real-provider verification: NOT PERFORMED
+## §79 / §80 — real-provider verification: CLOSED (DS-CTX-001-QA)
 
-The Definition of Done asks for *"at least one real analysis using an actually configured
-OpenAI-compatible provider"* and a manual judgement of whether the domain is sensible, the
-summary describes the real paper, and the glossary translations are academically plausible.
+**Originally reported NOT PERFORMED**, because no provider was configured: the application
+database had no `profiles` table, no local model server was listening, and the only credentials
+in the environment belonged to the agent harness rather than to the application. Nothing was
+invented to fill the gap.
 
-**No real provider is configured on this machine.** The application database has no `profiles`
-table at all, and no API key or local model server is available. I did not invent one or
-substitute a stub for it.
+A provider was then configured (`Deepseek` / `deepseek-flash`, endpoint
+`https://api.deepseek.com`), and the gate was run against the same ResNet paper.
 
-What *was* verified is the whole mechanical path — request construction, protocol
-auto-detection, response parsing, evidence validation against real paragraph ids, merging,
-persistence, reuse, invalidation, and the ContextBuilder — through a genuine HTTP round trip.
-What remains unverified is **model judgement**: whether a real model infers a sensible domain for
-this paper, writes a summary that describes it, or proposes academically plausible Chinese
-terms. Every quality claim about the analysis itself is therefore unproven, and the domain,
-summary and glossary shown above came from a stub whose content I wrote.
+**Result: PASS, on genuine model output.** Domain `Computer vision / deep learning` at 0.95
+confidence with a rationale naming the paper's actual contribution; a 208-word summary that
+synthesises rather than copies the abstract; 207 glossary entries of which **204 are supported
+by the paragraph they cite and none is fabricated**; **24 of 29 acronyms honestly left
+unexpanded**, with all 5 supplied expansions verifiably stated in the paper; every identifier
+preserved.
 
-This is the same class of gap Gate 0 closed for DS-DOC-001, and it should be closed the same
-way: by running the pipeline against a configured provider.
+Full record: [`docs/context/SEMANTIC_BASELINE.md`](../../docs/context/SEMANTIC_BASELINE.md).
+
+The gate could not start at all until three defects in the LLM layer were fixed — a reasoning
+model spends a one-token probe budget on its own thinking, truncation was being reported as an
+empty response, and the output budget was sized for the answer alone. They were committed
+separately as `c55637a`, because a validation task should not silently carry production
+changes.
 
 ## Acceptance criteria — P0
 
