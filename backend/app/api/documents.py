@@ -23,6 +23,7 @@ from fastapi import APIRouter, File, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.profiles import get_profile_store
 from app.documents.store import (
     DocumentBusyError,
     DocumentNotFoundError,
@@ -422,6 +423,158 @@ async def extract_document_ir_route(request: Request, document_id: str) -> Any:
         "has_text_layer": ir.has_text_layer,
         "ocr_required": ir.ocr_required,
     }
+
+
+# --- academic context (AI-derived) -------------------------------------------
+
+
+class AnalysisRequest(BaseModel):
+    """Start an analysis.
+
+    ``profile_id`` is the only credential reference, exactly as for translation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: str
+    target_language: str = "zh-CN"
+    force: bool = False
+
+
+def _analysis_payload(analysis: Any) -> dict[str, Any]:
+    payload = json.loads(analysis.model_dump_json())
+    # `provider_profile_name` is for a human reading the record; it is not part of
+    # identity and carries nothing sensitive. Everything else in provenance is a
+    # hash, a version or an endpoint.
+    return payload
+
+
+@router.post("/documents/{document_id}/analysis")
+async def create_analysis(
+    request: Request, document_id: str, payload: AnalysisRequest
+) -> Any:
+    """Analyse a document, or return the existing analysis if it is still valid.
+
+    Runs off the event loop only where it must: the provider calls are async, but
+    the IR read is not. A long paper means several sequential provider calls, so
+    this can take a while — and it says so by being a POST the client waits on,
+    rather than pretending a background task exists.
+    """
+    from app.context import AnalysisUnavailableError, ProviderIdentity, get_or_create_analysis
+    from app.llm.errors import LLMError, sanitize_message
+    from app.llm.detection import resolve_provider
+
+    profiles = get_profile_store(request)
+    store = get_document_store(request)
+    record = store.get_document(document_id)
+
+    # The analysis is built on the IR, and the IR is built on the file. Reusing
+    # the same lazy extraction here means analysis costs no extra parsing and
+    # cannot disagree with the structure everything else sees.
+    result, failure = await _require_ir(request, document_id)
+    if failure is not None:
+        return failure
+    ir, _summary = result
+
+    try:
+        profile = profiles.get_profile(payload.profile_id)
+        config = profiles.to_provider_config(payload.profile_id)
+    except Exception:  # noqa: BLE001 - unknown profile, or the credential store is down
+        return error_response(404, "NOT_FOUND", "No such provider profile.")
+
+    identity = ProviderIdentity(
+        base_url=profile.base_url,
+        model=profile.model,
+        protocol=profile.protocol,
+        profile_name=profile.name,
+    )
+
+    try:
+        provider = await resolve_provider(config, profile.protocol)
+        analysis, reused = await get_or_create_analysis(
+            store.document_dir(record.id),
+            ir,
+            provider=provider,
+            identity=identity,
+            target_language=payload.target_language,
+            force=payload.force,
+        )
+    except AnalysisUnavailableError as exc:
+        return error_response(502, exc.code, sanitize_message(exc.message))
+    except LLMError as exc:
+        return error_response(
+            502, getattr(exc, "code", "PROVIDER_ERROR"), sanitize_message(exc.message)
+        )
+
+    body = _analysis_payload(analysis)
+    body["reused"] = reused
+    return body
+
+
+@router.get("/documents/{document_id}/analysis")
+async def get_analysis(request: Request, document_id: str) -> Any:
+    """Return a stored analysis. Never generates one.
+
+    A GET that silently spends several minutes and someone's API quota would be a
+    surprise; asking for the analysis and getting a 404 that says none exists is
+    the honest answer, and the client decides what to do about it.
+    """
+    from app.context.persistence import read_analysis
+
+    store = get_document_store(request)
+    record = store.get_document(document_id)
+
+    analysis = read_analysis(store.document_dir(record.id))
+    if analysis is None:
+        return error_response(
+            404,
+            "ANALYSIS_NOT_FOUND",
+            "This document has not been analysed yet.",
+        )
+    return _analysis_payload(analysis)
+
+
+@router.delete("/documents/{document_id}/analysis", status_code=204)
+async def delete_document_analysis(request: Request, document_id: str) -> Response:
+    """Discard the analysis. Source, IR and translation artifacts are untouched."""
+    from app.context.persistence import delete_analysis
+
+    store = get_document_store(request)
+    record = store.get_document(document_id)
+    delete_analysis(store.document_dir(record.id))
+    return Response(status_code=204)
+
+
+@router.get("/documents/{document_id}/context-preview")
+async def context_preview(request: Request, document_id: str, paragraph_id: str) -> Any:
+    """The context a translation call would receive for one paragraph.
+
+    A debug view, and the only way to inspect the ContextBuilder without running
+    a translation. It returns context *for* the named paragraph and never its
+    text, which is the same rule the real caller follows.
+    """
+    from app.context import ContextBuilder
+    from app.context.persistence import read_analysis
+
+    store = get_document_store(request)
+    record = store.get_document(document_id)
+
+    result, failure = await _require_ir(request, document_id)
+    if failure is not None:
+        return failure
+    ir, _summary = result
+
+    if paragraph_id not in {paragraph.id for paragraph in ir.paragraphs}:
+        return error_response(404, "NOT_FOUND", "No such paragraph in this document.")
+
+    builder = ContextBuilder(ir, read_analysis(store.document_dir(record.id)))
+    budget = request.query_params.get("max_tokens")
+    try:
+        limit = int(budget) if budget else 1500
+    except ValueError:
+        return error_response(400, "BAD_REQUEST", "max_tokens must be an integer.")
+
+    return json.loads(builder.build_context(paragraph_id, max_tokens=limit).model_dump_json())
 
 
 # --- translation -------------------------------------------------------------
