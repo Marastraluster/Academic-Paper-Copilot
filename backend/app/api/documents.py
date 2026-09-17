@@ -291,6 +291,139 @@ async def delete_document(request: Request, document_id: str) -> Response:
     return Response(status_code=204)
 
 
+# --- document intelligence ---------------------------------------------------
+
+
+#: Extraction failure codes mapped onto HTTP. A corrupt or encrypted source is
+#: the client's input being unusable rather than the server failing, so both are
+#: 4xx; a source that vanished is a 404; a source that changed underneath us is
+#: the server's own problem and says so.
+_EXTRACTION_STATUS = {
+    "SOURCE_INVALID": 422,
+    "PDF_ENCRYPTED": 422,
+    "SOURCE_NOT_FOUND": 404,
+    "SOURCE_MODIFIED": 500,
+}
+
+
+def _resolve_source(store: DocumentStore, record: Any) -> Path | None:
+    """The file to read. Never returned to a client."""
+    path = store.source_file(record.id) if record.is_upload else record.source_path
+    if path is None or not Path(path).is_file():
+        return None
+    return Path(path)
+
+
+async def _require_ir(request: Request, document_id: str, *, force: bool = False):
+    """Produce the IR for a document, or raise the normalized envelope.
+
+    Extraction renders every page and runs a vision model, so it goes to a
+    worker thread — a synchronous ONNX run on the event loop would freeze every
+    other request for the duration, including the health check.
+    """
+    from app.document import DocumentExtractionError
+    from app.document.service import extract_and_store
+
+    store = get_document_store(request)
+    record = store.get_document(document_id)
+    source = _resolve_source(store, record)
+    if source is None:
+        return None, error_response(
+            404, "NOT_FOUND", "The source file is no longer available."
+        )
+
+    try:
+        ir, summary = await asyncio.to_thread(
+            extract_and_store,
+            store.document_dir(record.id),
+            source,
+            record.id,
+            force=force,
+        )
+    except DocumentExtractionError as exc:
+        return None, error_response(
+            _EXTRACTION_STATUS.get(exc.code, 500), exc.code, exc.message
+        )
+
+    return (ir, summary), None
+
+
+@router.get("/documents/{document_id}/ir")
+async def document_ir(request: Request, document_id: str) -> Any:
+    """The canonical Document IR.
+
+    Extracts on first read. There is no separate "not extracted yet" state for a
+    client to handle: the IR is a property of the document, and the first reader
+    paying for it is simpler than making every client orchestrate extraction.
+    """
+    result, failure = await _require_ir(request, document_id)
+    if failure is not None:
+        return failure
+    ir, _summary = result
+    return json.loads(ir.model_dump_json())
+
+
+@router.get("/documents/{document_id}/sections")
+async def document_sections(request: Request, document_id: str) -> Any:
+    """The outline, for a table of contents. Empty when nothing was identified."""
+    result, failure = await _require_ir(request, document_id)
+    if failure is not None:
+        return failure
+    ir, _summary = result
+    return [
+        {
+            "id": section.id,
+            "title": section.title,
+            "level": section.level,
+            "page_number": section.page_range[0],
+            "is_references": section.is_references,
+        }
+        for section in ir.sections
+    ]
+
+
+@router.get("/documents/{document_id}/page-mapping")
+async def document_page_mapping(request: Request, document_id: str) -> Any:
+    """``paragraph_id`` → 1-based page number, for citation jumps."""
+    result, failure = await _require_ir(request, document_id)
+    if failure is not None:
+        return failure
+    ir, _summary = result
+    return {"document_id": ir.document_id, "page_mapping": ir.page_mapping}
+
+
+@router.post("/documents/{document_id}/extract-ir")
+async def extract_document_ir_route(request: Request, document_id: str) -> Any:
+    """Extract explicitly, optionally re-running an existing IR.
+
+    ``{"force": true}`` re-extracts. Without it this is a no-op returning the
+    cached summary, which is what makes it safe for a caller to invoke without
+    knowing whether extraction has happened.
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - an empty body means "no options"
+        body = {}
+
+    force = bool(body.get("force", False)) if isinstance(body, dict) else False
+
+    result, failure = await _require_ir(request, document_id, force=force)
+    if failure is not None:
+        return failure
+    ir, summary = result
+    return {
+        "document_id": ir.document_id,
+        "page_count": summary.page_count,
+        "paragraph_count": summary.paragraph_count,
+        "section_count": summary.section_count,
+        "duration_seconds": round(summary.duration_seconds, 3),
+        "reused": summary.reused,
+        "has_text_layer": ir.has_text_layer,
+        "ocr_required": ir.ocr_required,
+    }
+
+
 # --- translation -------------------------------------------------------------
 
 

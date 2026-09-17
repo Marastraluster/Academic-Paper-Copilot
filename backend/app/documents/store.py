@@ -118,6 +118,15 @@ class DocumentStore:
     def dual_file(self, document_id: str) -> Path:
         return self.document_dir(document_id) / "dual.pdf"
 
+    def ir_file(self, document_id: str) -> Path:
+        """The Document IR artifact.
+
+        Derived, like ``mono.pdf`` and ``dual.pdf`` — not a table. That keeps it
+        inside the directory that is deleted with the document, and keeps it out
+        of the database that ``tests/test_db.py`` pins to an exact table set.
+        """
+        return self.document_dir(document_id) / "ir.json"
+
     # -- documents ----------------------------------------------------------
 
     def create_document(

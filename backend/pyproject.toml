@@ -16,6 +16,14 @@ dependencies = [
     # transitively (via the upstream PDF library), which meant a dependency we
     # actively program against could move without us choosing it.
     "openai~=3.14.0",
+    # Declared explicitly as of DS-DOC-001, for the same reason. PyMuPDF was
+    # already imported directly by app/api/documents.py and app/pdfkernel, and
+    # was never declared — the rule above was being broken before Document
+    # Intelligence existed. onnxruntime and numpy back the layout model, which
+    # this project now runs itself rather than through the upstream library.
+    "pymupdf~=1.25.2",
+    "onnxruntime~=1.30.0",
+    "numpy~=2.5",
 ]
 
 [project.optional-dependencies]

@@ -257,10 +257,16 @@ def test_dependency_manifest_declares_expected_packages() -> None:
         assert package in text, f"{package} missing from the dependency manifest"
 
     # Speculative heavyweights that must not appear this early (AC-11).
+    #
     # `openai` was removed from this guard by DS-BE-002/AC-31, which requires it
-    # to be declared. The rest still stand: none of these belong to a backend
-    # phase that has not started.
-    for forbidden in ("torch", "onnxruntime", "opencv", "chromadb", "anthropic", "pdf2zh"):
+    # to be declared. `onnxruntime` was removed the same way by DS-DOC-001, whose
+    # Document Intelligence phase runs the layout model directly rather than
+    # through the upstream library and therefore programs against it.
+    #
+    # Both removals follow the guard's own stated rule: a package stops being
+    # speculative the moment a phase that has actually started depends on it.
+    # The rest still stand — none belongs to a started backend phase.
+    for forbidden in ("torch", "opencv", "chromadb", "anthropic", "pdf2zh"):
         assert forbidden not in text, f"{forbidden} should not be a backend dependency yet"
 
 
