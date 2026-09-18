@@ -301,6 +301,60 @@ describe("DS-QA-008 · outline panel", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("leaves translation mode, and says why, when a section is clicked (AC-P0-09)", async () => {
+    // The clause cannot be reached in the browser fixture: `selectEffectiveMode`
+    // only returns "translation" when a translated artifact exists, and producing
+    // one is a full translation run. Verified here against the real
+    // `jumpToSection` and the real mode resolution rather than declared NOT RUN.
+    const document = seedDocument();
+    seedQaSections();
+    useWorkspaceStore.setState({
+      readerMode: "translation",
+      translation: {
+        documentId: document.documentId!, sessionToken: document.sessionToken,
+        taskId: null, status: "success", progress: null, error: null,
+        monoUrl: "blob:translated", monoPageCount: 12, degraded: false,
+      },
+    });
+    const { jumpToSection } = await import("@/outline/navigate");
+    const target = useWorkspaceStore.getState().sections![1];
+
+    jumpToSection(target);
+
+    const after = useWorkspaceStore.getState();
+    expect(after.readerMode).toBe("original");
+    expect(after.notice).toContain("已切换至原文");
+    // The source heading box travels with the jump, because in Original mode the
+    // geometry on screen is the geometry the box was measured against.
+    expect(after.jumpRequest?.bboxes).toHaveLength(1);
+    expect(after.jumpRequest?.pageNumber).toBe(target.pageNumber);
+  });
+
+  it("moves both panes in bilingual mode, and boxes only the original (AC-P0-09)", async () => {
+    const document = seedDocument();
+    seedQaSections();
+    useWorkspaceStore.setState({
+      readerMode: "bilingual",
+      translation: {
+        documentId: document.documentId!, sessionToken: document.sessionToken,
+        taskId: null, status: "success", progress: null, error: null,
+        monoUrl: "blob:translated", monoPageCount: 12, degraded: false,
+      },
+    });
+    const { jumpToSection } = await import("@/outline/navigate");
+    const target = useWorkspaceStore.getState().sections![1];
+
+    jumpToSection(target);
+
+    const after = useWorkspaceStore.getState();
+    expect(after.readerMode).toBe("bilingual");
+    expect(after.jumpRequest?.bboxes).toHaveLength(1);
+    expect(after.translatedJump?.pageNumber).toBe(target.pageNumber);
+    // Source geometry describes the original artifact and nothing else, so the
+    // translated channel carries no boxes at all — there is no field for one.
+    expect(Object.keys(after.translatedJump ?? {}).sort()).toEqual(["nonce", "pageNumber"]);
+  });
+
   it("clears the outline when another paper is opened (AC-P0-13)", async () => {
     const { teardownQa } = await import("@/qa/session");
     seedDocument();

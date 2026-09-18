@@ -264,7 +264,10 @@ async function main() {
     const activeIdOf = async (id) =>
       (await page.locator(`[data-testid="outline-node-${id}"]`).getAttribute("data-active")) === "true";
 
-    const intro = sections.find((s) => s.title.includes("Introduction"));
+    // The first reachable section, not "Introduction" by name: on the rotated
+    // fixture page 1 is unreadable and its headings are absent, so a lookup that
+    // hardcodes one paper's title is a harness assumption rather than a check.
+    const intro = sections.find((s) => s.title.includes("Introduction")) ?? sections[0];
     await page.click(`[data-testid="outline-jump-${intro.id}"]`);
     await sleep(900);
     const scrollTop = await page.evaluate((sel) => document.querySelector(sel).scrollTop, viewer);
@@ -272,13 +275,20 @@ async function main() {
     // number: the heading sits partway down page 1, so a correct jump lands
     // hundreds of pixels in. The earlier `< 200` was an assumption about the
     // paper, not about the feature.
-    const pageOneExtent = await page.evaluate((sel) => {
-      const page = document.querySelector(sel).querySelector("[data-page-number='1']");
-      return page ? page.getBoundingClientRect().height : 0;
-    }, viewer);
+    // Measured against the extent of the page the *section* names, not page 1:
+    // on the rotated fixture the first reachable section is on page 2, and an
+    // assertion built around page 1 was an assumption about the paper.
+    const landing = await page.evaluate(([sel, pageNumber]) => {
+      const root = document.querySelector(sel);
+      const page = root.querySelector(`[data-page-number='${pageNumber}']`);
+      if (!page) return null;
+      return { top: page.offsetTop, height: page.getBoundingClientRect().height };
+    }, [viewer, intro.page_number]);
     check("clicking a section lands inside the page it names (AC-P0-06)",
-      scrollTop >= 0 && scrollTop < pageOneExtent,
-      `scrollTop=${Math.round(scrollTop)} of page-1 height ${Math.round(pageOneExtent)}`);
+      landing !== null && scrollTop >= landing.top - 32
+        && scrollTop <= landing.top + landing.height,
+      `scrollTop=${Math.round(scrollTop)} in page ${intro.page_number} `
+      + `[${Math.round(landing?.top ?? -1)}, ${Math.round((landing?.top ?? 0) + (landing?.height ?? 0))}]`);
     check("the clicked section becomes the active one (AC-P0-06)",
       await activeIdOf(intro.id), intro.title);
 
@@ -288,6 +298,22 @@ async function main() {
     const movedTop = await page.evaluate((sel) => document.querySelector(sel).scrollTop, viewer);
     check("a later section moves further down", movedTop > scrollTop,
       `${Math.round(scrollTop)} -> ${Math.round(movedTop)}`);
+
+    // --- rotated pages: jump, but never a misplaced box (AC-P0-10) -----------
+    // Only meaningful on a rotated fixture, so it runs when one is supplied.
+    if (process.env.E2E_ROTATED === "1") {
+      await page.click(`[data-testid="outline-jump-${later.id}"]`);
+      await sleep(900);
+      const rotatedScroll = await page.evaluate(
+        (sel) => document.querySelector(sel).scrollTop, viewer);
+      const boxes = await page.locator('[data-testid="pdf-highlight-box"]').count();
+      check("a rotated page still jumps to the section (AC-P0-10)",
+        rotatedScroll > 0, `scrollTop=${Math.round(rotatedScroll)}`);
+      // The rule DS-QA-005 set: a highlight in the wrong place points the reader
+      // at text that does not support the claim, which is worse than none.
+      check("no bbox is drawn on a rotated page (AC-P0-10)", boxes === 0,
+        `${boxes} highlight boxes`);
+    }
 
     // --- current-section tracking through a real scroll ----------------------
     const activeIds = async () =>
