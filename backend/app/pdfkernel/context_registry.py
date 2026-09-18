@@ -28,6 +28,12 @@ if TYPE_CHECKING:  # pragma: no cover - import for typing only
 #: The `envs` key upstream passes to the translator constructor.
 RUN_ID_ENV = "PDFCOPILOT_CONTEXT_RUN_ID"
 
+#: Which mode this run is in. Carried separately from the run id because the
+#: academic and basic modes have **no** provider at all — the translator still has
+#: to know which envelope to build, and a mode that depends on finding a provider
+#: could not express "prompt only, no document analysis".
+MODE_ENV = "PDFCOPILOT_CONTEXT_MODE"
+
 _REGISTRY: dict[str, "UnitContextProvider"] = {}
 _LOCK = threading.Lock()
 

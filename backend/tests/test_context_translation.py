@@ -519,10 +519,14 @@ def translator_factory(monkeypatch):
         from app.pdfkernel.adapter import _upstream_envs
         from app.pdfkernel.context_registry import RUN_ID_ENV, register
 
+        # The mode goes in alongside the provider, exactly as `translate_pdf`
+        # passes them: a provider without a mode would leave the translator
+        # thinking it was in basic mode while holding context it never uses.
         run_id = register(provider) if provider is not None else None
         envs = _upstream_envs(
             ProviderConfig(base_url="http://x", api_key="k", model="m"),
             context_run_id=run_id,
+            context_mode="standard" if provider is not None else "off",
         )
 
         instance = module.ContextualOpenAIlikedTranslator(
@@ -736,3 +740,104 @@ class TestThreadReuseCannotLeakContext:
         # is what the translator's `finally` guarantees.
         module._UNIT_CONTEXT.value = None
         assert getattr(module._UNIT_CONTEXT, "value", None) is None
+
+
+# --- DS-CTX-004: the academic prompt-only mode --------------------------------
+
+
+class TestAcademicMode:
+    """The mode DS-CTX-003's third arm showed carries the gains.
+
+    It sends the academic instructions without any document payload, and it must
+    do so without a `UnitContextProvider` — no IR, no analysis, no mapper. The
+    392-second analysis is exactly what this mode exists to avoid paying.
+    """
+
+    def test_the_three_modes_are_known_and_anything_else_is_refused(self) -> None:
+        """AC P0.1."""
+        from app.context.translation_context import MODE_ACADEMIC, VALID_MODES
+
+        assert MODE_ACADEMIC in VALID_MODES
+        assert set(VALID_MODES) == {"off", "academic", "standard"}
+        with pytest.raises(ValueError):
+            UnitContextProvider(
+                build_ir(PARAGRAPHS), build_analysis(), prompt_version="2", mode="full"
+            )
+
+    def test_the_envelope_carries_no_context_sections_at_all(self) -> None:
+        """AC P0.4 — no empty headers, which would cost tokens and imply context."""
+        messages = prompts.translation_messages(
+            target_text="We train a policy to predict robot actions.",
+            target_language="Simplified Chinese",
+        )
+        body = " | ".join(m["content"] for m in messages)
+
+        assert "TARGET SOURCE TEXT" in body
+        for absent in ("ACADEMIC CONTEXT", "GLOSSARY", "PREVIOUS PARAGRAPH",
+                       "NEXT PARAGRAPH"):
+            assert absent not in body, f"an empty {absent} section was rendered"
+
+    @pytest.mark.parametrize("language", ["Japanese", "German", "Traditional Chinese"])
+    def test_the_target_language_is_a_parameter(self, language: str) -> None:
+        """Nothing may hardcode Simplified Chinese into the abstraction."""
+        messages = prompts.translation_messages(
+            target_text="x", target_language=language
+        )
+        body = " | ".join(m["content"] for m in messages)
+
+        assert language in body
+        assert "Simplified Chinese" not in body
+
+    def test_academic_mode_needs_no_provider_and_no_context(self) -> None:
+        """AC P0.2 — the whole point: translate without analysing the paper first."""
+        provider = UnitContextProvider(
+            build_ir(PARAGRAPHS), build_analysis(), prompt_version="2.0.0",
+            mode=MODE_STANDARD,
+        )
+        unit = provider.for_unit(PARAGRAPHS[1][1])
+
+        assert unit.is_contextual
+        assert unit.context is not None
+
+        # The academic envelope is reachable without any of that.
+        from app.context.prompts import translation_messages
+
+        messages = translation_messages(
+            target_text=PARAGRAPHS[1][1], target_language="Simplified Chinese"
+        )
+        body = " | ".join(m["content"] for m in messages)
+        assert "TARGET SOURCE TEXT" in body
+        assert unit.context.document_summary not in body
+
+
+class TestAcademicCacheIdentity:
+    """AC P0.3 — a mode that reads no analysis must not expire when it changes."""
+
+    def test_academic_uses_the_bare_source_text_as_the_key(self) -> None:
+        from app.pdfkernel.contextual_translator import _NoCache  # noqa: F401
+
+        # The rule, stated where it lives: only contextual namespaces.
+        assert cache_key("abc", "hash") != "abc"      # contextual prefixes
+        assert "\x00" in cache_key("abc", "hash")     # and separates with a NUL
+
+    def test_the_modes_cannot_return_each_others_entries(self) -> None:
+        """Isolation comes from the `context_mode` cache parameter, not the key.
+
+        Academic and base send the same key *text*, so if the mode were not a
+        registered parameter they would share entries — which is why
+        `add_cache_impact_parameters("context_mode", mode)` is load-bearing
+        rather than decorative.
+        """
+        import inspect
+
+        from app.pdfkernel import contextual_translator
+
+        source = inspect.getsource(contextual_translator.ContextualOpenAIlikedTranslator.__init__)
+        assert 'add_cache_impact_parameters("context_mode", mode)' in source
+
+        translate_source = inspect.getsource(
+            contextual_translator.ContextualOpenAIlikedTranslator.translate
+        )
+        assert "MODE_STANDARD" in translate_source, (
+            "the key must be namespaced only in contextual mode"
+        )

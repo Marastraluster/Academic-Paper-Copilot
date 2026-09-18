@@ -68,6 +68,13 @@ export interface StartTranslationRequest {
   lang_in: string;
   lang_out: string;
   engine: string;
+  /**
+   * `off` (upstream's minimal envelope) · `academic` (the academic instructions,
+   * no document payload) · `standard` (context-aware, needs the paper analysed
+   * first). The backend validates this against its own set and rejects anything
+   * else before scheduling — it is not a free-form field.
+   */
+  context_mode?: string;
 }
 
 export interface StartedTask {

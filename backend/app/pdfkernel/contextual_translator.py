@@ -34,10 +34,11 @@ import re
 import threading
 
 from app.context import prompts
+from app.context.translation_context import MODE_ACADEMIC, MODE_OFF, MODE_STANDARD
 from app.pdfkernel import placeholders
 from app.pdfkernel.abort import TranslationAbortSentinel
 from app.pdfkernel.bounded_translator import BoundedOpenAIlikedTranslator
-from app.pdfkernel.context_registry import RUN_ID_ENV, lookup
+from app.pdfkernel.context_registry import MODE_ENV, RUN_ID_ENV, lookup
 from app.logging import get_logger
 
 logger = get_logger(__name__)
@@ -104,7 +105,12 @@ class ContextualOpenAIlikedTranslator(BoundedOpenAIlikedTranslator):
         envs = self.envs or {}
         self._provider = lookup(envs.get(RUN_ID_ENV)) if envs.get(RUN_ID_ENV) else None
         self._run_id = envs.get(RUN_ID_ENV)
-        mode = "off" if self._provider is None else self._provider.mode
+        # The mode travels in `envs`, not on the provider. Academic and basic have
+        # no provider at all — that is the point of academic mode — so deriving
+        # the mode from one could not express "the academic prompt, without
+        # touching the document".
+        mode = envs.get(MODE_ENV) or ("off" if self._provider is None else self._provider.mode)
+        self._mode = mode
 
         # Registered here, once, before any worker starts — which is exactly the
         # point upstream's comment says configuration must happen at. Doing this
@@ -155,8 +161,15 @@ class ContextualOpenAIlikedTranslator(BoundedOpenAIlikedTranslator):
         else:
             self._note(units=1)
 
-        if unit is not None and not (self.ignore_cache or ignore_cache):
-            hit = self.cache.get(unit.cache_key)
+        # Only contextual mode has per-unit identity to namespace. Academic and
+        # basic consume no document analysis, so prefixing their key would make a
+        # translation expire whenever an analysis they never read was regenerated
+        # — the trap this design exists to avoid. The mode itself is a registered
+        # cache *parameter*, so the three still cannot return each other's work.
+        key = unit.cache_key if (unit is not None and self._mode == MODE_STANDARD) else text
+
+        if not (self.ignore_cache or ignore_cache):
+            hit = self.cache.get(key)
             if hit is not None:
                 self._note(cache_hits=1)
                 return hit
@@ -179,8 +192,7 @@ class ContextualOpenAIlikedTranslator(BoundedOpenAIlikedTranslator):
 
         translation = self._guard_placeholders(text, translation)
 
-        if unit is not None:
-            self.cache.set(unit.cache_key, translation)
+        self.cache.set(key, translation)
         return translation
 
     def _guard_placeholders(self, source: str, translation: str) -> str:
@@ -258,6 +270,21 @@ class ContextualOpenAIlikedTranslator(BoundedOpenAIlikedTranslator):
         override = getattr(_MESSAGE_OVERRIDE, "value", None)
         if override is not None:
             return override
+
+        # `getattr` rather than `self._mode`: upstream's own constructor calls
+        # this method — `add_cache_impact_parameters("prompt", self.prompt("",
+        # self.prompttext))` — before any of our attributes exist. Falling back
+        # to the baseline envelope there is correct: upstream is capturing the
+        # *template* for the cache key, and the mode is registered separately.
+        mode = getattr(self, "_mode", MODE_OFF)
+        if mode == MODE_ACADEMIC:
+            # The academic envelope with no payload. Every context argument is
+            # left out, so the reference, glossary and neighbour sections are
+            # simply absent rather than empty — a header with nothing under it
+            # would still cost tokens and still imply context exists.
+            return prompts.translation_messages(
+                target_text=text, target_language=self.lang_out
+            )
 
         context = getattr(_UNIT_CONTEXT, "value", None)
         if context is None:

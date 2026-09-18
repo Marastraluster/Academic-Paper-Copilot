@@ -32,6 +32,7 @@ from app.documents.store import (
 )
 from app.llm.errors import sanitize_message
 from app.logging import get_logger
+from app.context.translation_context import MODE_STANDARD
 from app.pdfkernel import PDFKernelError, translate_pdf
 
 logger = get_logger(__name__)
@@ -211,6 +212,7 @@ class TaskRunner:
                     # — and `ignore_cache` is no longer the only way to be right.
                     ignore_cache=False,
                     context_provider=context_provider,
+                    context_mode=context_mode,
                     on_progress=on_progress,
                     cancellation_event=cancel_event,
                 )
@@ -269,7 +271,10 @@ class TaskRunner:
         ``off``, which is what keeps that mode byte-identical to the translation
         this kernel performed before context existed.
         """
-        if mode == "off":
+        # Only contextual mode consumes document analysis. Basic uses upstream's
+        # own envelope and academic uses the academic prompt; neither touches the
+        # IR or the analysis, and neither should pay 392 seconds for them.
+        if mode != MODE_STANDARD:
             return None
 
         from app.context.persistence import read_analysis

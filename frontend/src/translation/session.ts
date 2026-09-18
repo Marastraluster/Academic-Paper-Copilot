@@ -30,11 +30,31 @@ import {
 } from "@/stores/workspace";
 import { describeApiError, describeTaskError } from "@/translation/errors";
 
+/**
+ * How the translation is produced.
+ *
+ * `academic` sends the academic translation instructions — preserve notation,
+ * citations, identifiers; do not summarise or explain — with no document
+ * payload. `contextual` additionally sends the document summary, section
+ * summary and neighbouring paragraphs, which costs roughly six times the
+ * prompt and requires the paper to be analysed first. `basic` sends upstream's
+ * minimal envelope.
+ */
+export type ContextMode = "basic" | "academic" | "contextual";
+
+/** What the API calls each mode. Kept separate from the UI's vocabulary. */
+const API_MODE: Record<ContextMode, string> = {
+  basic: "off",
+  academic: "academic",
+  contextual: "standard",
+};
+
 export interface TranslateOptions {
   profileId: string;
   langIn: string;
   langOut: string;
   engine?: string;
+  contextMode?: ContextMode;
 }
 
 /** Only one of each can be in flight; a new one supersedes the old. */
@@ -229,6 +249,7 @@ export async function startTranslation(options: TranslateOptions): Promise<void>
       lang_in: options.langIn,
       lang_out: options.langOut,
       engine: options.engine ?? "fast",
+      context_mode: API_MODE[options.contextMode ?? "academic"],
     });
 
     if (!isCurrent(documentId, sessionToken)) return;

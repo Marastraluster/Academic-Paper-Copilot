@@ -37,7 +37,7 @@ from app.llm.errors import sanitize_message
 from app.llm.models import ProviderConfig
 from app.llm.client import KEYLESS_API_KEY_PLACEHOLDER
 from app.pdfkernel.abort import TranslationAbortSentinel
-from app.pdfkernel.context_registry import RUN_ID_ENV, register, release
+from app.pdfkernel.context_registry import MODE_ENV, RUN_ID_ENV, register, release
 from app.pdfkernel.errors import (
     LayoutModelUnavailableError,
     OutputFileExistsError,
@@ -178,7 +178,10 @@ def _progress_bridge(
 
 
 def _upstream_envs(
-    config: ProviderConfig, *, context_run_id: str | None = None
+    config: ProviderConfig,
+    *,
+    context_run_id: str | None = None,
+    context_mode: str = "off",
 ) -> dict[str, str]:
     """Map a neutral provider configuration onto upstream's ``openailiked`` service.
 
@@ -214,6 +217,7 @@ def _upstream_envs(
         # a string key keeps the run discoverable without making the context
         # globally reachable.
         RUN_ID_ENV: context_run_id or "",
+        MODE_ENV: context_mode,
     }
 
 
@@ -228,6 +232,7 @@ def _run_upstream(
     on_progress: ProgressCallback | None = None,
     cancellation_event: asyncio.Event | None = None,
     context_run_id: str | None = None,
+    context_mode: str = "off",
 ) -> None:
     """Invoke upstream synchronously. Called on a worker thread."""
     # Imported here, not at module scope, so that merely importing this package
@@ -253,7 +258,9 @@ def _run_upstream(
             lang_out=lang_out,
             service="openailiked",
             thread=threads,
-            envs=_upstream_envs(config, context_run_id=context_run_id),
+            envs=_upstream_envs(
+                config, context_run_id=context_run_id, context_mode=context_mode
+            ),
             model=ModelInstance.value,
             ignore_cache=ignore_cache,
             callback=_progress_bridge(on_progress),
@@ -311,6 +318,7 @@ async def translate_pdf(
     on_progress: ProgressCallback | None = None,
     cancellation_event: asyncio.Event | None = None,
     context_provider: Any | None = None,
+    context_mode: str = "off",
 ) -> TranslationResult:
     """Translate a PDF, producing translated and bilingual copies.
 
@@ -401,6 +409,7 @@ async def translate_pdf(
             on_progress,
             cancellation_event,
             context_run_id,
+            context_mode,
         )
         started = time.perf_counter()
         try:

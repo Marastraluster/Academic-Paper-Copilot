@@ -233,6 +233,33 @@ _PREV_OPEN = "=== PREVIOUS PARAGRAPH (reference only, do not translate) ==="
 _NEXT_OPEN = "=== NEXT PARAGRAPH (reference only, do not translate) ==="
 _NEIGHBOUR_CLOSE = "=== END NEIGHBOUR ==="
 
+#: The prompt when there is no document context at all.
+#:
+#: A separate text rather than the contextual one with its sections removed: that
+#: one opens by explaining what the ACADEMIC CONTEXT, GLOSSARY and NEIGHBOUR
+#: markers mean, and in this mode none of them exist. Instructions about absent
+#: material are tokens spent describing something the model will never see.
+_ACADEMIC_SYSTEM = """\
+You are a professional academic translator working on a research paper.
+
+Translate the text between the TARGET SOURCE TEXT markers into the target
+language, using rigorous and natural academic language and preserving the
+technical meaning of the source.
+
+Preserve exactly, without translation or alteration:
+- placeholders of the form {v0}, {v1}, ... — copy each one exactly, once, in place
+- mathematical notation and symbols
+- citation markers such as [12], [3, 7], (Figure 2), Eq. (4), Author et al. (2024)
+- model, dataset, benchmark and framework names (ResNet, ImageNet, CIFAR-10, ...)
+- acronyms, code identifiers, URLs and DOIs
+
+Where terminology is ambiguous, choose the reading most appropriate to the
+immediate sentence and to academic usage.
+
+Output only the translation. Do not summarise it, explain it, add commentary or
+notes, or wrap it in quotes or code fences. Do not write anything before or after
+the translation."""
+
 _TRANSLATION_SYSTEM = """\
 You are a professional academic translator working on a research paper.
 
@@ -321,8 +348,12 @@ def translation_messages(
         f"Translate the TARGET SOURCE TEXT into {target_language}. "
         "Output the translation only."
     )
+    # With nothing to reference, the academic instructions stand alone. Keeping
+    # the contextual text would mean describing sections that are not present.
+    has_reference = bool(reference or glossary or previous_paragraph or next_paragraph)
+    system = _TRANSLATION_SYSTEM if has_reference else _ACADEMIC_SYSTEM
     return [
-        {"role": "system", "content": f"{_TRANSLATION_SYSTEM}\n\n{instruction}"},
+        {"role": "system", "content": f"{system}\n\n{instruction}"},
         {"role": "user", "content": "\n\n".join(parts)},
     ]
 

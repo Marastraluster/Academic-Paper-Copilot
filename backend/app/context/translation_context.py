@@ -35,9 +35,13 @@ from app.document.models import DocumentIR
 #: pipeline that translates units independently and in parallel there is no
 #: mechanism for it beyond spending more tokens, and a mode that means "try
 #: harder" is a label rather than a capability.
+#: `off` is upstream's minimal envelope. `academic` is the academic prompt with no
+#: document payload — the mode DS-CTX-003's third arm showed carries the gains at
+#: basic's cost. `standard` is the context-aware mode, retained and not default.
 MODE_OFF = "off"
+MODE_ACADEMIC = "academic"
 MODE_STANDARD = "standard"
-VALID_MODES = (MODE_OFF, MODE_STANDARD)
+VALID_MODES = (MODE_OFF, MODE_ACADEMIC, MODE_STANDARD)
 
 #: Why a unit received no context. Recorded rather than discarded, so a task can
 #: report how much of a document was actually translated with context.
@@ -169,7 +173,7 @@ class UnitContextProvider:
 
     def for_unit(self, text: str) -> UnitContext:
         """Resolve a unit's context, or say honestly that it has none."""
-        if self._mode == MODE_OFF or self._analysis is None:
+        if self._mode != MODE_STANDARD or self._analysis is None:
             digest = hash_context(None, prompt_version=self._prompt_version)
             return UnitContext(
                 context=None,

@@ -380,14 +380,20 @@ describe("DS-FE-003 · translate dialog", () => {
     const body = JSON.parse(String(start!.init.body));
 
     // `extra="forbid"` on the backend: an extra key is a 422, not a silent drop.
+    // The set grew by one in DS-CTX-004 — `context_mode` is now part of the
+    // contract, and the assertion is still exact, which is what makes it worth
+    // having: a field added carelessly would fail here rather than at runtime.
     expect(Object.keys(body).sort()).toEqual(
-      ["engine", "lang_in", "lang_out", "profile_id"].sort(),
+      ["context_mode", "engine", "lang_in", "lang_out", "profile_id"].sort(),
     );
     expect(body).toEqual({
       profile_id: "prof_local",
       lang_in: "en",
       lang_out: "zh",
       engine: "fast",
+      // Basic by default: DS-CTX-004 measured no quality difference between the
+      // academic and basic prompts while academic cost 2.07x the tokens.
+      context_mode: "off",
     });
   });
 
@@ -763,5 +769,58 @@ describe("DS-FE-003 · credentials", () => {
     // Nor is one rendered. The masked form may appear; the real key may not.
     expect(document.body.textContent).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
     expect(consoleSpy).not.toHaveBeenCalled();
+  });
+});
+
+
+// --- DS-CTX-004: translation modes -------------------------------------------
+
+
+describe("DS-CTX-004 · translation mode selection", () => {
+  it("offers the three modes and defaults to Basic", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openPdf();
+    await user.click(screen.getByTestId("ai-translate"));
+    await screen.findByTestId("translate-profile");
+
+    expect(screen.getByTestId("translate-mode-basic")).toBeChecked();
+    expect(screen.getByTestId("translate-mode-academic")).not.toBeChecked();
+    expect(screen.getByTestId("translate-mode-contextual")).not.toBeChecked();
+  });
+
+  it("sends the chosen mode, mapping the UI's name to the API's", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openPdf();
+    await user.click(screen.getByTestId("ai-translate"));
+    await screen.findByTestId("translate-profile");
+
+    // "学术" maps to the API's `academic`.
+    await user.click(screen.getByTestId("translate-mode-academic"));
+    await user.click(screen.getByTestId("translate-submit"));
+
+    await waitFor(() =>
+      expect(useWorkspaceStore.getState().translation?.taskId).toBe("task_1"),
+    );
+    const start = calls.find((call) => call.url.endsWith("/translate"));
+    expect(JSON.parse(String(start!.init.body)).context_mode).toBe("academic");
+  });
+
+  it("discloses the cost of the contextual mode rather than calling it better", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openPdf();
+    await user.click(screen.getByTestId("ai-translate"));
+    await screen.findByTestId("translate-profile");
+
+    const contextual = screen.getByTestId("translate-mode-contextual");
+    const label = contextual.closest("label")!;
+
+    // The measured cost, stated where the user chooses — a several-minute wait
+    // that is not disclosed reads as a hang.
+    expect(label).toHaveTextContent(/分析全文/);
+    expect(label).toHaveTextContent(/6\.6/);
+    expect(label).toHaveTextContent("实验性");
   });
 });
