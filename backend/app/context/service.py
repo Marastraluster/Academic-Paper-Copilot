@@ -103,6 +103,7 @@ async def get_or_create_analysis(
             provider_base_url=identity.base_url,
             provider_model=identity.model,
             target_language=target_language,
+            ir_pipeline_version=ir.pipeline_version,
         ):
             logger.info(
                 "analysis cache hit",

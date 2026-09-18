@@ -64,6 +64,7 @@ def is_cache_valid(
     provider_base_url: str,
     provider_model: str,
     target_language: str,
+    ir_pipeline_version: str | None = None,
 ) -> bool:
     """Whether a stored analysis may be reused for the given configuration.
 
@@ -84,6 +85,13 @@ def is_cache_valid(
         return False
 
     provenance = analysis.provenance
+    # An analysis that predates this field parses with `"0"` and is invalidated by
+    # comparison, which is the honest outcome: it was built against an IR this
+    # build cannot vouch for.
+    if ir_pipeline_version is not None and (
+        provenance.ir_pipeline_version != ir_pipeline_version
+    ):
+        return False
     return (
         provenance.content_hash == content_hash
         and provenance.pipeline_version == pipeline_version

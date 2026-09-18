@@ -818,6 +818,9 @@ def make_provenance(
         document_id=ir.document_id,
         content_hash=ir.content_hash,
         pipeline_version=PIPELINE_VERSION,
+        # The IR this analysis points at, so a reading-order repair invalidates it
+        # rather than leaving `paragraph_ids` naming text that has moved.
+        ir_pipeline_version=ir.pipeline_version,
         prompt_version=prompts.PROMPT_VERSION,
         provider_base_url=provider_base_url,
         provider_model=provider_model,

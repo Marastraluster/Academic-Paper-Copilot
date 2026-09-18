@@ -65,6 +65,15 @@ class AnalysisProvenance(BaseModel):
     #: document that no longer exists.
     content_hash: str
     pipeline_version: str
+    #: Which *extraction* produced the paragraphs this analysis points at.
+    #:
+    #: `content_hash` sees the PDF and `pipeline_version` sees the analysis
+    #: prompts; neither sees the IR. DS-DOC-002 made that a real gap: correcting
+    #: reading order re-segments paragraphs, and paragraph ids are reading
+    #: positions, so `GlossaryEntry.paragraph_ids` and its siblings come to name
+    #: different paragraphs — an entity attributed to text that no longer
+    #: mentions it. Defaulted so stored analyses parse; they then fail the check.
+    ir_pipeline_version: str = "0"
     prompt_version: str
     #: Where the model was reached and which one was asked — the provider's
     #: identity. A profile's *display name* is recorded below for a human, and is

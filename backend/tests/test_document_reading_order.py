@@ -205,6 +205,62 @@ class TestIndexInvalidation:
         assert rows == {p.id for p in ir.paragraphs}
 
 
+class TestAnalysisInvalidation:
+    """The same hazard as the index, one layer up (Phase 31).
+
+    A `DocumentAnalysis` points at paragraphs by id: glossary entries, acronyms
+    and entities each carry `paragraph_ids`. Correcting reading order renumbers
+    them, so an analysis reused across that change attributes facts to text that
+    no longer says them — and it is the expensive artifact, so it is exactly the
+    one a cache would keep.
+    """
+
+    def _analysis(self, ir_version: str):
+        from app.context.models import (
+            AnalysisProvenance, AnalysisStatus, DocumentAnalysis)
+
+        provenance = AnalysisProvenance(
+            document_id="d", content_hash="hash", pipeline_version="1.0.0",
+            prompt_version="1", provider_base_url="http://x", provider_model="m",
+            provider_protocol="chat_completions", target_language="zh-CN",
+            created_at="2026-09-18T00:00:00+00:00",
+            ir_pipeline_version=ir_version,
+        )
+        return DocumentAnalysis(
+            document_id="d", provenance=provenance, status=AnalysisStatus.READY,
+            summary="s",
+        )
+
+    def test_an_analysis_from_a_different_ir_is_not_reused(self) -> None:
+        from app.context.persistence import is_cache_valid
+
+        assert is_cache_valid(
+            self._analysis("2"), content_hash="hash", pipeline_version="1.0.0",
+            prompt_version="1", provider_base_url="http://x", provider_model="m",
+            target_language="zh-CN", ir_pipeline_version="3",
+        ) is False
+
+    def test_an_analysis_from_the_same_ir_is_reused(self) -> None:
+        from app.context.persistence import is_cache_valid
+
+        assert is_cache_valid(
+            self._analysis("3"), content_hash="hash", pipeline_version="1.0.0",
+            prompt_version="1", provider_base_url="http://x", provider_model="m",
+            target_language="zh-CN", ir_pipeline_version="3",
+        ) is True
+
+    def test_an_analysis_predating_the_field_is_not_reused(self) -> None:
+        """A stored file parses — and is then rejected, which is the point.
+
+        `extra="forbid"` means an old file cannot simply be read with the new
+        field missing; defaulting it to `"0"` lets it parse and guarantees it
+        fails the comparison against any real version.
+        """
+        from app.context.models import AnalysisProvenance
+
+        assert AnalysisProvenance.model_fields["ir_pipeline_version"].default == "0"
+
+
 class TestIRPipelineVersionGuard:
     def test_the_version_is_the_one_extraction_writes(self, tmp_path: Path) -> None:
         """The IR on disk must carry the version the cache guard compares against.
