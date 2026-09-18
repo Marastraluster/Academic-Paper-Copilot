@@ -186,9 +186,13 @@ function NoteRow({
   onDelete: () => void;
 }) {
   const [value, setValue] = useState(annotation.comment ?? "");
-  const warning = annotation.targets
-    .map((target) => STATE_TEXT[target.state])
-    .find((text) => text !== null);
+  // `find` returns `undefined` when nothing matches, and `undefined !== null`
+  // is true — so the naive version rendered a badge for *every* note, including
+  // the ones that resolved exactly. Found by the AC-P0-07 test.
+  const warning =
+    annotation.targets
+      .map((target) => STATE_TEXT[target.state])
+      .find((text) => text != null) ?? null;
 
   return (
     <li

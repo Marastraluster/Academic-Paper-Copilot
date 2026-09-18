@@ -90,6 +90,56 @@ beforeEach(() => {
   });
 });
 
+describe("DS-QA-010 · ambiguous and orphaned are shown (AC-P0-07)", () => {
+  const withState = (state: AnnotationView["targets"][number]["state"]) => ({
+    ...annotation("still my words"),
+    id: `ann_${state}`,
+    targets: [{ ...annotation().targets[0], state, resolved_paragraph_id: null }],
+  });
+
+  async function openNotesPanel(list: AnnotationView[]) {
+    const document = seedDocument();
+    useWorkspaceStore.setState({
+      annotations: list,
+      annotationsFor: document.documentId,
+      outlinePanel: "notes",
+      sidebarOpen: true,
+    });
+    render(<App />);
+    await screen.findByTestId("notes-list");
+  }
+
+  it("keeps an orphaned note listed, with its words and a badge", async () => {
+    /* The system cannot place this note in the current extraction. What it must
+       not do is hide it: the user wrote it, and a note that vanishes is worse
+       than one whose place is uncertain. */
+    await openNotesPanel([withState("ORPHANED")]);
+    expect(screen.getByTestId("note-ann_ORPHANED")).toBeInTheDocument();
+    expect(screen.getByTestId("note-comment-ann_ORPHANED")).toHaveTextContent(
+      "still my words",
+    );
+    expect(screen.getByTestId("note-state-ann_ORPHANED")).toHaveTextContent(
+      "未能在此版本中定位到原位置",
+    );
+  });
+
+  it("badges an ambiguous note differently from an orphaned one", async () => {
+    /* Two different situations, and the reader has to be able to tell them
+       apart: "we could not find it" and "we found more than one place it could
+       be" call for different responses. */
+    await openNotesPanel([withState("AMBIGUOUS")]);
+    const ambiguous = screen.getByTestId("note-state-ann_AMBIGUOUS");
+    expect(ambiguous).toHaveTextContent("文中找到多处匹配");
+    expect(ambiguous).not.toHaveTextContent("未能在此版本中定位到原位置");
+  });
+
+  it("shows no badge on a note that resolved exactly", async () => {
+    await openNotesPanel([withState("EXACT")]);
+    expect(screen.getByTestId("note-ann_EXACT")).toBeInTheDocument();
+    expect(screen.queryByTestId("note-state-ann_EXACT")).toBeNull();
+  });
+});
+
 describe("DS-QA-010 · same-source idempotency (AC-P0-12)", () => {
   it("focuses an existing annotation over the same range instead of duplicating", async () => {
     /* Re-marking a phrase already marked is one annotation, not two highlights

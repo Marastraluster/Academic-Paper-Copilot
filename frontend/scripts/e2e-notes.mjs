@@ -283,6 +283,16 @@ async function main() {
     await openPaper(page, paper);
     await page.click('[data-testid="assistant-tab-notes"]');
     await sleep(1500);
+    // P1-01's frontend half: how long from asking the backend to having the
+    // rows in the DOM. The API half is measured separately and is ~2 ms; this is
+    // what the reader actually waits for.
+    const hydrationStart = Date.now();
+    await page.waitForFunction(
+      (expected) => document.querySelectorAll("li[data-testid^='note-']").length === expected,
+      afterNote, { timeout: 10000 },
+    ).catch(() => {});
+    const hydrationMs = Date.now() - hydrationStart;
+
     const afterReload = await page.locator("li[data-testid^='note-']").count();
     const panelState = await page.evaluate(() => ({
       panel: document.querySelectorAll('[data-testid="notes-panel"]').length,
@@ -290,6 +300,7 @@ async function main() {
       rows: document.querySelectorAll("li[data-testid^='note-']").length,
       boxes: document.querySelectorAll('[data-testid="pdf-persistent-highlight-box"]').length,
     }));
+    console.log(`    hydration (list present -> ${afterNote} rows): ${hydrationMs} ms`);
     check("annotations survive a reload", afterReload === afterNote,
       `${afterNote} -> ${afterReload}  panel=${JSON.stringify(panelState)}`);
     const boxesAfterReload = await page.locator('[data-testid="pdf-persistent-highlight-box"]').count();
