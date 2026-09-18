@@ -371,21 +371,19 @@ async def document_ir(request: Request, document_id: str) -> Any:
 
 @router.get("/documents/{document_id}/sections")
 async def document_sections(request: Request, document_id: str) -> Any:
-    """The outline, for a table of contents. Empty when nothing was identified."""
+    """The outline, for a table of contents. Empty when nothing was identified.
+
+    Carries navigation metadata only — no paragraph text, no summaries. `bbox` is
+    the heading's box in PDF points, or `null` when the ladder in
+    `app.document.outline` had to fall back; `anchor` says which rung produced it.
+    """
+    from app.document.outline import build_outline
+
     result, failure = await _require_ir(request, document_id)
     if failure is not None:
         return failure
     ir, _summary = result
-    return [
-        {
-            "id": section.id,
-            "title": section.title,
-            "level": section.level,
-            "page_number": section.page_range[0],
-            "is_references": section.is_references,
-        }
-        for section in ir.sections
-    ]
+    return build_outline(ir)
 
 
 @router.get("/documents/{document_id}/page-mapping")

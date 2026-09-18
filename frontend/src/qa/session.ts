@@ -33,7 +33,7 @@ import {
   selectActiveSelection,
   selectActiveTurns,
   selectEffectiveMode,
-  selectSectionForPage,
+  activeSectionFor,
   useWorkspaceStore,
   type QaResult,
   type QaScopeType,
@@ -72,8 +72,8 @@ export function isCurrent(documentId: string, sessionToken: string): boolean {
 export function buildScope(
   scopeType: QaScopeType,
   activePage: number,
-  sections: QaSection[] | null,
   selection: SelectionMapping | null = null,
+  section: QaSection | null = null,
 ): QaScope | null {
   switch (scopeType) {
     case "whole_paper":
@@ -82,10 +82,12 @@ export function buildScope(
       return Number.isInteger(activePage) && activePage >= 1
         ? { type: "page", page: activePage }
         : null;
-    case "section": {
-      const section = selectSectionForPage(sections, activePage);
+    case "section":
+      // AC_CHANGE_REQUEST 4: the section the user explicitly chose wins, and
+      // is sticky; otherwise the section the reading position resolves to. This
+      // is the *only* place a Section scope is built, so the canonical id that
+      // reaches the backend cannot come from a title.
       return section ? { type: "section", section_id: section.id } : null;
-    }
     case "selection": {
       // DS-QA-005: the canonical ids the browser mapped the drag onto. Empty
       // means there is no honest selection to send — and the one thing this must
@@ -100,17 +102,15 @@ export function buildScope(
 export function describeScope(
   scopeType: QaScopeType,
   activePage: number,
-  sections: QaSection[] | null,
+  section: QaSection | null,
 ): string {
   switch (scopeType) {
     case "whole_paper":
       return "整篇论文";
     case "page":
       return `第 ${activePage} 页`;
-    case "section": {
-      const section = selectSectionForPage(sections, activePage);
+    case "section":
       return section ? `章节 · ${section.title}` : "章节";
-    }
     case "selection":
       return "选中内容";
   }
@@ -118,14 +118,14 @@ export function describeScope(
 
 /** Whether the scope can be used right now, for the selector and its labels. */
 export function scopeAvailability(
-  sections: QaSection[] | null,
   activePage: number,
   selection: SelectionMapping | null = null,
+  section: QaSection | null = null,
 ): Record<QaScopeType, boolean> {
   return {
     whole_paper: true,
     page: Number.isInteger(activePage) && activePage >= 1,
-    section: selectSectionForPage(sections, activePage) !== null,
+    section: section !== null,
     // DS-QA-005: available only when a drag actually resolved to canonical
     // paragraphs. An unmappable selection leaves it unavailable, which is the
     // honest answer and the one DS-QA-003 shipped.
@@ -206,8 +206,8 @@ export async function askQa({
   const scope = buildScope(
     scopeType,
     state.activePage,
-    state.sections,
     selectActiveSelection(state)?.mapping ?? null,
+    activeSectionFor(state),
   );
   if (scope === null) return; // AC-P0-05 — no identity, no request
 
@@ -218,7 +218,7 @@ export async function askQa({
     id: turnId,
     question: text,
     scopeType,
-    scopeLabel: describeScope(scopeType, state.activePage, state.sections),
+    scopeLabel: describeScope(scopeType, state.activePage, activeSectionFor(state)),
     profileId,
     documentId,
     sessionToken,
@@ -481,7 +481,11 @@ export async function loadSections(): Promise<void> {
         id: section.id,
         title: section.title,
         level: section.level,
+        parentId: section.parent_id,
         pageNumber: section.page_number,
+        pageRange: section.page_range,
+        bbox: section.bbox,
+        anchor: section.anchor,
         isReferences: section.is_references,
       })),
     });

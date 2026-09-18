@@ -58,8 +58,32 @@ from app.document.normalize import ends_sentence, join_wrapped_lines, looks_like
 #: spanning the page rather than belonging to a column.
 FULL_WIDTH_RATIO = 0.62
 
-#: Numbered heading, e.g. "3 Method", "3.1 Encoder", "4.2.1 Details".
-_HEADING_NUMBER = re.compile(r"^(\d+(?:\.\d+){0,3})\.?\s+\S")
+#: Bumped when extraction output changes in a way stored IRs must not be reused
+#: for. `content_hash` answers "did the PDF change"; this answers "did the code
+#: change". Both invalidate.
+#:
+#: 2 — reading-order section assignment correction reached cached documents, and
+#:     sections gained ``parent_id`` and ``heading_block_id``.
+IR_PIPELINE_VERSION = "2"
+
+#: Numbered heading, e.g. "3 Method", "3.1 Encoder", "4.2.1 Details",
+#: "A.1 Normalization", "C.1.2 Evaluation".
+#:
+#: The leading component may be a **letter**, which is how appendices are
+#: numbered. Omitting that case flattened every appendix subsection to level 1:
+#: `A.1`, `B.1`, `E.2` all became siblings of `A`, `B`, `E` rather than children,
+#: measured on Diffusion Policy and Mamba. Their own PDF bookmark trees place
+#: those headings at level 2, so the correction is corroborated by a source
+#: outside this pipeline rather than invented here.
+#:
+#: `appendix` is consumed as a prefix so "Appendix A Details" yields `A` and
+#: stays a root. Checked against all 112 distinct real section titles in the
+#: benchmark corpus: this changes exactly 21 levels, every one `1 -> 2`, every one
+#: a letter-prefixed appendix subsection, and no other heading at all.
+_HEADING_NUMBER = re.compile(
+    r"^(?:appendix\s+)?((?:[A-Z]|\d+)(?:\.(?:[A-Z]|\d+)){0,3})\.?\s+\S",
+    re.IGNORECASE,
+)
 
 _REFERENCES_HEADING = re.compile(
     r"^\s*(?:\d+\.?\s*)?(references|bibliography|works\s+cited|literature\s+cited)\s*$",
@@ -176,6 +200,7 @@ def extract_document_ir(
         ir = DocumentIR(
             document_id=document_id,
             content_hash=before[0],
+            pipeline_version=IR_PIPELINE_VERSION,
             source_filename=source_filename or source.name,
             page_count=document.page_count,
             metadata=metadata,
@@ -812,11 +837,70 @@ def _detect_sections(
                 title=title,
                 level=level,
                 page_range=(heading.page_number, max(heading.page_number, last_page)),
+                heading_block_id=heading.id,
                 is_references=bool(_REFERENCES_HEADING.match(title)),
             )
         )
 
+    _build_hierarchy(sections)
     return sections, heading_sections
+
+
+def _build_hierarchy(sections: list[SectionIR]) -> None:
+    """Give each section its parent, from the nesting the paper itself states.
+
+    The layout model marks every heading ``title`` and has no notion of hierarchy,
+    so nesting has to come from somewhere else. Two signals exist, and they
+    disagree on real papers:
+
+    * **Reading order plus level** — a level-2 heading nests under the nearest
+      preceding level-1 heading. Correct on the great majority of papers, and
+      wrong when the layout puts a subsection heading after the next section's:
+      measured on Diffusion Policy, where ``3.2. Visual Encoder`` appears after
+      ``4.1 Model Multi-Modal Action Distributions``, so a pure stack makes
+      ``3.2`` a child of ``4``.
+    * **The section's own number** — ``3.2`` belongs to ``3``, wherever the
+      heading happens to be printed. This is the paper stating its own structure,
+      and it is decisive when present.
+
+    So the number wins when it can, and the stack is the fallback for unnumbered
+    headings (which have no number to be right about). Neither signal is invented:
+    both are read off the document.
+
+    A section whose parent is not found — an appendix ``C.1`` with no ``C``
+    heading, because the layout model dropped it — stays a root rather than
+    being attached to a guess.
+    """
+    #: Every numbered section, so a child's prefix can find its parent at any
+    #: depth: "3.2" -> "3", and "1.1.1" -> "1.1". Keying only on top-level
+    #: numbers put `1.1.1` under `1` instead of under `1.1` — a defect no
+    #: benchmark paper exposed, because none of them nests three deep.
+    by_number: dict[str, SectionIR] = {}
+    for section in sections:
+        match = _HEADING_NUMBER.match(section.title)
+        if match:
+            by_number.setdefault(match.group(1).upper(), section)
+
+    stack: list[SectionIR] = []
+    for section in sections:
+        match = _HEADING_NUMBER.match(section.title)
+        number = match.group(1) if match else None
+        level = section.level or 1
+
+        while stack and (stack[-1].level or 1) >= level:
+            stack.pop()
+        parent = stack[-1] if stack else None
+
+        # The number is the paper's own statement of nesting, so it overrides the
+        # stack when it names a section that exists. This is the Diffusion Policy
+        # case: "3.2" printed after "4.1" still belongs to "3".
+        if number and "." in number:
+            numbered_parent = by_number.get(number.rsplit(".", 1)[0].upper())
+            if numbered_parent is not None and numbered_parent is not section:
+                parent = numbered_parent
+
+        section.parent_id = parent.id if parent is not None else None
+        stack.append(section)
 
 
 def _assign_sections(

@@ -50,6 +50,14 @@ interface PdfWorkspaceProps {
   /** Reports the page being read, 1-based, so the app can scope a question to it. */
   onCurrentPageChange?: (page: number) => void;
   /**
+   * Reports where in the page the reader is, for current-section tracking. A
+   * page can carry several sections, so the page number alone is not enough.
+   */
+  onReadingPositionChange?: (position: {
+    pageNumber: number;
+    offsetPt: number;
+  }) => void;
+  /**
    * A citation asking to be shown.
    *
    * `bboxes` are source-PDF points. They are drawn only when `allowHighlight` is
@@ -57,7 +65,12 @@ interface PdfWorkspaceProps {
    * reader at text that does not support the claim, which is worse than no
    * highlight at all.
    */
-  jump?: { pageNumber: number; bboxes: number[][]; nonce: number } | null;
+  jump?: {
+    pageNumber: number;
+    bboxes: number[][];
+    offsetPt: number | null;
+    nonce: number;
+  } | null;
   allowHighlight?: boolean;
 }
 
@@ -84,6 +97,7 @@ export function PdfWorkspace({
   emptyState,
   onDocumentLoaded,
   onCurrentPageChange,
+  onReadingPositionChange,
   jump,
   allowHighlight = false,
 }: PdfWorkspaceProps) {
@@ -258,12 +272,12 @@ export function PdfWorkspace({
     [onCurrentPageChange],
   );
 
-  // --- citation jump --------------------------------------------------------
+  // --- citation and outline jump --------------------------------------------
   useEffect(() => {
     if (!jump) return;
 
     setCurrentPage(jump.pageNumber);
-    viewerRef.current?.scrollToPage(jump.pageNumber);
+    viewerRef.current?.scrollToPage(jump.pageNumber, jump.offsetPt ?? undefined);
 
     // The highlight is drawn only when the geometry it came from is the geometry
     // on screen. A rotated page has a viewport the source points were not
@@ -368,6 +382,7 @@ export function PdfWorkspace({
           baseSize={baseSize}
           viewerRef={viewerRef}
           onCurrentPageChange={handleCurrentPageChange}
+          onReadingPositionChange={onReadingPositionChange}
           onContainerWidthChange={setContainerWidth}
           highlightPage={highlight?.page ?? null}
           highlightBoxes={highlight?.bboxes ?? []}

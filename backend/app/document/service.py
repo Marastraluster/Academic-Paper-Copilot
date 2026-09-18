@@ -20,7 +20,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.document.extract import DocumentExtractionError, extract_document_ir
+from app.document.extract import (
+    IR_PIPELINE_VERSION,
+    DocumentExtractionError,
+    extract_document_ir,
+)
 from app.document.models import DocumentIR
 from app.document.persistence import read_ir, write_ir
 from app.logging import get_logger
@@ -56,6 +60,26 @@ def load_ir(document_dir: Path) -> DocumentIR | None:
     return read_ir(document_dir)
 
 
+def is_reusable(cached: DocumentIR | None, document_id: str) -> bool:
+    """Whether a stored IR may answer for this document.
+
+    Three conditions, and the third is the one that was missing. A stored IR is
+    reused only when it is present, describes *this* document, and was produced by
+    the **current** pipeline.
+
+    Without the version check an improvement to extraction reached every new
+    document and no existing one: the reading-order section correction
+    (`ff744ab`) left a stored IR whose sections were assigned by page, with eight
+    of sixteen owning no paragraphs, and nothing could tell. The same shape as
+    `index.py`'s `SCHEMA_SIGNATURE` guard on the FTS index, applied to the IR.
+    """
+    return (
+        cached is not None
+        and cached.document_id == document_id
+        and cached.pipeline_version == IR_PIPELINE_VERSION
+    )
+
+
 def extract_and_store(
     document_dir: Path,
     source_path: Path,
@@ -71,7 +95,7 @@ def extract_and_store(
 
     if not force:
         cached = read_ir(directory)
-        if cached is not None and cached.document_id == document_id:
+        if is_reusable(cached, document_id):
             return cached, ExtractionSummary(
                 page_count=cached.page_count,
                 paragraph_count=len(cached.paragraphs),
@@ -85,7 +109,7 @@ def extract_and_store(
     with _lock_for(document_id):
         if not force:
             cached = read_ir(directory)
-            if cached is not None and cached.document_id == document_id:
+            if is_reusable(cached, document_id):
                 return cached, ExtractionSummary(
                     page_count=cached.page_count,
                     paragraph_count=len(cached.paragraphs),
@@ -122,6 +146,8 @@ def extract_and_store(
 __all__ = [
     "DocumentExtractionError",
     "ExtractionSummary",
+    "IR_PIPELINE_VERSION",
     "extract_and_store",
+    "is_reusable",
     "load_ir",
 ]

@@ -9,6 +9,7 @@
 import { useCallback, useMemo } from "react";
 
 import { askQa, retryTurn, scopeAvailability } from "@/qa/session";
+import { activeSectionFor } from "@/stores/workspace";
 import type { MappingStatus, SelectionMapping } from "@/qa/selection";
 import {
   QUICK_ACTIONS,
@@ -63,6 +64,8 @@ export function useQaSession(): QaSession {
   const submitting = useWorkspaceStore((s) => s.submitting);
   const activePage = useWorkspaceStore((s) => s.activePage);
   const sections = useWorkspaceStore((s) => s.sections);
+  const activeSectionId = useWorkspaceStore((s) => s.activeSectionId);
+  const selectedSectionId = useWorkspaceStore((s) => s.selectedSectionId);
   const profilesError = useWorkspaceStore((s) => s.profilesError);
   const profileId = useWorkspaceStore((s) => s.profileId);
   // `selectActiveTurns` filters, so it returns a fresh array every call. Feeding
@@ -93,9 +96,16 @@ export function useQaSession(): QaSession {
     [document, selectionState],
   );
 
+  // AC_CHANGE_REQUEST 4: the explicitly selected section wins and is sticky;
+  // otherwise the one the reading position resolves to.
+  const section = useMemo(
+    () => activeSectionFor({ sections, activeSectionId, selectedSectionId }),
+    [sections, activeSectionId, selectedSectionId],
+  );
+
   const availability = useMemo(
-    () => scopeAvailability(sections, activePage, selection),
-    [sections, activePage, selection],
+    () => scopeAvailability(activePage, selection, section),
+    [activePage, selection, section],
   );
 
   const ask = useCallback(

@@ -152,9 +152,13 @@ describe("DS-FE-003 · AC-32 reader mode switching", () => {
 
     await user.click(screen.getByTestId("reader-mode-translation"));
 
+    // Scoped to a known tab, then walked to its siblings: the sidebar's own tab
+    // strip also uses `aria-selected`, and asserting over every tab on the page
+    // would count the reader-mode control against the panel switcher.
     const selected = screen
       .getAllByRole("tab")
-      .filter((tab) => tab.getAttribute("aria-selected") === "true");
+      .filter((tab) => tab.getAttribute("aria-selected") === "true")
+      .filter((tab) => screen.getByTestId("reader-mode-translation").contains(tab));
 
     expect(selected).toHaveLength(1);
     expect(selected[0]).toHaveTextContent("译文");

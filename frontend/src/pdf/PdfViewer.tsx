@@ -18,6 +18,12 @@ interface PdfViewerProps {
   /** Page geometry at scale 1. */
   baseSize: PageSize;
   onCurrentPageChange: (page: number) => void;
+  /**
+   * The reading position, finer than the page: which page, and how far down it
+   * in **PDF points**. A page can carry several sections, so the page number
+   * alone cannot say where the reader is.
+   */
+  onReadingPositionChange?: (position: { pageNumber: number; offsetPt: number }) => void;
   onContainerWidthChange: (width: number) => void;
   viewerRef: React.MutableRefObject<PdfViewerHandle | null>;
   /** The page a citation is marking, or `null` for none. */
@@ -27,7 +33,16 @@ interface PdfViewerProps {
 }
 
 export interface PdfViewerHandle {
-  scrollToPage: (page: number) => void;
+  /**
+   * Move the stack so `page` is at the top of the viewport.
+   *
+   * `offsetPt` is an optional distance **into** the page, in PDF points —
+   * converted with the live scale, exactly as the highlight boxes are. It exists
+   * because a section heading is often not at the top of its page, and scrolling
+   * to the page would leave the heading the reader clicked below the fold. Omit
+   * it and the behaviour is unchanged from before this parameter existed.
+   */
+  scrollToPage: (page: number, offsetPt?: number) => void;
 }
 
 /**
@@ -44,6 +59,7 @@ export function PdfViewer({
   scale,
   baseSize,
   onCurrentPageChange,
+  onReadingPositionChange,
   onContainerWidthChange,
   viewerRef,
   highlightPage = null,
@@ -107,7 +123,22 @@ export function PdfViewer({
           bestPage = page;
         }
       }
-      if (bestVisible > 0) onCurrentPageChange(bestPage);
+      if (bestVisible > 0) {
+        onCurrentPageChange(bestPage);
+
+        // How far into the page the viewport top has scrolled, in PDF points.
+        // The same measure loop already has both rectangles, so this costs no
+        // extra observer and cannot disagree with the page it is reported with.
+        const element = pageRefs.current.get(bestPage);
+        if (element && onReadingPositionChange) {
+          const rect = element.getBoundingClientRect();
+          const intoPage = (containerRect.top - rect.top) / scale;
+          onReadingPositionChange({
+            pageNumber: bestPage,
+            offsetPt: Math.min(Math.max(intoPage, 0), rect.height / scale),
+          });
+        }
+      }
     };
 
     const onScroll = () => {
@@ -121,7 +152,7 @@ export function PdfViewer({
       container.removeEventListener("scroll", onScroll);
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [onCurrentPageChange, pageCount, scale]);
+  }, [onCurrentPageChange, onReadingPositionChange, pageCount, scale]);
 
   // --- keep the reading position across zoom changes (AC-019) ----------------
   const previousScaleRef = useRef(scale);
@@ -155,12 +186,18 @@ export function PdfViewer({
     return () => observer.disconnect();
   }, [onContainerWidthChange]);
 
-  const scrollToPage = useCallback((page: number) => {
-    const element = pageRefs.current.get(page);
-    const container = containerRef.current;
-    if (!element || !container) return;
-    container.scrollTo({ top: element.offsetTop - 8, behavior: "auto" });
-  }, []);
+  const scrollToPage = useCallback(
+    (page: number, offsetPt?: number) => {
+      const element = pageRefs.current.get(page);
+      const container = containerRef.current;
+      if (!element || !container) return;
+      // `offsetPt` is in PDF points, so it scales exactly as the page does —
+      // the same conversion the highlight boxes use, in the other direction.
+      const into = (offsetPt ?? 0) * scale;
+      container.scrollTo({ top: element.offsetTop - 8 + into, behavior: "auto" });
+    },
+    [scale],
+  );
 
   viewerRef.current = useMemo(() => ({ scrollToPage }), [scrollToPage]);
 

@@ -69,8 +69,23 @@ export interface SectionSummary {
   title: string;
   /** `null` when the heading carries no numbering and no reliable signal. */
   level: number | null;
+  /** The section this one nests under, or `null` for a root. */
+  parent_id: string | null;
   /** 1-based page the section starts on. */
   page_number: number;
+  /** `[first, last]` pages the section touches. */
+  page_range: [number, number];
+  /**
+   * The heading's box in PDF points, or `null` when the navigation ladder had to
+   * fall back to the first paragraph or to the page alone.
+   */
+  bbox: [number, number, number, number] | null;
+  /**
+   * Which rung of the ladder produced `page_number` / `bbox`:
+   * `"heading"` | `"paragraph"` | `"page"`. A caller that draws a box can check
+   * this rather than inferring it from a null.
+   */
+  anchor: "heading" | "paragraph" | "page";
   is_references: boolean;
 }
 

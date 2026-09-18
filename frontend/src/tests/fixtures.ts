@@ -104,10 +104,61 @@ export function seedQaProvider(id: string = TEST_PROFILE_ID): void {
 /** A document outline, so Section scope has a real identity. */
 export function seedQaSections(): void {
   useWorkspaceStore.getState().setSections([
-    { id: "sec_1", title: "1. Introduction", level: 1, pageNumber: 1, isReferences: false },
-    { id: "sec_2", title: "2. Method", level: 1, pageNumber: 3, isReferences: false },
-    { id: "sec_3", title: "3. Results", level: 1, pageNumber: 7, isReferences: false },
+    {
+      id: "sec_1", title: "1. Introduction", level: 1, parentId: null,
+      pageNumber: 1, pageRange: [1, 2], bbox: [50, 70, 200, 84],
+      anchor: "heading", isReferences: false,
+    },
+    {
+      id: "sec_2", title: "2. Method", level: 1, parentId: null,
+      pageNumber: 3, pageRange: [3, 6], bbox: [50, 70, 200, 84],
+      anchor: "heading", isReferences: false,
+    },
+    {
+      id: "sec_3", title: "3. Results", level: 1, parentId: null,
+      pageNumber: 7, pageRange: [7, 8], bbox: [50, 70, 200, 84],
+      anchor: "heading", isReferences: false,
+    },
   ]);
+
+  // The canonical geometry the reading position is resolved against. Seeded
+  // because production always has it: `translation/session.ts` fetches the IR as
+  // part of registration, so a document with sections but no IR is a state the
+  // app never reaches. One block per page, each owned by the section whose page
+  // range covers it — enough for the rule to resolve a page to a section.
+  const owner = (page: number) =>
+    page <= 2 ? "sec_1" : page <= 6 ? "sec_2" : "sec_3";
+  const pages = Array.from({ length: 8 }, (_, index) => {
+    const page = index + 1;
+    return {
+      page_number: page,
+      width_pt: 595,
+      height_pt: 842,
+      rotation: 0,
+      blocks: [
+        {
+          id: `b_p${page}`, page_number: page, layout_class: "plain text",
+          bbox: [50, 70, 545, 700] as [number, number, number, number],
+          text: `page ${page}`,
+        },
+      ],
+    };
+  });
+  const paragraphs = Array.from({ length: 8 }, (_, index) => {
+    const page = index + 1;
+    return {
+      id: `p_${page}`, section_id: owner(page), text: `page ${page}`,
+      page_number: page, page_range: [page, page] as [number, number],
+      block_ids: [`b_p${page}`], bboxes: [[50, 70, 545, 700] as [number, number, number, number]],
+    };
+  });
+  useWorkspaceStore.getState().setIr({
+    document_id: "doc_test",
+    content_hash: "hash",
+    page_count: 8,
+    paragraphs,
+    pages,
+  } as never);
 }
 
 /** Everything needed to ask a question: a registered paper and a provider. */

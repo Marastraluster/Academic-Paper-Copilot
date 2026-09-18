@@ -2,32 +2,45 @@ import { Composer } from "@/assistant/Composer";
 import { ConversationArea } from "@/assistant/ConversationArea";
 import { QuickActions } from "@/assistant/QuickActions";
 import { ScopeSelector } from "@/assistant/ScopeSelector";
+import { OutlineHeader, OutlinePanel } from "@/outline/OutlinePanel";
 import { SIDEBAR_WIDTH_PX } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 /**
- * AC-05 — collapsible Paper QA sidebar.
+ * AC-05 — collapsible Paper QA sidebar, and since DS-QA-008 the document
+ * outline as well.
  *
  * The <aside> element stays mounted in both states so its width is measurable
  * (AC-05 verification asks for computed width in each state), but when
  * collapsed it is zero-width and its contents are unmounted entirely — that
  * way nothing inside it can be tabbed into while invisible.
  *
- * The expand trigger lives in the top bar, satisfying AC-05's requirement that
- * an expand affordance stay reachable when collapsed.
+ * **One panel, two tabs — not two sidebars.** Decision J, and the arithmetic
+ * behind it: `SIDEBAR_WIDTH_PX` is 340 and the brief fixes a 1024 px floor, so a
+ * second 340 px column would leave 344 px for the paper. Tabs keep the reader
+ * the centre of the screen at every width the criteria test.
  *
- * This is the **only** assistant surface. Questions asked here go through the
- * grounded backend; there is no path that reaches a model directly, which is why
- * there is no "ask AI" escape hatch anywhere in this panel.
+ * Switching tabs unmounts one subtree and mounts the other, which is safe for
+ * both: outline expansion, QA turns and any in-flight request all live in the
+ * store, so nothing is lost and an answer already on its way still arrives. No
+ * cancellation is invented here — a request the user started keeps running.
  */
 export function AssistantSidebar() {
   const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen);
+  const panel = useWorkspaceStore((s) => s.outlinePanel);
+  const setPanel = useWorkspaceStore((s) => s.setOutlinePanel);
+
+  const tabs = [
+    { id: "outline" as const, label: "目录" },
+    { id: "qa" as const, label: "问答" },
+  ];
 
   return (
     <aside
       data-testid="assistant-sidebar"
       data-state={sidebarOpen ? "expanded" : "collapsed"}
+      data-panel={panel}
       aria-label="AI 论文助手"
       aria-hidden={!sidebarOpen}
       style={{ width: sidebarOpen ? SIDEBAR_WIDTH_PX : 0 }}
@@ -42,10 +55,60 @@ export function AssistantSidebar() {
           className="flex h-full flex-col"
           style={{ width: SIDEBAR_WIDTH_PX }}
         >
-          <ScopeSelector />
-          <QuickActions />
-          <ConversationArea />
-          <Composer />
+          <div
+            role="tablist"
+            aria-label="侧边栏面板"
+            data-testid="assistant-tabs"
+            className="flex shrink-0 gap-1 border-b px-2 py-1.5"
+          >
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                id={`assistant-tab-${tab.id}`}
+                aria-selected={panel === tab.id}
+                aria-controls={`assistant-tabpanel-${tab.id}`}
+                data-testid={`assistant-tab-${tab.id}`}
+                onClick={() => setPanel(tab.id)}
+                className={cn(
+                  "rounded-sm px-2.5 py-1 text-xs",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                  panel === tab.id
+                    ? "bg-primary/10 font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-accent/60",
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {panel === "outline" ? (
+            <div
+              id="assistant-tabpanel-outline"
+              role="tabpanel"
+              aria-labelledby="assistant-tab-outline"
+              data-testid="assistant-tabpanel-outline"
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <OutlineHeader />
+              <OutlinePanel />
+            </div>
+          ) : (
+            <div
+              id="assistant-tabpanel-qa"
+              role="tabpanel"
+              aria-labelledby="assistant-tab-qa"
+              data-testid="assistant-tabpanel-qa"
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <ScopeSelector />
+              <QuickActions />
+              <ConversationArea />
+              <Composer />
+            </div>
+          )}
         </div>
       )}
     </aside>

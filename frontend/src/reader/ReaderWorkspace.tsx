@@ -9,6 +9,7 @@ import {
   useWorkspaceStore,
 } from "@/stores/workspace";
 import { openDocument, noteTranslatedPageCount } from "@/translation/session";
+import { useActiveSection } from "@/outline/useActiveSection";
 import { TranslationNotice } from "@/translation/TranslationNotice";
 
 /**
@@ -30,7 +31,25 @@ export function ReaderWorkspace() {
   const mode = useWorkspaceStore(selectEffectiveMode);
   const translation = useWorkspaceStore(selectActiveTranslation);
   const setActivePage = useWorkspaceStore((s) => s.setActivePage);
+  const setReadingPosition = useWorkspaceStore((s) => s.setReadingPosition);
   const jumpRequest = useWorkspaceStore((s) => s.jumpRequest);
+  const translatedJump = useWorkspaceStore((s) => s.translatedJump);
+
+  // Tracks the reader's position against the canonical structure, so the outline
+  // can say which section they are in. Lives here because the position it needs
+  // comes from the original pane.
+  useActiveSection();
+
+  // The translated pane follows an *outline* jump only, and never carries source
+  // boxes — the source geometry does not describe the translated artifact.
+  const translatedJumpRequest = useMemo(
+    () =>
+      translatedJump
+        ? { pageNumber: translatedJump.pageNumber, bboxes: [], offsetPt: null,
+            nonce: translatedJump.nonce }
+        : null,
+    [translatedJump],
+  );
 
   const showOriginal = mode === "original" || mode === "bilingual";
   const showTranslated = mode === "translation" || mode === "bilingual";
@@ -67,6 +86,7 @@ export function ReaderWorkspace() {
             source={originalSource}
             onFileChosen={openDocument}
             onCurrentPageChange={setActivePage}
+            onReadingPositionChange={setReadingPosition}
             // The citation's page and boxes describe the *source* document, so
             // they are applied here and nowhere else. In bilingual mode the
             // translated pane is left exactly where the reader left it.
@@ -80,6 +100,7 @@ export function ReaderWorkspace() {
             label="译文 PDF"
             source={translatedSource}
             onDocumentLoaded={({ pageCount }) => noteTranslatedPageCount(pageCount)}
+            jump={translatedJumpRequest}
             emptyState={<TranslatedEmpty />}
           />
         )}

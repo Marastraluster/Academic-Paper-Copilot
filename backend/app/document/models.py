@@ -142,7 +142,19 @@ class SectionIR(BaseModel):
     title: str
     level: int | None = None
     page_range: tuple[int, int]
+    #: The section this one nests under, derived from reading order and ``level``
+    #: (see ``extract._build_hierarchy``). ``None`` means a root.
+    #:
+    #: Derived rather than detected: the layout model has no notion of hierarchy,
+    #: and the numbering a heading carries is the only statement the paper itself
+    #: makes about nesting. It is stored rather than computed per request because
+    #: it is a property of the document, not of the reader.
     parent_id: str | None = None
+    #: The ``TextBlockIR`` this section's heading came from — the single source of
+    #: its page and geometry. Stored as an id rather than as copied coordinates so
+    #: a heading's bbox has exactly one home, and a section cannot end up
+    #: describing a rectangle the block does not have.
+    heading_block_id: str | None = None
     is_references: bool = False
 
 
@@ -173,6 +185,16 @@ class DocumentIR(BaseModel):
     #: sha256 of the source PDF. Ties the IR to the exact bytes it describes, so
     #: a replaced source is detectable rather than silently mismatched.
     content_hash: str
+    #: Which extraction pipeline produced this file.
+    #:
+    #: `content_hash` guards against the *source* changing. This guards against
+    #: the *code* changing — a distinction that cost real damage: the
+    #: reading-order section fix (`ff744ab`) reached every new extraction and no
+    #: cached one, so a stored IR could describe a document with eight sections
+    #: owning nothing while the code that produced it had already been corrected.
+    #: `index.py` guards its FTS index with `SCHEMA_SIGNATURE` for the same
+    #: reason; this is the document half of that pattern.
+    pipeline_version: str = "1"
     source_filename: str
     page_count: int = Field(ge=0)
     metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)

@@ -28,8 +28,16 @@ export interface QaSection {
   id: string;
   title: string;
   level: number | null;
+  /** The section this one nests under, or `null` for a root. */
+  parentId: string | null;
   /** 1-based page the section starts on. */
   pageNumber: number;
+  /** `[first, last]` pages the section touches. */
+  pageRange: [number, number];
+  /** Heading box in PDF points, or `null` when the ladder fell back. */
+  bbox: [number, number, number, number] | null;
+  /** Which rung produced the location: `heading` | `paragraph` | `page`. */
+  anchor: "heading" | "paragraph" | "page";
   isReferences: boolean;
 }
 
@@ -98,6 +106,12 @@ export interface JumpRequest {
   pageNumber: number;
   /** Source-PDF boxes in points. Never applied to the translated pane. */
   bboxes: number[][];
+  /**
+   * Optional distance into the page in PDF points, so a section heading can be
+   * brought to the top of the viewport rather than its page. `null` for a
+   * citation jump, which names a page and a box and has no heading to land on.
+   */
+  offsetPt: number | null;
   /** Bumped per request so an identical jump repeated still fires. */
   nonce: number;
 }
@@ -189,9 +203,51 @@ interface WorkspaceState {
   activePage: number;
   setActivePage: (page: number) => void;
 
+  /**
+   * Where the reader is, for current-section tracking: the page, and how far
+   * down it in PDF points. Reported by the original pane.
+   *
+   * Deliberately richer than `activePage`: a page can carry four sections, so
+   * the page number alone cannot say which one the reader is in.
+   */
+  readingPosition: { pageNumber: number; offsetPt: number };
+  setReadingPosition: (position: { pageNumber: number; offsetPt: number }) => void;
+
+  /** The section the reading position resolves to. Follows the reader. */
+  activeSectionId: string | null;
+  setActiveSectionId: (sectionId: string | null) => void;
+
+  /** The section the user explicitly chose. Sticky, and wins over `active`. */
+  selectedSectionId: string | null;
+  setSelectedSectionId: (sectionId: string | null) => void;
+
+  /** Which panel the sidebar is showing. */
+  outlinePanel: "outline" | "qa";
+  setOutlinePanel: (panel: "outline" | "qa") => void;
+
+  /** `section_id`s the user has expanded. Ids, never titles or indices. */
+  expandedSectionIds: string[];
+  toggleSectionExpanded: (sectionId: string) => void;
+  expandSections: (sectionIds: string[]) => void;
+
   /** A pending request for the original viewer to move and highlight. */
   jumpRequest: JumpRequest | null;
-  requestJump: (pageNumber: number, bboxes: number[][]) => void;
+  requestJump: (pageNumber: number, bboxes: number[][], offsetPt?: number) => void;
+
+  /**
+   * A pending request for the **translated** pane to move, in bilingual mode.
+   *
+   * Deliberately separate from `jumpRequest`, and set only by outline
+   * navigation. Citations leave the translated pane where the reader left it
+   * (AC-P1-01: the two panes navigate independently), and routing them through
+   * this channel would quietly make that lockstep. An outline click is a
+   * different act: the reader asked for a *section*, and in a side-by-side view
+   * leaving the facing pane on an unrelated page makes the two disagree.
+   *
+   * Carries no boxes — source geometry is never applied to the translated pane.
+   */
+  translatedJump: { pageNumber: number; nonce: number } | null;
+  requestTranslatedJump: (pageNumber: number) => void;
 
   /**
    * A transient message about what just happened — currently only the "switched
@@ -339,15 +395,63 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   setReaderMode: (mode) => set({ readerMode: mode }),
 
   activePage: 1,
-  setActivePage: (page) => set({ activePage: page }),
+  // One page, two readers. `activePage` labels Page scope; `readingPosition`
+  // locates the reader inside the page. Updating the page without the position
+  // would leave them disagreeing, so the setter moves both — a second way to
+  // change one of them would be a second source of truth for the same fact.
+  setActivePage: (page) =>
+    set((state) => ({
+      activePage: page,
+      readingPosition: { ...state.readingPosition, pageNumber: page },
+    })),
+
+  readingPosition: { pageNumber: 1, offsetPt: 0 },
+  setReadingPosition: (position) => set({ readingPosition: position }),
+
+  activeSectionId: null,
+  setActiveSectionId: (sectionId) => set({ activeSectionId: sectionId }),
+
+  selectedSectionId: null,
+  setSelectedSectionId: (sectionId) => set({ selectedSectionId: sectionId }),
+
+  // DS-QA-008: the shipped panel is Paper QA, and the outline is one click away
+  // in the tab strip. The criteria freeze the tab *structure* (Decision J) but not
+  // which tab opens first, and defaulting to the outline would silently move every
+  // existing QA affordance behind a click — a product change dressed as a layout
+  // change. Revisit if product testing says otherwise.
+  outlinePanel: "qa",
+  setOutlinePanel: (panel) => set({ outlinePanel: panel }),
+
+  expandedSectionIds: [],
+  toggleSectionExpanded: (sectionId) =>
+    set((state) => ({
+      expandedSectionIds: state.expandedSectionIds.includes(sectionId)
+        ? state.expandedSectionIds.filter((id) => id !== sectionId)
+        : [...state.expandedSectionIds, sectionId],
+    })),
+  expandSections: (sectionIds) =>
+    set((state) => ({
+      expandedSectionIds: [...new Set([...state.expandedSectionIds, ...sectionIds])],
+    })),
 
   jumpRequest: null,
-  requestJump: (pageNumber, bboxes) =>
-    set({ jumpRequest: { pageNumber, bboxes, nonce: (jumpSeq += 1) } }),
+  requestJump: (pageNumber, bboxes, offsetPt) =>
+    set({
+      jumpRequest: {
+        pageNumber,
+        bboxes,
+        offsetPt: offsetPt ?? null,
+        nonce: (jumpSeq += 1),
+      },
+    }),
+
+  translatedJump: null,
+  requestTranslatedJump: (pageNumber) =>
+    set({ translatedJump: { pageNumber, nonce: (jumpSeq += 1) } }),
 
   notice: null,
   setNotice: (notice) => set({ notice }),
-  clearJump: () => set({ jumpRequest: null }),
+  clearJump: () => set({ jumpRequest: null, translatedJump: null }),
 
   scope: "whole_paper",
   setScope: (scope) => set({ scope }),
@@ -470,22 +574,26 @@ export function selectEffectiveMode(
 }
 
 /**
- * The section that governs the page the reader is on, or `null`.
+ * The section a Section scope should use, or `null`.
  *
- * The last section whose start page is at or before the current one — sections
- * arrive in reading order, so "last" is "the most recent one a reader has
- * passed". Deliberately returns `null` rather than guessing when there is no such
- * section: Section scope is only offered when it has a real identity.
+ * **`selectSectionForPage` lived here and is gone.** It returned the last section
+ * whose start page was at or before the current page, which is wrong on any page
+ * carrying more than one section: measured on ResNet page 3, whose paragraphs
+ * belong to four sections, it answered `3.3. Network Architectures` for a reader
+ * at the top of the page in `2. Related Work`. The rule that replaced it lives in
+ * `outline/currentSection.ts` and is expressed in canonical reading order, so a
+ * two-column page cannot invert it.
+ *
+ * AC_CHANGE_REQUEST 4 froze the precedence: an **explicitly selected** section
+ * wins and is sticky, because the user chose it deliberately; otherwise the
+ * **active** section from the reading position. Asking a question clears the
+ * selection, since the scope is then frozen onto that turn.
  */
-export function selectSectionForPage(
-  sections: QaSection[] | null,
-  page: number,
+export function activeSectionFor(
+  state: Pick<WorkspaceState, "sections" | "activeSectionId" | "selectedSectionId">,
 ): QaSection | null {
-  if (!sections || sections.length === 0) return null;
-  let found: QaSection | null = null;
-  for (const section of sections) {
-    if (section.pageNumber <= page) found = section;
-    else break;
-  }
-  return found;
+  if (!state.sections || state.sections.length === 0) return null;
+  const wanted = state.selectedSectionId ?? state.activeSectionId;
+  if (wanted === null) return null;
+  return state.sections.find((section) => section.id === wanted) ?? null;
 }
