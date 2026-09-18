@@ -174,6 +174,20 @@ class ParagraphIR(BaseModel):
     block_ids: list[str] = Field(default_factory=list)
     bboxes: list[BoundingBox] = Field(default_factory=list)
     is_abstract: bool = False
+    #: **Persistent** identity: a digest of the immutable source region this
+    #: paragraph was extracted from — document fingerprint, page, quantized
+    #: geometry, canonical text. Unchanged by reordering, insertion or deletion.
+    #:
+    #: Distinct from `id` on purpose, and the distinction is the whole point:
+    #: `id` is `p_<document>_<ordinal>`, this extraction's runtime identity, which
+    #: QA, retrieval, citations and the DOM all use and which is opaque to every
+    #: one of them. DS-DOC-002 measured what an ordinal is worth across an
+    #: extraction change: 145 of 160 paragraphs renumbered. An artifact a user
+    #: keeps — a note, a highlight — must anchor to this, never to `id`.
+    #:
+    #: Empty on an IR persisted before DS-DOC-003; `IR_PIPELINE_VERSION` makes
+    #: that a re-extraction rather than a silent `""`.
+    source_anchor_id: str = ""
 
 
 class DocumentIR(BaseModel):

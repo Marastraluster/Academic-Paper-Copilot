@@ -52,6 +52,7 @@ from app.document.models import (
     SectionIR,
     TextBlockIR,
 )
+from app.document import anchors
 from app.document.normalize import ends_sentence, join_wrapped_lines, looks_like_prose
 
 #: A block occupying this fraction of the text width or more is treated as
@@ -71,7 +72,11 @@ FULL_WIDTH_RATIO = 0.62
 #:     holding a stored id — the FTS index, `analysis.json`, a citation in a saved
 #:     answer — is pointing at a different paragraph afterwards and must be
 #:     invalidated rather than reused.
-IR_PIPELINE_VERSION = "3"
+#: 4 — paragraphs carry a stable source anchor (DS-DOC-003). Additive: `id` is
+#:     untouched, so nothing downstream had to move, but an IR written without
+#:     anchors is not reusable — the field is what a persistent artifact binds to,
+#:     and `""` is not a binding.
+IR_PIPELINE_VERSION = "4"
 
 #: Numbered heading, e.g. "3 Method", "3.1 Encoder", "4.2.1 Details",
 #: "A.1 Normalization", "C.1.2 Evaluation".
@@ -203,6 +208,14 @@ def extract_document_ir(
                 metadata.title = join_wrapped_lines(title_block.text.split("\n")) or None
 
         has_text_layer = any(page.has_text for page in pages)
+
+        # Stable source anchors, derived from the immutable source before the IR
+        # exists — they depend only on the fingerprint, the page, the geometry and
+        # the text, none of which the IR adds.
+        for paragraph in paragraphs:
+            paragraph.source_anchor_id = _anchor_for(
+                before[0], paragraph
+            )
 
         ir = DocumentIR(
             document_id=document_id,
@@ -415,6 +428,16 @@ def _union(boxes: list[BoundingBox]) -> BoundingBox:
 
 
 # --- reading order ------------------------------------------------------------
+
+
+def _anchor_for(content_hash: str, paragraph: ParagraphIR) -> str:
+    """The paragraph's stable source anchor, from the source and nothing else.
+
+    A thin wrapper so extraction does not have to build a `DocumentIR` before it
+    can identify what is in it: the anchor depends only on the document
+    fingerprint, which is already known, and on the paragraph.
+    """
+    return anchors.source_anchor_id_for(content_hash, paragraph)
 
 
 def order_blocks(blocks: list[TextBlockIR], *, page_width_pt: float) -> list[TextBlockIR]:
