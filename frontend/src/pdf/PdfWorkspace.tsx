@@ -392,7 +392,13 @@ export function PdfWorkspace({
           onContainerWidthChange={setContainerWidth}
           highlightPage={highlight?.page ?? null}
           highlightBoxes={highlight?.bboxes ?? []}
-          annotationBoxes={annotationBoxes}
+          // AC-P0-11: the same rule the citation highlight follows, for the same
+          // reason. A persisted rectangle is stored in the PDF's own unrotated
+          // space; on a `/Rotate 90` page the viewport is a different space
+          // entirely, so drawing it would point the reader at the wrong text.
+          // The note itself stays in the sidebar — suppression is about
+          // geometry, not about hiding the user's data.
+          annotationBoxes={rotation === 0 ? annotationBoxes : {}}
         />
       )}
 

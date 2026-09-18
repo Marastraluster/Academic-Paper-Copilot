@@ -132,16 +132,21 @@ function uploadedDocumentId() {
  * appears in a real paragraph is what makes this a test of notes rather than a
  * test of the fixture.
  */
-async function selectSomeText(page, paragraphTexts, skip = 0) {
-  return page.evaluate(([texts, skip]) => {
+async function selectSomeText(page, paragraphTexts, exclude = null) {
+  return page.evaluate(([texts, exclude]) => {
     const spans = [...document.querySelectorAll('[data-testid="pdf-text-layer"] span')]
       .filter((s) => (s.textContent ?? "").trim().length > 12)
       .filter((s) => !s.closest("[data-testid='viewer-translated']"));
+    // A span in a paragraph *other* than the one already used. Two spans of the
+    // same paragraph are the same annotation by AC-P0-12 — the second focuses the
+    // first — so a harness that picks two spans from one paragraph is testing the
+    // idempotency rule and calling it a failure.
+    const owner = (text) => texts.find((paragraph) => paragraph.includes(text.slice(0, 40)));
     const matching = spans.filter((s) => {
-      const text = (s.textContent ?? "").trim();
-      return texts.some((paragraph) => paragraph.includes(text.slice(0, 40)));
+      const paragraph = owner((s.textContent ?? "").trim());
+      return paragraph !== undefined && paragraph !== exclude;
     });
-    const span = matching[skip];
+    const span = matching[0];
     if (!span) return null;
     const box = span.getBoundingClientRect();
     const range = document.createRange();
@@ -157,8 +162,11 @@ async function selectSomeText(page, paragraphTexts, skip = 0) {
       clientX: box.left + box.width / 2,
       clientY: box.top + box.height / 2,
     }));
-    return (span.textContent ?? "").trim().slice(0, 40);
-  }, [paragraphTexts, skip]);
+    return {
+      text: (span.textContent ?? "").trim().slice(0, 40),
+      paragraph: owner((span.textContent ?? "").trim()) ?? "",
+    };
+  }, [paragraphTexts, exclude]);
 }
 
 async function openPaper(page, paper) {
@@ -228,7 +236,7 @@ async function main() {
 
     // --- create a highlight ------------------------------------------------
     const selected = await selectSomeText(page, paragraphTexts);
-    check("text can be selected in the paper", selected !== null, selected ?? "none found");
+    check("text can be selected in the paper", selected !== null, selected?.text ?? "none found");
     await sleep(400);
     const highlightEnabled = await page.locator('[data-testid="notes-create-highlight"]').isEnabled();
     check("a valid selection enables the create action", highlightEnabled);
@@ -240,13 +248,13 @@ async function main() {
     check("the highlight is listed", afterHighlight === before + 1,
       `${before} -> ${afterHighlight}${createError ? `  error: ${createError}` : ""}`);
 
-    const overlay = await page.locator('[data-testid="pdf-annotation-box"]').count();
+    const overlay = await page.locator('[data-testid="pdf-persistent-highlight-box"]').count();
     check("a persistent overlay is drawn on the source page", overlay > 0, `${overlay} boxes`);
 
     // --- the two highlights have different lifetimes -------------------------
     // A citation mark fades after four seconds; a note must survive that.
     await sleep(4200);
-    const stillThere = await page.locator('[data-testid="pdf-annotation-box"]').count();
+    const stillThere = await page.locator('[data-testid="pdf-persistent-highlight-box"]').count();
     check("the mark outlives the citation highlight's fade (AC-P0-08)",
       stillThere === overlay, `${overlay} -> ${stillThere}`);
 
@@ -255,7 +263,7 @@ async function main() {
     // Typing into the draft before creating moves focus out of the reader, which
     // collapses the browser selection the note would be attached to — so the
     // obvious order tests the wrong thing.
-    const second = await selectSomeText(page, paragraphTexts, 1);
+    const second = await selectSomeText(page, paragraphTexts, selected?.paragraph ?? null);
     await page.click('[data-testid="notes-create-note"]');
     await sleep(1200);
     const afterNote = await page.locator("li[data-testid^='note-']").count();
@@ -280,11 +288,11 @@ async function main() {
       panel: document.querySelectorAll('[data-testid="notes-panel"]').length,
       none: document.querySelectorAll('[data-testid="notes-none"]').length,
       rows: document.querySelectorAll("li[data-testid^='note-']").length,
-      boxes: document.querySelectorAll('[data-testid="pdf-annotation-box"]').length,
+      boxes: document.querySelectorAll('[data-testid="pdf-persistent-highlight-box"]').length,
     }));
     check("annotations survive a reload", afterReload === afterNote,
       `${afterNote} -> ${afterReload}  panel=${JSON.stringify(panelState)}`);
-    const boxesAfterReload = await page.locator('[data-testid="pdf-annotation-box"]').count();
+    const boxesAfterReload = await page.locator('[data-testid="pdf-persistent-highlight-box"]').count();
     check("the highlight is drawn again", boxesAfterReload > 0, `${boxesAfterReload} boxes`);
 
     // --- restart the backend, which is what "persistent" means --------------

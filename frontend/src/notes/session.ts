@@ -81,13 +81,46 @@ export async function loadAnnotations(): Promise<void> {
   }
 }
 
+/**
+ * An existing annotation over the same source range, if there is one.
+ *
+ * AC-P0-12 asks that re-marking an already-marked range *focus* the existing
+ * annotation rather than stack a second highlight on it. The comparison is the
+ * **anchor set**, and that turns out to be exactly the right granularity rather
+ * than an approximation: an anchor is derived from the paragraph's envelope, not
+ * from the drag's pixels, so two selections over the same paragraph produce the
+ * same anchor no matter where in it the user started or stopped. Identical
+ * anchors *are* 100% overlap, in the terms the criterion cares about.
+ *
+ * The paragraph is the unit a note can be attached to, so this also declines to
+ * merge two notes over different paragraphs that merely look alike.
+ */
+export function findEquivalent(
+  existing: AnnotationView[],
+  sources: TargetSource[],
+): AnnotationView | null {
+  if (sources.length === 0) return null;
+  // Page and quote, not the anchor hash: the anchors are the server's to know,
+  // and a note's identity to a reader *is* which text on which page it covers.
+  const key = (page: number, quote: string) => `${page}\u0000${quote}`;
+  const wanted = sources.map((source) => key(source.pageNumber, source.quote)).sort().join("");
+  for (const annotation of existing) {
+    const have = annotation.targets
+      .map((target) => key(target.page_number, target.quote))
+      .sort()
+      .join("");
+    if (have === wanted) return annotation;
+  }
+  return null;
+}
+
 export interface CreateOptions {
   kind: "highlight" | "note";
   comment?: string | null;
 }
 
 export type CreateResult =
-  | { ok: true; annotation: AnnotationView }
+  | { ok: true; annotation: AnnotationView; focusedExisting?: boolean }
   | { ok: false; reason: string };
 
 /**
@@ -113,6 +146,15 @@ export async function createFromSelection({
   const sources: TargetSource[] = buildAnnotationTargets(state.ir, state.selection.mapping);
   if (sources.length === 0) {
     return { ok: false, reason: "The selection does not map onto this paper's text." };
+  }
+
+  // AC-P0-12: the same range is one annotation, not a second highlight stacked
+  // on the first. The panel focuses what is already there.
+  const existing = useWorkspaceStore.getState().annotations ?? [];
+  const same = findEquivalent(existing, sources);
+  if (same !== null) {
+    useWorkspaceStore.setState({ activeAnnotationId: same.id });
+    return { ok: true, annotation: same, focusedExisting: true };
   }
 
   const targets: NewTarget[] = sources.map((source) => ({

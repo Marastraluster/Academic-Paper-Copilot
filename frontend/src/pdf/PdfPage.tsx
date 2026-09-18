@@ -176,8 +176,11 @@ export function PdfPage({
               {persistentBoxes.map((box, index) => (
                 <span
                   key={index}
-                  data-testid="pdf-annotation-box"
-                  className="absolute rounded-sm bg-amber-300/35"
+                  data-testid="pdf-persistent-highlight-box"
+                  // `multiply` is AC-P0-12's requirement: two overlapping
+                  // highlights must darken rather than the upper one hiding the
+                  // lower, which is what a highlighter does on paper.
+                  className="absolute rounded-sm bg-amber-300/40 mix-blend-multiply"
                   style={{
                     left: box[0]! * scale,
                     top: box[1]! * scale,
