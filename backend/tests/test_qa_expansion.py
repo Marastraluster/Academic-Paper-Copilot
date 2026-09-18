@@ -425,6 +425,40 @@ def test_a_sentence_longer_than_a_query_is_dropped() -> None:
     assert parse_queries(reply) == ["short phrase", "another phrase"]
 
 
+# --- AC-06: the selection fast path -------------------------------------------
+
+
+def test_a_selection_never_asks_for_a_rewrite(corpus) -> None:
+    """A selection is the evidence; a rewrite could not widen it.
+
+    DS-QA-005 will send paragraph ids from a browser selection, and a mapping
+    bug that produces ids this document does not have must cost nothing — not a
+    provider call spent searching for something the scope forbids finding.
+    """
+    ir, directory = corpus
+    bundle = retrieve(
+        ir, directory, query="anything at all",
+        scope=Scope(type="selection", paragraph_ids=["not_a_real_paragraph"]),
+    )
+
+    assert bundle.items == []
+    assert bundle.diagnostics.suggest_rewrite is False
+    assert bundle.diagnostics.rewrite_reasons == []
+
+
+def test_a_selection_ignores_analysis_expansion(corpus) -> None:
+    """The entities a selection query would inject can only be searched inside
+    the selection, which the query already names in full."""
+    ir, directory = corpus
+    bundle = retrieve(
+        ir, directory, query="What datasets are used for evaluation?",
+        analysis=build_analysis(),
+        scope=Scope(type="selection", paragraph_ids=["p1", "p2"]),
+    )
+
+    assert bundle.diagnostics.query_variants == ["raw"]
+
+
 # --- AC-10: no corpus-specific hardcoding -------------------------------------
 
 

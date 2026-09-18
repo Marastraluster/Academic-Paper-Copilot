@@ -6,8 +6,11 @@
 - **Reviewed and frozen by:** DeepSeek, before implementation
 - **Date:** 2026-09-18
 - **Baseline:** `6198bad` (DS-QA-003)
-- **Status:** **FROZEN**, with **4 `AC_CHANGE_REQUEST`s** raised in review below.
-  **10 P0 · 4 P1 · 2 P2.**
+- **Status:** **FROZEN**, with **6 `AC_CHANGE_REQUEST`s** — five raised in review before
+  implementation, one after the measured run. **10 P0 · 4 P1 · 2 P2.**
+  **DS-QA-004 is PARTIAL, NOT DONE.** P0 is 9 of 10 as written: AC-09's thresholds were
+  falsified by measurement and redefined as a disposition requirement
+  (AC_CHANGE_REQUEST 6), and the falsifying numbers stand in the evidence unchanged.
 
 ---
 
@@ -82,6 +85,31 @@ afterwards**. That is a better design than ours and it is adopted.
 | **Resolution** | The rule narrows to what it was defending: **the answer model is never called on empty evidence.** The rewrite may be, because it is a different call with a different contract — it produces queries, not claims, and every hit it leads to still comes from the index. The four DS-QA-002 tests that assert "zero provider calls" are updated to assert "zero **answer** calls", which is the property that matters and is still checkable. |
 | **Measured cost of the narrowing** | On the held-out set, 3 of 13 questions reached the rewrite and none failed; each paid 884–1291 ms. On the diagnostic set, 3 of 10. Every other question — including every exact-term lookup — stayed on the lexical path at a median of ~5 ms. A genuinely off-topic question now pays one bounded call before abstaining, which is the price of being able to answer a cross-language one at all. |
 | **Not accepted** | Leaving the rule as written and shipping a Stage B that silently never runs; or firing the rewrite unconditionally, which would make every question pay a provider round trip to help a tenth of them. |
+
+### AC_CHANGE_REQUEST 6 — AC-09's thresholds were a hypothesis, and they were falsified
+
+*Raised after the measured run. The other five were raised before implementation; this one can
+only be raised afterwards, because it is about whether a prediction survived contact with the
+benchmarks — the same situation as DS-QA-001's P0-9.*
+
+| | |
+|---|---|
+| **As written** | AC-09 (P0): held-out PPO Hit@5 ≥ 80% (baseline 62%), Hit@10 ≥ 85%; cross-language Hit@5 ≥ 80% (baseline 0%); paraphrase Hit@5 ≥ 80% (baseline 67%); diagnostic sets Hit@5 ≥ 75%. |
+| **Measured** | Held-out PPO **69% Hit@5** and **85% Hit@10** (62% → 85% is a 23-point gain). Cross-language **33% held-out / 100% diagnostic**, from a baseline of **0%** — a class that previously retrieved *nothing at all*. Paraphrase unchanged at 67%. Diagnostic ResNet assisted 70% Hit@5, Hit@10 80% → 90%. |
+| **Problem** | Like DS-QA-001's P0-9, the numbers are a **prediction about a mechanism that did not exist when they were written**. They were falsified. The mechanism is not failing: scope is enforced for every variant, citations remain source-resolved, the unanswerable floor held at 16/16 with zero false answers, every class untouched by the change is byte-identical to its baseline, and 5 of 6 avoidably-abstained product questions now answer. What the criterion actually encodes is the *stage gate*, and that gate is what the project should keep. |
+| **Resolution** | AC-09 becomes a **disposition requirement**, not a threshold: the stage's measured result must be recorded, the gate evaluated against its frozen numbers, and escalation to Stage C permitted only by Stage C's own frozen gate — which is not satisfied, so Stage C stays closed. The measured numbers stand in the evidence unchanged, including the ones that miss. |
+| **Not accepted** | Lowering the bar to 69% and calling it met, or reporting the Hit@10 gain as if it satisfied a Hit@5 criterion. |
+| **Consequence for DS-QA-004's own tally** | P0 is **9 of 10 as written** and the task is **PARTIAL, not DONE**: the product bar AC-09 encoded was not reached. Recorded here rather than softened, and the same way DS-QA-001's P0-9 was: the failure is in the record, the redefinition is in the record, and the difference between them is visible. |
+
+### A second P0 that this disposition found
+
+Reviewing AC-09 surfaced **AC-06, which was also failing**: a selection scope reached
+`needs_rewrite` like any other, so a selection naming a paragraph id the document does not have
+cost a provider call searching for something the scope forbids finding. It passed by accident in
+the common case — the selection branch happens to fill `items` with the selected paragraphs —
+and stopped passing the moment the ids did not resolve. Fixed, with two tests, before this
+disposition was written. It matters most to DS-QA-005, which is the task that will send
+browser-derived paragraph ids.
 
 ### Confirmations
 

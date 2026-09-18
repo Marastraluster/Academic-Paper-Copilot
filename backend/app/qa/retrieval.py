@@ -231,7 +231,18 @@ def retrieve(
     limit = max_items if max_items is not None else top_k * (1 + 2 * NEIGHBOUR_RADIUS)
 
     stats = ensure_index(document_dir, ir)
-    prepared = prepare(query, analysis, rewrites=rewrites)
+
+    # AC-06: a selection is a fast path. The selected paragraphs *are* the
+    # evidence, so analysis-driven expansion adds nothing to search for and a
+    # rewrite could not widen it — the scope forbids that by construction. Both
+    # are bypassed, explicitly rather than incidentally: they used to be skipped
+    # only because the selection branch happened to fill `items`, which stopped
+    # being true the moment a selection named an id the document does not have —
+    # and that is exactly when a wasted provider call is least affordable.
+    selection_scope = scope.type == "selection"
+    prepared = prepare(
+        query, None if selection_scope else analysis, rewrites=rewrites
+    )
 
     diagnostics = Diagnostics(
         expansions=[
@@ -338,8 +349,11 @@ def retrieve(
     # Whether a caller with a model available should try rewriting. Decided from
     # what actually came back, never from a score: BM25 scores are uncalibrated,
     # which is why DS-QA-001 forbade them as a sufficiency signal and DS-QA-002
-    # forbade them as a truth oracle.
-    diagnostics.suggest_rewrite, diagnostics.rewrite_reasons = needs_rewrite(query, items)
+    # forbade them as a truth oracle. Never under a selection — a rewrite cannot
+    # reach outside the selection, and the scope must not be widened to let it.
+    diagnostics.suggest_rewrite, diagnostics.rewrite_reasons = (
+        (False, []) if selection_scope else needs_rewrite(query, items)
+    )
 
     for index, item in enumerate(items, start=1):
         item.id = f"E{index}"
