@@ -37,7 +37,13 @@ import {
   type QaScopeType,
   type QaSection,
 } from "@/stores/workspace";
-import { seedDocument, seedQaProvider, seedQaSections } from "@/tests/fixtures";
+import type { MappingStatus } from "@/qa/selection";
+import {
+  seedDocument,
+  seedQaProvider,
+  seedQaSections,
+  seedSelection,
+} from "@/tests/fixtures";
 
 /* ------------------------------------------------------------------ *
  * Backend doubles
@@ -119,6 +125,8 @@ function setupScene(
     /** `undefined` seeds a normal outline; `[]` is a paper with none. */
     outline?: QaSection[] | null;
     scope?: QaScopeType;
+    /** Paragraph ids a drag resolved to, or a refusal status instead. */
+    selection?: string[] | { status: MappingStatus };
   } = {},
 ) {
   const document = seedDocument();
@@ -127,6 +135,13 @@ function setupScene(
   else useWorkspaceStore.getState().setSections(options.outline);
   if (options.page !== undefined) useWorkspaceStore.getState().setActivePage(options.page);
   if (options.scope !== undefined) useWorkspaceStore.getState().setScope(options.scope);
+  if (Array.isArray(options.selection)) seedSelection(options.selection);
+  else if (options.selection) {
+    useWorkspaceStore.setState({
+      selection: null,
+      selectionStatus: options.selection.status,
+    });
+  }
   render(<App />);
   return document;
 }
@@ -232,10 +247,13 @@ describe("DS-QA-003 · scopes", () => {
     expect(options[0]).toBe("当前论文");
     expect(options[1]).toBe("当前页（第 1 页）");
     expect(options[2]).toBe("当前章节");
-    // Decision D — deferred, and said so rather than answered as something else.
-    expect(options[3]).toBe("选中内容（暂未支持）");
+    // DS-QA-005 implemented Selection, so it is no longer "not yet supported" —
+    // it is disabled because nothing is selected, which is a different sentence
+    // and a different fix. It must still be disabled and say so rather than
+    // answering the whole paper under a Selection label.
+    expect(options[3]).toBe("选中内容（未选择）");
     expect(
-      within(select).getByRole("option", { name: "选中内容（暂未支持）" }),
+      within(select).getByRole("option", { name: "选中内容（未选择）" }),
     ).toBeDisabled();
   });
 
@@ -683,6 +701,165 @@ describe("DS-QA-003 · citation jumping", () => {
     expect(
       within(screen.getByTestId("viewer-translated")).queryByTestId("pdf-highlight-layer"),
     ).not.toBeInTheDocument();
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Selection scope (DS-QA-005)
+ * ------------------------------------------------------------------ */
+
+describe("DS-QA-005 · selection scope", () => {
+  it("keeps Selection disabled while nothing is selected (AC-11)", () => {
+    setupScene();
+
+    expect(
+      within(screen.getByTestId("scope-selector")).getByRole("option", {
+        name: "选中内容（未选择）",
+      }),
+    ).toBeDisabled();
+  });
+
+  it("enables Selection once a drag resolves, and previews it (AC-11)", () => {
+    setupScene({ selection: ["p_0001", "p_0002"] });
+
+    expect(
+      within(screen.getByTestId("scope-selector")).getByRole("option", { name: "选中内容" }),
+    ).toBeEnabled();
+    const preview = screen.getByTestId("selection-preview");
+    expect(preview).toHaveTextContent("已选 2 个段落");
+    expect(preview).toHaveTextContent("Deeper neural networks");
+  });
+
+  it("enables it without silently changing the chosen scope (AC_CHANGE_REQUEST 2)", () => {
+    // A reader highlighting a sentence to copy it must not have their scope
+    // replaced. The mapping makes Selection available; choosing it is a user act.
+    setupScene({ scope: "whole_paper", selection: ["p_0001"] });
+
+    expect(useWorkspaceStore.getState().scope).toBe("whole_paper");
+  });
+
+  it("says which refusal it was, not just that it failed (AC-05, AC-06)", () => {
+    setupScene({ selection: { status: "cross_page" } });
+
+    expect(screen.getByTestId("selection-refusal")).toHaveTextContent("跨页");
+  });
+
+  it("sends the canonical paragraph ids and nothing else (AC-09)", async () => {
+    const user = userEvent.setup();
+    setupScene({ scope: "selection", selection: ["p_0007", "p_0008"] });
+    replyWith(answered());
+
+    await ask(user, "what does this say?");
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    expect(body.scope).toEqual({
+      type: "selection",
+      paragraph_ids: ["p_0007", "p_0008"],
+    });
+    // `extra="forbid"`: anything else here is a 422, not a silent ignore.
+    expect(Object.keys(body.scope)).toEqual(["type", "paragraph_ids"]);
+  });
+
+  it("never sends an empty selection as a whole-paper search (AC-09)", async () => {
+    const user = userEvent.setup();
+    setupScene({ scope: "selection" });
+    replyWith(answered());
+
+    await ask(user, "what does this say?");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("asks an empty question under a Selection — the highlight itself (AC-10)", async () => {
+    const user = userEvent.setup();
+    setupScene({ scope: "selection", selection: ["p_0001"] });
+    replyWith(answered());
+
+    // No question typed: "explain what I highlighted" is the whole request.
+    await user.click(screen.getByTestId("composer-send"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    expect(body.question).toBe("");
+    expect(body.scope.type).toBe("selection");
+  });
+
+  it("still refuses an empty question outside a Selection (AC-P0-07)", async () => {
+    const user = userEvent.setup();
+    setupScene();
+    replyWith(answered());
+
+    expect(screen.getByTestId("composer-send")).toBeDisabled();
+    await user.click(screen.getByTestId("composer-send"));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("disables Selection in translation mode and offers the switch (AC-07)", async () => {
+    const user = userEvent.setup();
+    const document = setupScene({ selection: ["p_0001"] });
+    useWorkspaceStore.setState({
+      readerMode: "translation",
+      translation: {
+        documentId: document.documentId!,
+        sessionToken: document.sessionToken,
+        taskId: "t1",
+        status: "success",
+        progress: null,
+        error: null,
+        monoUrl: "blob:test-translated",
+        monoPageCount: 12,
+        degraded: false,
+      },
+    });
+
+    // The mode was set after render, so React has to reconcile it first.
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("scope-selector")).getByRole("option", {
+          name: "选中内容（译文模式不可用）",
+        }),
+      ).toBeDisabled(),
+    );
+
+    await user.click(screen.getByTestId("selection-translation-hint"));
+    expect(useWorkspaceStore.getState().readerMode).toBe("original");
+  });
+
+  it("clears the selection when another paper is opened (AC-12)", async () => {
+    setupScene({ selection: ["p_0001"] });
+
+    const { openDocument } = await import("@/translation/session");
+    openDocument(new File([new Uint8Array([1])], "b.pdf", { type: "application/pdf" }));
+
+    // Paper A's paragraph ids are unreachable from paper B, not merely hidden.
+    expect(useWorkspaceStore.getState().selection).toBeNull();
+    expect(useWorkspaceStore.getState().ir).toBeNull();
+  });
+
+  it("does not let a stale selection be sent against another paper (AC-12)", async () => {
+    const user = userEvent.setup();
+    setupScene({ scope: "selection", selection: ["p_0001"] });
+
+    // Without the document identity matching, the selector resolves to nothing —
+    // so the request is refused rather than sent with paper A's ids.
+    useWorkspaceStore.setState({
+      selection: {
+        documentId: "doc_somewhere_else",
+        sessionToken: "open-9",
+        mapping: {
+          status: "valid",
+          paragraphIds: ["p_0001"],
+          pages: [1],
+          text: "stale",
+          truncated: false,
+        },
+      },
+    });
+    replyWith(answered());
+
+    await ask(user, "what does this say?");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

@@ -23,7 +23,7 @@ import {
   subscribeToTask,
   type TaskOutcome,
 } from "@/api/translation";
-import { loadProfiles, loadSections, teardownQa } from "@/qa/session";
+import { loadIr, loadProfiles, loadSections, teardownQa } from "@/qa/session";
 import {
   nextSessionToken,
   useWorkspaceStore,
@@ -183,6 +183,9 @@ export function openDocument(file: File): void {
       // disables a single scope, the other disables asking and says so.
       void loadSections();
       void loadProfiles();
+      // The canonical IR, for selection mapping. Fetched here so a selection made
+      // moments after a paper opens can be resolved without a round trip.
+      void loadIr();
     } catch (cause) {
       if (isAbortError(cause)) return;
       if (!isCurrentSession(sessionToken)) return;

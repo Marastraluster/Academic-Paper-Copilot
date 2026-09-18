@@ -36,6 +36,8 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
 
+import { runSelectionChecks } from "./e2e-selection.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 const backendDir = join(repoRoot, "backend");
@@ -216,6 +218,14 @@ async function startPreview(port) {
 const composer = '[data-testid="qa-composer"]';
 const send = '[data-testid="composer-send"]';
 
+/** The canonical IR of the document the browser just uploaded. */
+async function loadIr(page, backendUrl) {
+  return page.evaluate(async (base) => {
+    const documents = await (await fetch(`${base}/api/documents`)).json();
+    return (await fetch(`${base}/api/documents/${documents[0].document_id}/ir`)).json();
+  }, backendUrl);
+}
+
 async function waitForComposer(page, timeout = 60000) {
   try {
     await page.waitForSelector(`${composer}:not([disabled])`, { timeout });
@@ -259,6 +269,19 @@ async function turnText(page) {
   return (await page.locator('[data-testid^="qa-turn-"]').last().innerText()).trim();
 }
 
+/* ------------------------------------------------------------------ *
+ * DS-QA-005 — selection mapping, measured in a real browser
+ * ------------------------------------------------------------------ */
+
+/**
+ * Drag across a paragraph's first line and report what the mapping resolved to.
+ *
+ * The drag is real: `page.mouse` over the text layer, which is the only thing
+ * that produces a genuine browser selection. The coordinates come from the
+ * paragraph's own `DocumentIR` box, transformed the way the *application*
+ * transforms it — so this checks the mapper against the geometry it claims to
+ * map, not against a second implementation of its own arithmetic.
+ */
 /* ------------------------------------------------------------------ *
  * The run
  * ------------------------------------------------------------------ */
@@ -318,8 +341,8 @@ async function main() {
 
     const scopeOptions = await page.locator('[data-testid="scope-selector"] option').allInnerTexts();
     check(
-      "the four scopes are offered, selection honestly disabled (AC-P0-04)",
-      scopeOptions.length === 4 && scopeOptions[3].includes("暂未支持"),
+      "the four scopes are offered, selection disabled while nothing is selected (AC-P0-04)",
+      scopeOptions.length === 4 && scopeOptions[3] === "选中内容（未选择）",
       scopeOptions.join(" | "),
     );
 
@@ -448,6 +471,18 @@ async function main() {
     await page.selectOption('[data-testid="scope-selector"]', "whole_paper");
 
     await page.screenshot({ path: join(shotsDir, "01-answerable.png") });
+
+    // --- DS-QA-005: selection → canonical paragraphs -------------------------
+    // DS-QA-005: the selection → canonical identity checks, in their own module
+    // because they are a different experiment with a different fixture.
+    await runSelectionChecks(page, {
+      backendUrl: BACKEND_URL,
+      check,
+      ask,
+      ir: await loadIr(page, BACKEND_URL),
+    });
+
+
 
     // --- translation mode ---------------------------------------------------
     // Needs a real translation. A two-page excerpt keeps it to about a minute

@@ -141,6 +141,10 @@ export function PdfPage({
       ref={containerRef}
       data-testid="pdf-page-container"
       data-page-number={pageNumber}
+      // The live scale, published for the selection mapper. Parsing PDF.js's
+      // `--scale-factor` would work and would depend on a library's internals;
+      // this is the application's own contract with itself.
+      data-page-scale={scale}
       className="pdf-page relative mx-auto shrink-0 bg-page-surface shadow-sm"
       style={{ width, height }}
     >

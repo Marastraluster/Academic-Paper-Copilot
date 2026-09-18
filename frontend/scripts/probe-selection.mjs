@@ -141,6 +141,47 @@ async function main() {
       };
     });
 
+    // --- 2b. a real mouse drag over the text layer -------------------------
+    // Programmatic ranges proved the geometry; this proves a *user drag* produces
+    // a selection at all, which is the part the mapping depends on.
+    const dragReport = await page.evaluate(() => {
+      const container = document.querySelector('[data-testid="pdf-page-container"][data-page-number="3"]');
+      if (!container) return null;
+      container.scrollIntoView({ block: "center" });
+      const rect = container.getBoundingClientRect();
+      const scale = Number(container.dataset.pageScale ?? "0");
+      // The first paragraph on page 3, from the IR.
+      return { left: rect.left, top: rect.top, scale, width: rect.width, height: rect.height };
+    });
+    if (dragReport) {
+      await page.waitForTimeout(700);
+      const box = await page.evaluate(() => {
+        const container = document.querySelector('[data-testid="pdf-page-container"][data-page-number="3"]');
+        const rect = container.getBoundingClientRect();
+        const scale = Number(container.dataset.pageScale ?? "0");
+        const spans = [...container.querySelectorAll('.textLayer span')]
+          .map((s) => ({ r: s.getBoundingClientRect(), text: s.textContent }))
+          .filter((s) => s.r.width > 20 && s.r.top > rect.top + 40 && s.r.top < rect.top + 300);
+        return { rect: rect.toJSON(), scale,
+                 sample: spans.slice(0, 5).map((s) => ({ text: s.text.slice(0, 30), r: s.r.toJSON() })) };
+      });
+      report.dragTargets = box;
+      if (box.sample.length >= 2) {
+        const first = box.sample[0].r;
+        const second = box.sample[1].r;
+        await page.mouse.move(first.left + 4, first.top + first.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(second.right - 4, second.top + second.height / 2, { steps: 10 });
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+        report.afterDrag = await page.evaluate(() => ({
+          text: window.getSelection()?.toString().slice(0, 80) ?? "",
+          collapsed: window.getSelection()?.isCollapsed ?? true,
+          rangeCount: window.getSelection()?.rangeCount ?? 0,
+        }));
+      }
+    }
+
     // --- 3. select a phrase inside one paragraph ---------------------------
     report.selection = await page.evaluate(() => {
       const layer = document.querySelector('[data-testid="pdf-text-layer"]');

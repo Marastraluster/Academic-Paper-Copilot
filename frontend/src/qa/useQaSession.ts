@@ -9,8 +9,10 @@
 import { useCallback, useMemo } from "react";
 
 import { askQa, retryTurn, scopeAvailability } from "@/qa/session";
+import type { MappingStatus, SelectionMapping } from "@/qa/selection";
 import {
   QUICK_ACTIONS,
+  selectActiveSelection,
   selectActiveTurns,
   useWorkspaceStore,
   type QaScopeType,
@@ -31,6 +33,10 @@ export interface QaSession {
   scope: QaScopeType;
   setScope: (scope: QaScopeType) => void;
   availability: Record<QaScopeType, boolean>;
+  /** The resolved selection for the open document, or `null`. */
+  selection: SelectionMapping | null;
+  /** Why the last selection attempt was refused, if it was. */
+  selectionStatus: MappingStatus | null;
   /** True when the composer's question could be sent right now. */
   canAsk: boolean;
   /**
@@ -64,6 +70,8 @@ export function useQaSession(): QaSession {
   // React bails out with "maximum update depth exceeded". Selecting the raw list
   // and deriving here keeps the reference stable between renders.
   const allTurns = useWorkspaceStore((s) => s.turns);
+  const selectionState = useWorkspaceStore((s) => s.selection);
+  const selectionStatus = useWorkspaceStore((s) => s.selectionStatus);
   const turns = useMemo(
     () => selectActiveTurns({ document, turns: allTurns }),
     [document, allTurns],
@@ -79,9 +87,15 @@ export function useQaSession(): QaSession {
   const ready = documentState === "ready";
   const hasProfile = profileId !== "";
 
+  const selection = useMemo(
+    () =>
+      selectActiveSelection({ document, selection: selectionState })?.mapping ?? null,
+    [document, selectionState],
+  );
+
   const availability = useMemo(
-    () => scopeAvailability(sections, activePage),
-    [sections, activePage],
+    () => scopeAvailability(sections, activePage, selection),
+    [sections, activePage, selection],
   );
 
   const ask = useCallback(
@@ -135,9 +149,17 @@ export function useQaSession(): QaSession {
     scope,
     setScope,
     availability,
+    selection,
+    selectionStatus,
     // A question with nothing in it is not askable, and neither is one that
-    // already has an answer on its way.
-    canAsk: ready && hasProfile && !submitting && question.trim() !== "",
+    // already has an answer on its way. Under a Selection an empty question *is*
+    // askable — "explain what I highlighted" — because the selection is the
+    // evidence and there is nothing to search for.
+    canAsk:
+      ready &&
+      hasProfile &&
+      !submitting &&
+      (question.trim() !== "" || (scope === "selection" && availability.selection)),
     canRunAction: ready && hasProfile && !submitting,
     turns,
     ask,

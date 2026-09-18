@@ -17,12 +17,20 @@
  */
 import { isAbortError } from "@/api/client";
 import { listSections } from "@/api/documents";
+import { fetchIr } from "@/api/ir";
 import { listProfiles } from "@/api/profiles";
 import { askQuestion, type QaScope } from "@/api/qa";
 import { describeApiError } from "@/translation/errors";
 import { parseAnswer, type Citation } from "@/qa/parse";
 import {
+  matchParagraphs,
+  readDomSelection,
+  toPdfRects,
+  type SelectionMapping,
+} from "@/qa/selection";
+import {
   nextTurnId,
+  selectActiveSelection,
   selectActiveTurns,
   selectEffectiveMode,
   selectSectionForPage,
@@ -65,6 +73,7 @@ export function buildScope(
   scopeType: QaScopeType,
   activePage: number,
   sections: QaSection[] | null,
+  selection: SelectionMapping | null = null,
 ): QaScope | null {
   switch (scopeType) {
     case "whole_paper":
@@ -77,11 +86,13 @@ export function buildScope(
       const section = selectSectionForPage(sections, activePage);
       return section ? { type: "section", section_id: section.id } : null;
     }
-    case "selection":
-      // DS-QA-003 Decision D: there is no selection → paragraph mapping yet, so
-      // there is no honest paragraph_ids list to send. Answering the whole paper
-      // and labelling it "selection" is the one thing this must not do.
-      return null;
+    case "selection": {
+      // DS-QA-005: the canonical ids the browser mapped the drag onto. Empty
+      // means there is no honest selection to send — and the one thing this must
+      // never do is answer the whole paper under a Selection label.
+      const ids = selection?.paragraphIds ?? [];
+      return ids.length > 0 ? { type: "selection", paragraph_ids: ids } : null;
+    }
   }
 }
 
@@ -109,13 +120,16 @@ export function describeScope(
 export function scopeAvailability(
   sections: QaSection[] | null,
   activePage: number,
+  selection: SelectionMapping | null = null,
 ): Record<QaScopeType, boolean> {
   return {
     whole_paper: true,
     page: Number.isInteger(activePage) && activePage >= 1,
     section: selectSectionForPage(sections, activePage) !== null,
-    // Deferred, never "unavailable for now but let's guess anyway".
-    selection: false,
+    // DS-QA-005: available only when a drag actually resolved to canonical
+    // paragraphs. An unmappable selection leaves it unavailable, which is the
+    // honest answer and the one DS-QA-003 shipped.
+    selection: (selection?.paragraphIds.length ?? 0) > 0,
   };
 }
 
@@ -180,12 +194,21 @@ export async function askQa({
     return;
   }
 
-  const text = question.trim();
-  if (!text) return; // AC-P0-07
   if (state.submitting) return; // one at a time; no duplicate in-flight
 
   const scopeType = scopeOverride ?? state.scope;
-  const scope = buildScope(scopeType, state.activePage, state.sections);
+  const text = question.trim();
+  // AC-P0-07 refuses an empty question for a searchable scope — there is nothing
+  // to search for. AC-10 is the one exception: under a Selection an empty
+  // question is the "explain what I highlighted" case, which the backend
+  // implements by returning the selected paragraphs without running FTS.
+  if (!text && scopeType !== "selection") return;
+  const scope = buildScope(
+    scopeType,
+    state.activePage,
+    state.sections,
+    selectActiveSelection(state)?.mapping ?? null,
+  );
   if (scope === null) return; // AC-P0-05 — no identity, no request
 
   const { documentId, sessionToken } = document;
@@ -286,6 +309,150 @@ export async function loadProfiles(): Promise<void> {
   }
 }
 
+// --- the IR ------------------------------------------------------------------
+
+let activeIr: AbortController | null = null;
+
+/**
+ * Fetch the canonical IR, once, for the document that is open.
+ *
+ * Selection mapping intersects live geometry against these boxes on every
+ * mouse-up, so it has to be local — a round trip per selection would make the
+ * reader feel broken. Failure leaves selection unavailable and everything else
+ * working; the IR is an enhancement to one scope, not a prerequisite.
+ */
+export async function loadIr(): Promise<void> {
+  const document = useWorkspaceStore.getState().document;
+  if (!document || document.documentId === null || document.registration !== "ready") {
+    return;
+  }
+  const { documentId, sessionToken } = document;
+
+  activeIr?.abort();
+  const controller = new AbortController();
+  activeIr = controller;
+
+  try {
+    const ir = await fetchIr(documentId, { signal: controller.signal });
+    if (!isCurrent(documentId, sessionToken)) return;
+    useWorkspaceStore.setState({ ir });
+  } catch {
+    // Leave it null: Selection stays unavailable and says so.
+  } finally {
+    if (activeIr === controller) activeIr = null;
+  }
+}
+
+// --- selection ----------------------------------------------------------------
+
+const EMPTY_MAPPING: SelectionMapping = {
+  status: "unavailable",
+  paragraphIds: [],
+  pages: [],
+  text: "",
+  truncated: false,
+};
+
+/**
+ * Resolve the current browser selection to canonical paragraph ids.
+ *
+ * Never guesses, and never falls back: a selection that maps to no paragraph
+ * leaves Selection unavailable rather than labelling a whole-paper search as a
+ * selection. Every refusal carries the reason, so the sidebar can say which one
+ * it was instead of a generic "unavailable".
+ */
+export function captureSelection(): SelectionMapping | null {
+  const state = useWorkspaceStore.getState();
+  const document = state.document;
+  if (!document || document.documentId === null) return null;
+
+  const dom = readDomSelection(
+    typeof window === "undefined" ? null : window.getSelection(),
+  );
+  if (dom.isCollapsed || dom.byPage.length === 0) {
+    return { ...EMPTY_MAPPING, status: "collapsed" };
+  }
+
+  // A pane showing the translation is a re-laid-out document; its geometry is
+  // not the source's and no validated mapping between them exists.
+  if (dom.translatedPane) return { ...EMPTY_MAPPING, status: "non_prose", text: dom.text };
+
+  // Both pages must be mounted for a browser range to span them, and the viewer
+  // windows pages — so this is refused rather than mapped onto whichever page
+  // came first.
+  if (dom.crossPage) {
+    return {
+      status: "cross_page",
+      paragraphIds: [],
+      pages: dom.byPage.map((entry) => entry.page),
+      text: dom.text,
+      truncated: false,
+    };
+  }
+
+  if (!state.ir) return { ...EMPTY_MAPPING, status: "unavailable", text: dom.text };
+
+  const { page: pageNumber, element, rects } = dom.byPage[0]!;
+  const irPage = state.ir.pages.find((candidate) => candidate.page_number === pageNumber);
+  const scale = Number(element.dataset.pageScale ?? "0");
+  if (!irPage || !(scale > 0)) {
+    return { ...EMPTY_MAPPING, status: "unavailable", text: dom.text };
+  }
+
+  const pdfRects = toPdfRects(rects, element.getBoundingClientRect(), scale, irPage);
+  if (pdfRects.length === 0) {
+    return { ...EMPTY_MAPPING, status: "unavailable", text: dom.text };
+  }
+
+  return matchParagraphs(new Map([[pageNumber, pdfRects]]), state.ir.paragraphs, dom.text);
+}
+
+/**
+ * Record a new selection.
+ *
+ * **A collapsed selection is ignored, not treated as a cleared one.** That is not
+ * a detail: clicking the Ask button takes focus out of the page and collapses the
+ * browser's selection, so clearing on collapse would destroy the very thing the
+ * request is about — the highlighted text — at the moment the reader asks about
+ * it. The measurement caught this as a request that was never sent.
+ *
+ * Clearing is an explicit act: it happens when the reader clicks in the paper,
+ * where collapsing the selection *is* the intent. See `clearSelection`.
+ *
+ * Deliberately does **not** touch the chosen scope either. Highlighting a
+ * sentence to copy it must not silently replace the scope the user picked; the
+ * mapping makes Selection *available*, and choosing it stays a user action.
+ */
+export function refreshSelection(): SelectionMapping | null {
+  const mapping = captureSelection();
+  const document = useWorkspaceStore.getState().document;
+
+  if (!document || document.documentId === null || !mapping) return null;
+  if (mapping.status === "collapsed") return null;
+
+  if (mapping.status !== "valid" && mapping.status !== "partial") {
+    // The refusal is recorded as a *status*, so the sidebar can say which one it
+    // was. A generic "unavailable" would leave the reader guessing at the fix.
+    useWorkspaceStore.setState({ selection: null, selectionStatus: mapping.status });
+    return mapping;
+  }
+
+  useWorkspaceStore.setState({
+    selection: {
+      documentId: document.documentId,
+      sessionToken: document.sessionToken,
+      mapping,
+    },
+    selectionStatus: mapping.status,
+  });
+  return mapping;
+}
+
+/** Drop the mapping. Called when the reader clicks in the paper, not in the sidebar. */
+export function clearSelection(): void {
+  useWorkspaceStore.setState({ selection: null, selectionStatus: null });
+}
+
 // --- sections ---------------------------------------------------------------
 
 /**
@@ -373,6 +540,8 @@ export function teardownQa(): void {
   activeSections = null;
   activeProfiles?.abort();
   activeProfiles = null;
+  activeIr?.abort();
+  activeIr = null;
 
   useWorkspaceStore.setState({
     turns: [],
@@ -386,6 +555,11 @@ export function teardownQa(): void {
     profiles: null,
     profilesError: null,
     profileId: "",
+    // The IR holds paper A's paragraph ids and the selection names them: both are
+    // released here, so neither can be reached while paper B is open.
+    ir: null,
+    selection: null,
+    selectionStatus: null,
   });
 }
 

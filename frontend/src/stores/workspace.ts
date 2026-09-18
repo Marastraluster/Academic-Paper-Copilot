@@ -1,8 +1,10 @@
 import { create } from "zustand";
 
+import type { DocumentIr } from "@/api/ir";
 import type { ProviderProfile } from "@/api/profiles";
 import type { AnswerDiagnostics } from "@/api/qa";
 import type { Citation } from "@/qa/parse";
+import type { MappingStatus, SelectionMapping } from "@/qa/selection";
 import type { UserFacingError } from "@/translation/errors";
 
 /** AC-04: the three reader modes. */
@@ -75,6 +77,19 @@ export interface QaTurn {
   documentId: string;
   sessionToken: string;
   result: QaResult;
+}
+
+/**
+ * A resolved text selection, and where it came from.
+ *
+ * Carries its document identity for the same reason a translation does: a
+ * selection belongs to one paper, and paper A's paragraph ids must be
+ * unreachable — not merely ignored — while paper B is open.
+ */
+export interface SelectionState {
+  documentId: string;
+  sessionToken: string;
+  mapping: SelectionMapping;
 }
 
 /** A request for the original viewer to move, and to mark the cited region. */
@@ -219,6 +234,29 @@ interface WorkspaceState {
   setProfiles: (profiles: ProviderProfile[] | null, error?: string | null) => void;
   setProfileId: (id: string) => void;
 
+  /**
+   * The canonical IR, fetched once per document.
+   *
+   * Selection mapping intersects live geometry against these boxes on every
+   * mouse-up, so it has to be local. Released on document switch — the ids in it
+   * belong to one paper and must never be sendable against another.
+   */
+  ir: DocumentIr | null;
+  setIr: (ir: DocumentIr | null) => void;
+
+  /** The current selection's canonical mapping, bound to the document it came from. */
+  selection: SelectionState | null;
+  setSelection: (selection: SelectionState | null) => void;
+  /**
+   * Why the last selection attempt was refused, if it was.
+   *
+   * Kept so the scope selector can say *which* reason — a heading, a figure, a
+   * cross-page drag — rather than a generic "unavailable" that teaches the reader
+   * nothing about what to do differently.
+   */
+  selectionStatus: MappingStatus | null;
+  setSelectionStatus: (status: MappingStatus | null) => void;
+
   // ---- Sidebar (AC-05) ----
   sidebarOpen: boolean;
   toggleSidebar: () => void;
@@ -336,6 +374,14 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
     })),
   setProfileId: (profileId) => set({ profileId }),
 
+  ir: null,
+  setIr: (ir) => set({ ir }),
+
+  selection: null,
+  setSelection: (selection) => set({ selection }),
+  selectionStatus: null,
+  setSelectionStatus: (selectionStatus) => set({ selectionStatus }),
+
   // AC-05: expanded by default.
   sidebarOpen: true,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
@@ -363,6 +409,23 @@ export function selectActiveTurns(
       turn.documentId === document.documentId &&
       turn.sessionToken === document.sessionToken,
   );
+}
+
+/**
+ * The selection for the document currently open, or `null`.
+ *
+ * The same guarantee the translation and the QA turns have, for the same reason:
+ * paper A's paragraph ids are *unreachable* while paper B is open, so no code
+ * path can send them by forgetting to check.
+ */
+export function selectActiveSelection(
+  state: Pick<WorkspaceState, "document" | "selection">,
+): SelectionState | null {
+  const { document, selection } = state;
+  if (!document || document.documentId === null || !selection) return null;
+  if (selection.documentId !== document.documentId) return null;
+  if (selection.sessionToken !== document.sessionToken) return null;
+  return selection;
 }
 
 /**

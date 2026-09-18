@@ -9,9 +9,11 @@
  * `setup.ts` restores the store to its initial state after every test, so
  * anything seeded here is automatically undone.
  */
+import type { SelectionMapping } from "@/qa/selection";
 import {
   useWorkspaceStore,
   type OpenDocument,
+  type SelectionState,
   type TranslationState,
 } from "@/stores/workspace";
 
@@ -113,4 +115,33 @@ export function seedQaReady(): OpenDocument {
   const document = seedDocument();
   seedQaProvider();
   return document;
+}
+
+/**
+ * A resolved text selection, as `refreshSelection` would have stored it.
+ *
+ * Seeded rather than produced by a real drag: mapping a live browser Range in
+ * jsdom measures nothing, and the mapping rules are covered directly in
+ * `selection-mapping.test.ts`. What these fixtures exercise is everything
+ * downstream — the scope selector, the payload, the invalidation.
+ */
+export function seedSelection(
+  paragraphIds: string[] = ["p_0001"],
+  overrides: Partial<SelectionMapping> = {},
+): SelectionState {
+  const document = useWorkspaceStore.getState().document;
+  const state: SelectionState = {
+    documentId: document?.documentId ?? TEST_DOCUMENT_ID,
+    sessionToken: document?.sessionToken ?? TEST_SESSION,
+    mapping: {
+      status: "valid",
+      paragraphIds,
+      pages: [1],
+      text: "Deeper neural networks are more difficult to train.",
+      truncated: false,
+      ...overrides,
+    },
+  };
+  useWorkspaceStore.setState({ selection: state, selectionStatus: state.mapping.status });
+  return state;
 }

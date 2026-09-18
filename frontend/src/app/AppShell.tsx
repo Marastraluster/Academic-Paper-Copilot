@@ -1,4 +1,5 @@
 import { AssistantSidebar } from "@/assistant/AssistantSidebar";
+import { useSelectionCapture } from "@/qa/useSelectionCapture";
 import { ReaderWorkspace } from "@/reader/ReaderWorkspace";
 import { StatusBar } from "@/app/StatusBar";
 import { TopBar } from "@/app/TopBar";
@@ -16,6 +17,10 @@ import { TopBar } from "@/app/TopBar";
  * the viewers to scroll internally instead of stretching the page.
  */
 export function AppShell() {
+  // Watches the browser selection for the whole shell, not just the sidebar: a
+  // reader can highlight a sentence before the sidebar is open.
+  useSelectionCapture();
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
       <TopBar />
