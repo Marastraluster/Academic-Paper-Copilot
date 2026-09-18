@@ -109,4 +109,105 @@ class EvidenceBundle(BaseModel):
     diagnostics: Diagnostics = Field(default_factory=Diagnostics)
 
     #: Rough token estimate for the whole bundle, so a caller can bound a prompt.
+    #: `len(text) // 4` — convenient and **optimistic**, which is why the answer
+    #: budget does not use it (see `app.qa.answering`). It is a published field of
+    #: a frozen interface, so it stays as it is.
     token_estimate: int = 0
+
+
+# --- answering (DS-QA-002) ----------------------------------------------------
+
+#: The three answerability states. `PARTIAL` is deliberately not a flavour of
+#: `ANSWERED`: a question with three facets where the evidence covers one is a
+#: different product outcome from one that was answered, and collapsing it either
+#: way loses something real — into `ANSWERED` it invites the model to invent the
+#: missing facets, into `INSUFFICIENT_EVIDENCE` it discards a grounded answer.
+ANSWERED = "answered"
+PARTIAL = "partial"
+INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+
+AnswerStatus = Literal["answered", "partial", "insufficient_evidence"]
+
+#: `diagnostics.code` values this layer produces. Provider failures do not appear
+#: here: they are raised as errors, because "the provider timed out" and "the
+#: evidence does not answer this" are different outcomes and must not be
+#: reported as the same one.
+CODE_OK = "SUCCESS"
+CODE_NO_EVIDENCE = "NO_EVIDENCE"
+CODE_MALFORMED_OUTPUT = "MALFORMED_OUTPUT"
+CODE_UNGROUNDED_OUTPUT = "UNGROUNDED_MODEL_OUTPUT"
+
+
+class ResolvedCitation(BaseModel):
+    """A citation the model asked for, resolved to a real place in the paper.
+
+    Every field except `citation_id` and `snippet` is read from the `DocumentIR`
+    by the application. The model names `E1`; it never sees or produces a page
+    number, and it has no way to influence one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: The marker as it appeared in the answer: `E1`.
+    citation_id: str
+    paragraph_id: str
+    section_id: str | None = None
+    section_title: str | None = None
+    #: 1-based, from the IR.
+    page_number: int = Field(ge=1)
+    page_range: list[int] = Field(default_factory=list)
+    block_ids: list[str] = Field(default_factory=list)
+    #: `[x0, y0, x1, y1]` per block, top-left origin — enough for DS-QA-003 to
+    #: scroll to and highlight the source without walking the IR in the browser.
+    bboxes: list[list[float]] = Field(default_factory=list)
+    #: A verbatim prefix of the evidence text, cut at a sentence boundary. Never
+    #: a model paraphrase: an excerpt that the model wrote would be a quotation
+    #: the paper does not contain.
+    snippet: str = ""
+    is_caption: bool = False
+
+
+class AnswerDiagnostics(BaseModel):
+    """Why an answer looks the way it does. No paper prose, no question text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = CODE_OK
+    execution_time_ms: float = 0.0
+    #: Provider calls actually made — 0 on the deterministic fast path.
+    requests_made: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    repair_attempted: bool = False
+    #: Evidence rendered into the prompt after pruning, and what pruning removed.
+    evidence_items: int = 0
+    evidence_dropped: int = 0
+    #: Markers the model emitted that named no evidence item in this bundle.
+    dropped_citations: list[str] = Field(default_factory=list)
+    #: Set when a page- or section-scoped question was answered with
+    #: `insufficient_evidence` and the same question does retrieve evidence from
+    #: the whole paper. The scope was honoured; the caller may want to say so.
+    suggest_scope_expansion: bool = False
+
+
+class AnswerResult(BaseModel):
+    """A grounded answer, or an honest refusal to give one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: str
+    question: str
+    status: AnswerStatus
+    #: Markdown with inline `[E1]` markers. Empty only when the status is
+    #: `insufficient_evidence`.
+    answer: str = ""
+    #: Derived from the markers in `answer`, in first-appearance order and
+    #: deduplicated — so the list and the text cannot disagree.
+    citations: list[ResolvedCitation] = Field(default_factory=list)
+    #: Required when `PARTIAL`: which parts of the question the evidence could not
+    #: answer. Empty otherwise.
+    unanswered_aspects: list[str] = Field(default_factory=list)
+    #: Why the evidence was insufficient. The model's own words when it abstained
+    #: itself; the application's when a grounding check forced the demotion.
+    missing_evidence_rationale: str | None = None
+    diagnostics: AnswerDiagnostics = Field(default_factory=AnswerDiagnostics)

@@ -654,6 +654,104 @@ async def retrieve_evidence(
     return json.loads(bundle.model_dump_json())
 
 
+# --- paper QA answering ------------------------------------------------------
+
+
+class AnswerRequest(BaseModel):
+    """A question about one document.
+
+    Note what is **absent**: there is no field for evidence. The endpoint
+    retrieves for itself, always. Accepting a bundle from a client would let the
+    caller choose the text the model cites, and the citations it returned would
+    then resolve to real pages and real highlights — structurally perfect and
+    evidentially fabricated. Offline tests drive `generate_answer` directly,
+    which is where a synthetic bundle belongs.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1)
+    scope: dict[str, Any] = Field(default_factory=lambda: {"type": "whole_paper"})
+    profile_id: str
+    top_k: int = Field(default=8, ge=1, le=50)
+    #: Overrides the default, which is to answer in the question's language.
+    language: str | None = None
+
+
+@router.post("/documents/{document_id}/answer")
+async def answer_question(
+    request: Request, document_id: str, payload: AnswerRequest
+) -> Any:
+    """Answer a question about a document, or say the evidence does not.
+
+    `200` carries one of three statuses: `answered`, `partial`, or
+    `insufficient_evidence`. The third is a successful outcome, not an error — it
+    means retrieval did not find evidence that supports an answer, and the system
+    declined to supply one from the model's own knowledge.
+
+    A provider failure is different and returns `502`. The distinction is the
+    point: "the paper does not say" and "the provider timed out" must never be
+    reported as the same thing.
+    """
+    from app.context.models import DocumentAnalysis
+    from app.context.persistence import read_analysis
+    from app.llm.errors import LLMError, sanitize_message
+    from app.llm.detection import resolve_provider
+    from app.qa import AnswerError, Scope, generate_answer
+
+    profiles = get_profile_store(request)
+    store = get_document_store(request)
+    record = store.get_document(document_id)
+
+    result, failure = await _require_ir(request, document_id)
+    if failure is not None:
+        return failure
+    ir, _summary = result
+    directory = store.document_dir(record.id)
+
+    try:
+        scope = Scope.model_validate(payload.scope)
+    except Exception:  # noqa: BLE001 - a malformed scope is the client's problem
+        return error_response(
+            422,
+            "VALIDATION_ERROR",
+            "scope must be one of whole_paper, section, page or selection, "
+            "with the field that scope requires.",
+        )
+
+    try:
+        profile = profiles.get_profile(payload.profile_id)
+        config = profiles.to_provider_config(payload.profile_id)
+    except Exception:  # noqa: BLE001 - unknown profile, or the credential store is down
+        return error_response(404, "NOT_FOUND", "No such provider profile.")
+
+    # Read, never generate. A question must not silently start a 468-second
+    # analysis; the analysis is used if it already exists and its absence costs
+    # only the query expansions it would have supplied.
+    analysis: DocumentAnalysis | None = read_analysis(directory)
+
+    try:
+        provider = await resolve_provider(config, profile.protocol)
+        answer = await generate_answer(
+            ir,
+            directory,
+            question=payload.question,
+            scope=scope,
+            provider=provider,
+            analysis=analysis,
+            top_k=payload.top_k,
+            language=payload.language,
+        )
+    except AnswerError as exc:
+        return error_response(502, exc.code, sanitize_message(exc.message))
+    except LLMError as exc:
+        return error_response(
+            502, getattr(exc, "code", "PROVIDER_ERROR"), sanitize_message(exc.message)
+        )
+
+    return json.loads(answer.model_dump_json())
+
+
 # --- translation -------------------------------------------------------------
 
 
