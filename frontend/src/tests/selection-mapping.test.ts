@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import type { IrParagraph } from "@/api/ir";
@@ -370,5 +372,31 @@ describe("DS-QA-005 · geometry to paragraph", () => {
   it("returns nothing for empty geometry", () => {
     const mapping = matchParagraphs(new Map(), [left], "some text");
     expect(mapping.paragraphIds).toEqual([]);
+  });
+});
+
+describe("DS-QA-005 · mapping cost", () => {
+  it("maps against the real paper's IR without a perceptible cost", () => {
+    // The matcher over the real 101-paragraph ResNet IR, with the 82 line
+    // fragments a real multi-line drag produced. Not a gate — Gemini set no
+    // millisecond budget — but "it feels instant" deserves a number.
+    const paragraphs = JSON.parse(
+      readFileSync("src/tests/__resnet_ir.json", "utf8"),
+    ) as IrParagraph[];
+    const rects: PdfRect[] = Array.from({ length: 82 }, (_, index) => ({
+      x0: 50,
+      y0: 70 + index * 11,
+      x1: 286,
+      y1: 80 + index * 11,
+    }));
+
+    const started = performance.now();
+    for (let run = 0; run < 50; run += 1) {
+      matchParagraphs(new Map([[3, rects]]), paragraphs, "some selected passage of text");
+    }
+    const median = (performance.now() - started) / 50;
+
+    expect(median).toBeLessThan(50);
+    console.log(`mapping median over the real IR: ${median.toFixed(2)} ms`);
   });
 });

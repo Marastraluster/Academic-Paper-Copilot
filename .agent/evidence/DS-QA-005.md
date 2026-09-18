@@ -63,6 +63,16 @@ rotated page                       REFUSED   maps to nothing, Selection stays un
 low-confidence / non-prose         PASS   a heading, caption or figure maps to nothing and says so
 ```
 
+### Cost
+
+```
+mapping median over the real 101-paragraph IR, 82 line fragments   0.17 ms
+provider calls made by selecting text alone                        0
+```
+
+Local and synchronous: the IR is fetched once when a document opens, and mapping a drag against it
+is a geometry intersection. Nothing leaves the machine until a question is asked.
+
 ### The real bug the tests found
 
 **Clicking *Ask* destroyed the thing being asked about.** The first version cleared the mapping
