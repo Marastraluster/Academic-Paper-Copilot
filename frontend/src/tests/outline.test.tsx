@@ -301,6 +301,28 @@ describe("DS-QA-008 · outline panel", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("clears the outline when another paper is opened (AC-P0-13)", async () => {
+    const { teardownQa } = await import("@/qa/session");
+    seedDocument();
+    seedQaSections();
+    useWorkspaceStore.setState({
+      activeSectionId: "sec_3", selectedSectionId: "sec_3",
+      expandedSectionIds: ["sec_1"], outlinePanel: "outline",
+    });
+
+    teardownQa();
+
+    const state = useWorkspaceStore.getState();
+    expect(state.sections).toBeNull();
+    expect(state.activeSectionId).toBeNull();
+    expect(state.selectedSectionId).toBeNull();
+    expect(state.expandedSectionIds).toEqual([]);
+    // A section scope built now has no identity to stand on, so no question can
+    // be sent naming a section of the paper that was closed.
+    const { activeSectionFor } = await import("@/stores/workspace");
+    expect(activeSectionFor(state)).toBeNull();
+  });
+
   it("answers Section scope from the reading position (AC-P0-07)", async () => {
     seedDocument();
     seedQaSections();

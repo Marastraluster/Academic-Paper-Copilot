@@ -554,8 +554,19 @@ export function teardownQa(): void {
     sections: null,
     activePage: 1,
     jumpRequest: null,
+    translatedJump: null,
     notice: null,
     scope: "whole_paper",
+    // DS-QA-008. The outline's own state names sections of the paper being
+    // closed: an active section, a section handed to Paper QA, and which nodes
+    // were expanded. Section ids are document-prefixed so a stale one could not
+    // match paper B's list — but leaving them set means the outline briefly
+    // claims a selection from a paper that is no longer open, and AC-P0-13 asks
+    // for the state to be cleared rather than merely harmless.
+    activeSectionId: null,
+    selectedSectionId: null,
+    expandedSectionIds: [],
+    readingPosition: { pageNumber: 1, offsetPt: 0 },
     profiles: null,
     profilesError: null,
     profileId: "",
