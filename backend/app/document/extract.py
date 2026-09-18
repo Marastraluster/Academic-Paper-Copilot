@@ -156,8 +156,10 @@ def extract_document_ir(
 
         paragraphs = _assemble_paragraphs(ordered_blocks, document_id)
         _link_captions(pages)
-        sections = _detect_sections(ordered_blocks, document_id, document.page_count)
-        _assign_sections(paragraphs, sections, ordered_blocks)
+        sections, heading_sections = _detect_sections(
+            ordered_blocks, document_id, document.page_count
+        )
+        _assign_sections(paragraphs, sections, ordered_blocks, heading_sections)
 
         metadata = _read_metadata(document)
         if metadata.title is None:
@@ -759,7 +761,7 @@ def _detect_sections(
     blocks: list[TextBlockIR],
     document_id: str,
     page_count: int,
-) -> list[SectionIR]:
+) -> tuple[list[SectionIR], dict[str, str]]:
     """Headings, their levels, and the pages they cover.
 
     The layout model marks both the paper's title and its section headings as
@@ -780,12 +782,15 @@ def _detect_sections(
         and _is_heading_sized(block, _body_size_by_page(blocks))
     ]
     if not headings:
-        return []
+        return [], {}
 
     title_block = layout_title_block(blocks)
     section_headings = [heading for heading in headings if heading is not title_block]
 
     sections: list[SectionIR] = []
+    #: Which heading block opened which section. The assignment pass needs this
+    #: to place a paragraph by reading order rather than by page.
+    heading_sections: dict[str, str] = {}
     for index, heading in enumerate(section_headings):
         title = join_wrapped_lines(heading.text.split("\n"))
         if not title:
@@ -799,9 +804,11 @@ def _detect_sections(
         else:
             last_page = page_count
 
+        section_id = f"sec_{document_id}_{len(sections) + 1:03d}"
+        heading_sections[heading.id] = section_id
         sections.append(
             SectionIR(
-                id=f"sec_{document_id}_{len(sections) + 1:03d}",
+                id=section_id,
                 title=title,
                 level=level,
                 page_range=(heading.page_number, max(heading.page_number, last_page)),
@@ -809,42 +816,61 @@ def _detect_sections(
             )
         )
 
-    return sections
+    return sections, heading_sections
 
 
 def _assign_sections(
     paragraphs: list[ParagraphIR],
     sections: list[SectionIR],
     blocks: list[TextBlockIR],
+    heading_sections: dict[str, str],
 ) -> None:
     """Attach each paragraph to the section that governs it.
 
-    A paragraph belongs to the last heading that appeared before it in reading
-    order. Paragraphs before the first heading — the abstract or a preamble —
-    keep ``section_id = None``; the criteria prefer an honest gap to a fabricated
-    section.
+    A paragraph belongs to the **last heading that appeared before it in reading
+    order** — and that is what this now does, having previously compared *pages*.
+
+    The page-based version was wrong in a way that took a downstream task to
+    expose. Academic sections frequently share a page: on a real paper three
+    headings fall on page 3, so every paragraph on that page was assigned to the
+    last of them. Eight of sixteen sections ended up owning no paragraphs at all
+    — including the Abstract and the References — and nothing noticed, because
+    the reading order, the headings and the page mapping were all still correct.
+
+    Paragraphs before the first heading keep ``section_id = None``; the criteria
+    prefer an honest gap to a fabricated section.
     """
     if not sections:
         return
 
-    by_id = {block.id: block for block in blocks}
-    ordered_sections = list(sections)
+    positions = {block.id: index for index, block in enumerate(blocks)}
+    # Headings in the order a reader meets them, paired with the section each one
+    # opened. Sections are built from these blocks in this same order, so a
+    # paragraph's section is simply the last heading before it.
+    ordered_headings = sorted(
+        (positions[block_id], section_id)
+        for block_id, section_id in heading_sections.items()
+        if block_id in positions
+    )
 
     for paragraph in paragraphs:
-        first_block = by_id.get(paragraph.block_ids[0]) if paragraph.block_ids else None
-        if first_block is None:
+        if not paragraph.block_ids:
             continue
-        governing = None
-        for section in ordered_sections:
-            if section.page_range[0] > first_block.page_number:
+        start = positions.get(paragraph.block_ids[0])
+        if start is None:
+            continue
+
+        governing: str | None = None
+        for position, section_id in ordered_headings:
+            if position >= start:
                 break
-            governing = section
-        if governing is not None and not governing.is_references:
-            paragraph.section_id = governing.id
+            governing = section_id
+        if governing is not None:
+            paragraph.section_id = governing
 
     # Abstract detection: a heading beginning "Abstract" governs everything until
     # the next heading, and those paragraphs are flagged as the abstract.
-    for section in ordered_sections:
+    for section in sections:
         if _ABSTRACT_HEADING.match(section.title):
             for paragraph in paragraphs:
                 if paragraph.section_id == section.id:

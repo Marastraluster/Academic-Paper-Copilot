@@ -582,6 +582,78 @@ async def context_preview(request: Request, document_id: str, paragraph_id: str)
     return json.loads(builder.build_context(paragraph_id, max_tokens=limit).model_dump_json())
 
 
+# --- paper QA retrieval ------------------------------------------------------
+
+
+class RetrieveRequest(BaseModel):
+    """A scoped question. The scope is enforced by the engine, not by the client."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = ""
+    scope: dict[str, Any] = Field(default_factory=lambda: {"type": "whole_paper"})
+    top_k: int = Field(default=8, ge=1, le=50)
+
+
+@router.post("/documents/{document_id}/retrieve")
+async def retrieve_evidence(
+    request: Request, document_id: str, payload: RetrieveRequest
+) -> Any:
+    """Return source evidence for a question, with real citation identity.
+
+    No model is involved. Every page, section and paragraph id comes from the
+    canonical `DocumentIR`, which is what makes a later answer's citations
+    verifiable rather than merely plausible.
+
+    `DocumentAnalysis` is optional and is read from disk if it happens to exist —
+    it may add glossary and acronym expansions to the query, but it is never
+    evidence and is never generated on demand. A search must not cost 468 seconds
+    of analysis.
+    """
+    from app.context.models import DocumentAnalysis
+    from app.context.persistence import read_analysis
+    from app.qa import RetrievalError, Scope, retrieve
+    from app.document.persistence import read_ir
+
+    store = get_document_store(request)
+    record = store.get_document(document_id)
+    directory = store.document_dir(record.id)
+
+    try:
+        scope = Scope.model_validate(payload.scope)
+    except Exception:  # noqa: BLE001 - a malformed scope is the client's problem
+        return error_response(
+            422,
+            "VALIDATION_ERROR",
+            "scope must be one of whole_paper, section, page or selection, "
+            "with the field that scope requires.",
+        )
+
+    ir = read_ir(directory)
+    if ir is None:
+        result, failure = await _require_ir(request, document_id)
+        if failure is not None:
+            return failure
+        ir, _summary = result
+
+    analysis = read_analysis(directory)
+
+    try:
+        bundle = await asyncio.to_thread(
+            retrieve,
+            ir,
+            directory,
+            query=payload.query,
+            scope=scope,
+            analysis=analysis,
+            top_k=payload.top_k,
+        )
+    except RetrievalError as exc:
+        return error_response(400, exc.code, exc.message)
+
+    return json.loads(bundle.model_dump_json())
+
+
 # --- translation -------------------------------------------------------------
 
 

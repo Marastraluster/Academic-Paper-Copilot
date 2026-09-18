@@ -497,7 +497,10 @@ def test_heading_hierarchy_detection_with_regex():
 
     from app.document.extract import _detect_sections
 
-    sections = _detect_sections(blocks, "doc_h", page_count=1)
+    # Returns (sections, heading→section map): the assignment pass needs to know
+    # which block opened which section, so it can place a paragraph by reading
+    # order rather than by page.
+    sections, _headings = _detect_sections(blocks, "doc_h", page_count=1)
 
     levels = {section.title: section.level for section in sections}
     assert levels["1 Introduction"] == 1
@@ -514,7 +517,10 @@ def test_unnumbered_heading_defaults_to_level_one():
 
     from app.document.extract import _detect_sections
 
-    sections = _detect_sections(blocks, "doc_h", page_count=1)
+    # Returns (sections, heading→section map): the assignment pass needs to know
+    # which block opened which section, so it can place a paragraph by reading
+    # order rather than by page.
+    sections, _headings = _detect_sections(blocks, "doc_h", page_count=1)
     assert sections[0].level == 1
 
 
@@ -544,7 +550,10 @@ def test_title_block_at_body_size_is_not_a_heading():
 
     from app.document.extract import _detect_sections
 
-    sections = _detect_sections(blocks, "doc_h", page_count=1)
+    # Returns (sections, heading→section map): the assignment pass needs to know
+    # which block opened which section, so it can place a paragraph by reading
+    # order rather than by page.
+    sections, _headings = _detect_sections(blocks, "doc_h", page_count=1)
     titles = [section.title for section in sections]
 
     assert "1. A Real Section" in titles
@@ -561,7 +570,10 @@ def test_heading_sized_blocks_are_accepted_when_font_evidence_is_absent():
 
     from app.document.extract import _detect_sections
 
-    sections = _detect_sections(blocks, "doc_h", page_count=1)
+    # Returns (sections, heading→section map): the assignment pass needs to know
+    # which block opened which section, so it can place a paragraph by reading
+    # order rather than by page.
+    sections, _headings = _detect_sections(blocks, "doc_h", page_count=1)
     assert [section.title for section in sections] == ["1. Introduction"]
 
 
@@ -651,7 +663,10 @@ def test_references_section_flagged():
 
     from app.document.extract import _detect_sections
 
-    sections = _detect_sections(blocks, "doc_h", page_count=1)
+    # Returns (sections, heading→section map): the assignment pass needs to know
+    # which block opened which section, so it can place a paragraph by reading
+    # order rather than by page.
+    sections, _headings = _detect_sections(blocks, "doc_h", page_count=1)
     assert sections[0].is_references is True
 
 
@@ -668,7 +683,10 @@ def test_abstract_detection_is_keyword_anchored(two_column_ir):
 
     from app.document.extract import _detect_sections
 
-    sections = _detect_sections(blocks, "doc_h", page_count=1)
+    # Returns (sections, heading→section map): the assignment pass needs to know
+    # which block opened which section, so it can place a paragraph by reading
+    # order rather than by page.
+    sections, _headings = _detect_sections(blocks, "doc_h", page_count=1)
     assert all(not section.title.lower().startswith("abstract") for section in sections)
 
 
@@ -880,3 +898,48 @@ def test_duplicate_detections_are_collapsed(two_column_ir):
             rounded = tuple(round(value, 1) for value in block.bbox)
             assert rounded not in seen, f"duplicate block rectangle: {rounded}"
             seen.append(rounded)
+
+
+def test_sections_sharing_a_page_still_own_their_own_paragraphs():
+    """AC-DOC-27, as a regression — the assignment must follow *reading order*.
+
+    Found by DS-QA-001, three tasks after it shipped. `_assign_sections` chose a
+    paragraph's section by **page**: a page-3 paragraph got the last section that
+    *started* on page 3. Academic sections routinely share a page, so on a real
+    paper every page-3 paragraph landed in one section and **eight of sixteen
+    sections owned nothing at all** — including the Abstract and the References.
+
+    Nothing upstream noticed, because the reading order, the headings and the
+    page mapping were all still correct. It surfaced only when Paper QA needed to
+    retrieve *within* a section and half of them were empty.
+    """
+    def sized(block_id, text, bbox, size):
+        return make_block(block_id, text, bbox, LAYOUT_TITLE).model_copy(
+            update={"font_size": size}
+        )
+
+    blocks = [
+        # The paper's own title: the largest `title` block on page 1 is taken as
+        # the document title and is not a section, so the fixture needs one.
+        sized("t", "A Paper Title", (150, 20, 450, 44), 16.0),
+        sized("h1", "1. First Section", (72, 60, 300, 80), 12.0),
+        make_block("b1", "Prose belonging to the first section.", (72, 100, 540, 120)),
+        # Three headings on one page — the layout that broke the page-based rule.
+        sized("h2", "2. Second Section", (72, 160, 300, 180), 12.0),
+        make_block("b2", "Prose belonging to the second section.", (72, 200, 540, 220)),
+        sized("h3", "2.1. A Subsection", (72, 260, 300, 280), 11.0),
+        make_block("b3", "Prose belonging to the subsection.", (72, 300, 540, 320)),
+    ]
+
+    from app.document.extract import _assign_sections, _assemble_paragraphs, _detect_sections
+
+    sections, headings = _detect_sections(blocks, "doc_x", page_count=1)
+    paragraphs = _assemble_paragraphs(blocks, "doc_x")
+    _assign_sections(paragraphs, sections, blocks, headings)
+
+    by_title = {section.title: section.id for section in sections}
+    assigned = {p.text: p.section_id for p in paragraphs}
+
+    assert assigned["Prose belonging to the first section."] == by_title["1. First Section"]
+    assert assigned["Prose belonging to the second section."] == by_title["2. Second Section"]
+    assert assigned["Prose belonging to the subsection."] == by_title["2.1. A Subsection"]
