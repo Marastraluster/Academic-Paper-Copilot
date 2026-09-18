@@ -24,6 +24,15 @@ interface PdfPageProps {
    */
   highlightBoxes?: number[][];
   /**
+   * Source boxes the reader has *kept* — notes and highlights (DS-QA-010).
+   *
+   * A separate prop from `highlightBoxes` on purpose. That one is a citation's
+   * transient mark and fades after four seconds; these are the user's own and
+   * stay until they are removed. Sharing one state variable is how a citation
+   * timing out would silently erase someone's annotation.
+   */
+  persistentBoxes?: number[][];
+  /**
    * The page's own element, handed up so the viewer can observe it directly.
    * A wrapper element would leave the observer watching a node with no page
    * number on it — which silently rendered nothing at all.
@@ -49,6 +58,7 @@ export function PdfPage({
   height,
   shouldRender,
   highlightBoxes = [],
+  persistentBoxes = [],
   containerRef,
 }: PdfPageProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -157,6 +167,27 @@ export function PdfPage({
             aria-label={`Page ${pageNumber}`}
           />
           <div ref={textLayerRef} className="textLayer" data-testid="pdf-text-layer" />
+          {persistentBoxes.length > 0 && (
+            <div
+              data-testid="pdf-annotation-layer"
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0"
+            >
+              {persistentBoxes.map((box, index) => (
+                <span
+                  key={index}
+                  data-testid="pdf-annotation-box"
+                  className="absolute rounded-sm bg-amber-300/35"
+                  style={{
+                    left: box[0]! * scale,
+                    top: box[1]! * scale,
+                    width: Math.max((box[2]! - box[0]!) * scale, 1),
+                    height: Math.max((box[3]! - box[1]!) * scale, 1),
+                  }}
+                />
+              ))}
+            </div>
+          )}
           {highlightBoxes.length > 0 && (
             <div
               data-testid="pdf-highlight-layer"

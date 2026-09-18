@@ -60,6 +60,7 @@ export type MappingStatus =
   | "unavailable";
 
 export interface SelectionMapping {
+
   status: MappingStatus;
   /** Canonical ids, reading order, deduplicated. */
   paragraphIds: string[];
@@ -68,6 +69,16 @@ export interface SelectionMapping {
   /** What the user selected, for the preview. Not identity. */
   text: string;
   truncated: boolean;
+  /**
+   * The source-PDF boxes the selection actually covered, by page.
+   *
+   * Computed for matching and, until DS-QA-010, thrown away. A persistent
+   * highlight needs them: a multi-line selection is several boxes, and drawing
+   * its envelope instead would paint the margins beside a short last line. They
+   * are in the same source-PDF point space as `IrParagraph.bboxes`, so they
+   * survive zoom, fit-width and a page remount without being re-derived.
+   */
+  rects: Record<number, Bbox[]>;
 }
 
 const EMPTY: SelectionMapping = {
@@ -76,6 +87,7 @@ const EMPTY: SelectionMapping = {
   pages: [],
   text: "",
   truncated: false,
+  rects: {},
 };
 
 /**
@@ -228,7 +240,13 @@ export function matchParagraphs(
   }
 
   if (accepted.length === 0) {
-    return { ...EMPTY, text: selectedText, status: "non_prose", pages: [...rectsByPage.keys()] };
+    return {
+      ...EMPTY,
+      text: selectedText,
+      status: "non_prose",
+      pages: [...rectsByPage.keys()],
+      rects: toBboxRecord(rectsByPage),
+    };
   }
 
   // Reading order is the IR's, not the DOM's and not the drag's.
@@ -243,7 +261,22 @@ export function matchParagraphs(
     pages: [...rectsByPage.keys()].sort((left, right) => left - right),
     text: selectedText,
     truncated,
+    rects: toBboxRecord(rectsByPage),
   };
+}
+
+/**
+ * The matcher works in `PdfRect` objects; everything downstream — the IR, the
+ * annotation payload, the highlight renderer — uses `[x0, y0, x1, y1]` tuples.
+ * Converting once, here, is what keeps a single coordinate representation in the
+ * system rather than two that agree until someone edits one.
+ */
+function toBboxRecord(rectsByPage: Map<number, PdfRect[]>): Record<number, Bbox[]> {
+  const out: Record<number, Bbox[]> = {};
+  for (const [page, rects] of rectsByPage) {
+    out[page] = rects.map((r) => [r.x0, r.y0, r.x1, r.y1] as Bbox);
+  }
+  return out;
 }
 
 /** The page a DOM node belongs to, by walking up to the page container. */

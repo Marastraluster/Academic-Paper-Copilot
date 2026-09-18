@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import type { DocumentIr } from "@/api/ir";
 import type { ProviderProfile } from "@/api/profiles";
+import type { AnnotationView } from "@/api/annotations";
 import type { AnswerDiagnostics } from "@/api/qa";
 import type { Citation } from "@/qa/parse";
 import type { MappingStatus, SelectionMapping } from "@/qa/selection";
@@ -9,6 +10,9 @@ import type { UserFacingError } from "@/translation/errors";
 
 /** AC-04: the three reader modes. */
 export type ReaderMode = "original" | "bilingual" | "translation";
+
+/** The tabs the reader-side panel can show. */
+export type SidebarPanel = "outline" | "qa" | "notes";
 
 /* ------------------------------------------------------------------ *
  * Paper QA (DS-QA-003)
@@ -222,8 +226,33 @@ interface WorkspaceState {
   setSelectedSectionId: (sectionId: string | null) => void;
 
   /** Which panel the sidebar is showing. */
-  outlinePanel: "outline" | "qa";
-  setOutlinePanel: (panel: "outline" | "qa") => void;
+  outlinePanel: SidebarPanel;
+  setOutlinePanel: (panel: SidebarPanel) => void;
+
+  // ---- Notes (DS-QA-010) ----
+  /**
+   * The open document's annotations, as the backend resolved them.
+   *
+   * `null` means "not loaded yet", which the panel shows differently from "none".
+   * They are *resolved* views, not stored records: re-reading the paper after an
+   * extraction change is what moves a target from EXACT to REATTACHED, and this
+   * is where the result lands.
+   */
+  annotations: AnnotationView[] | null;
+  setAnnotations: (annotations: AnnotationView[] | null) => void;
+  /**
+   * Which document `annotations` describes, or `null` when nothing is loaded.
+   *
+   * Separate from `annotations` because "the list is empty" and "the list has not
+   * been fetched" are different states, and an effect cannot tell them apart from
+   * the array alone — a distinction that cost a browser run to learn.
+   */
+  annotationsFor: string | null;
+  setAnnotationsFor: (documentId: string | null) => void;
+
+  /** The annotation the reader is looking at, for list highlighting. */
+  activeAnnotationId: string | null;
+  setActiveAnnotationId: (annotationId: string | null) => void;
 
   /** `section_id`s the user has expanded. Ids, never titles or indices. */
   expandedSectionIds: string[];
@@ -421,6 +450,15 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   // change. Revisit if product testing says otherwise.
   outlinePanel: "qa",
   setOutlinePanel: (panel) => set({ outlinePanel: panel }),
+
+  annotations: null,
+  setAnnotations: (annotations) => set({ annotations }),
+
+  annotationsFor: null,
+  setAnnotationsFor: (documentId) => set({ annotationsFor: documentId }),
+
+  activeAnnotationId: null,
+  setActiveAnnotationId: (annotationId) => set({ activeAnnotationId: annotationId }),
 
   expandedSectionIds: [],
   toggleSectionExpanded: (sectionId) =>

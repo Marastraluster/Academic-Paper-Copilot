@@ -240,7 +240,7 @@ def test_test_database_contains_only_expected_tables(client: TestClient, setting
     finally:
         connection.close()
 
-    assert sorted(names) == ["documents", "profiles", "schema_version", "translation_tasks"]
+    assert sorted(names) == ["annotation_targets", "annotations", "documents", "profiles", "schema_version", "translation_tasks"]
 
 
 # --- AC-11: dependency manifest is explicit and minimal ---------------------

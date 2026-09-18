@@ -24,6 +24,7 @@ import {
   type TaskOutcome,
 } from "@/api/translation";
 import { loadIr, loadProfiles, loadSections, teardownQa } from "@/qa/session";
+import { loadAnnotations } from "@/notes/session";
 import {
   nextSessionToken,
   useWorkspaceStore,
@@ -183,6 +184,11 @@ export function openDocument(file: File): void {
       // disables a single scope, the other disables asking and says so.
       void loadSections();
       void loadProfiles();
+      // Notes, for the same reason and at the same moment as the sections above:
+      // they belong to the document that has just acquired an identity, and
+      // loading them here means the panel has them whenever the reader opens it
+      // rather than depending on when the panel happened to mount.
+      void loadAnnotations();
       // The canonical IR, for selection mapping. Fetched here so a selection made
       // moments after a paper opens can be resolved without a round trip.
       void loadIr();

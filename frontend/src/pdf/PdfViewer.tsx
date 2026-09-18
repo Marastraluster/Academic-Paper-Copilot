@@ -30,6 +30,12 @@ interface PdfViewerProps {
   highlightPage?: number | null;
   /** Source-PDF boxes in points, drawn on `highlightPage` only. */
   highlightBoxes?: number[][];
+  /**
+   * The reader's own marks, by page number (DS-QA-010). Kept out of the citation
+   * highlight's state entirely, because the two have different lifetimes: a
+   * citation mark fades, an annotation does not.
+   */
+  annotationBoxes?: Record<number, number[][]>;
 }
 
 export interface PdfViewerHandle {
@@ -64,6 +70,7 @@ export function PdfViewer({
   viewerRef,
   highlightPage = null,
   highlightBoxes = [],
+  annotationBoxes = {},
 }: PdfViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -224,6 +231,7 @@ export function PdfViewer({
             height={height}
             shouldRender={visiblePages.has(page)}
             highlightBoxes={page === highlightPage ? highlightBoxes : []}
+            persistentBoxes={annotationBoxes[page] ?? []}
             containerRef={(element) => {
               if (element) pageRefs.current.set(page, element);
               else pageRefs.current.delete(page);

@@ -33,12 +33,32 @@ export function ReaderWorkspace() {
   const setActivePage = useWorkspaceStore((s) => s.setActivePage);
   const setReadingPosition = useWorkspaceStore((s) => s.setReadingPosition);
   const jumpRequest = useWorkspaceStore((s) => s.jumpRequest);
+  const annotations = useWorkspaceStore((s) => s.annotations);
   const translatedJump = useWorkspaceStore((s) => s.translatedJump);
 
   // Tracks the reader's position against the canonical structure, so the outline
   // can say which section they are in. Lives here because the position it needs
   // comes from the original pane.
   useActiveSection();
+
+  /**
+   * The reader's own marks, by page, in source-PDF points.
+   *
+   * Derived from the annotations on every render rather than cached: a target's
+   * rectangles belong to the immutable PDF, so they are still the right boxes
+   * even when resolution has changed what paragraph they correspond to. Drawn on
+   * the original pane only — translated geometry is a different space entirely.
+   */
+  const annotationBoxes = useMemo(() => {
+    const byPage: Record<number, number[][]> = {};
+    for (const annotation of annotations ?? []) {
+      for (const target of annotation.targets) {
+        if (!target.showable || target.rects.length === 0) continue;
+        (byPage[target.page_number] ??= []).push(...target.rects.map((r) => [...r]));
+      }
+    }
+    return byPage;
+  }, [annotations]);
 
   // The translated pane follows an *outline* jump only, and never carries source
   // boxes — the source geometry does not describe the translated artifact.
@@ -91,6 +111,7 @@ export function ReaderWorkspace() {
             // they are applied here and nowhere else. In bilingual mode the
             // translated pane is left exactly where the reader left it.
             jump={jumpRequest}
+            annotationBoxes={annotationBoxes}
             allowHighlight
           />
         )}

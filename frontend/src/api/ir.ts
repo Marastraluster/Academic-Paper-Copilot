@@ -17,7 +17,22 @@ import { apiJson } from "@/api/client";
 export type Bbox = [number, number, number, number];
 
 export interface IrParagraph {
+  /** Runtime identity for this extraction — `p_<doc>_<ordinal>`. */
   id: string;
+  /**
+   * **Persistent** identity: the digest of the immutable source region this
+   * paragraph came from, computed by the backend at extraction time.
+   *
+   * A note or highlight must anchor to this and never to `id`. DS-DOC-002
+   * measured why: lowering one gutter constant renumbered 145 of 160 paragraphs
+   * of Diffusion Policy while the file itself did not change by a byte.
+   *
+   * It is read from here rather than recomputed in the browser on purpose. Two
+   * implementations of a hash whose entire purpose is to be identical everywhere
+   * is a divergence waiting to happen, and the symptom would be a note that
+   * silently never resolves on a paper nobody changed.
+   */
+  source_anchor_id: string;
   section_id: string | null;
   text: string;
   /** 1-based. */

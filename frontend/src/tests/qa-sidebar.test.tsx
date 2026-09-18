@@ -851,6 +851,7 @@ describe("DS-QA-005 · selection scope", () => {
           status: "valid",
           paragraphIds: ["p_0001"],
           pages: [1],
+          rects: {},
           text: "stale",
           truncated: false,
         },

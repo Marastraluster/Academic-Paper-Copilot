@@ -72,7 +72,18 @@ def test_only_expected_tables_exist(tmp_path: Path) -> None:
 
     # Grown by DS-BE-007. Still pinned to an exact set: a table for a phase
     # that has not started is a failure, which was the original guard's point.
-    assert tables == ["documents", "profiles", "schema_version", "translation_tasks"]
+    # Grown by DS-QA-010, which added the first *user-authored* data this
+    # application stores. The pin is kept exact: a table for a phase that has not
+    # started is still a failure, and updating this list is the deliberate act of
+    # starting one.
+    assert tables == [
+        "annotation_targets",
+        "annotations",
+        "documents",
+        "profiles",
+        "schema_version",
+        "translation_tasks",
+    ]
 
     forbidden = {
         "pages", "sections", "paragraphs", "glossary",

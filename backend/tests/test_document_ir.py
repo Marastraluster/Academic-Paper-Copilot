@@ -883,7 +883,7 @@ def test_no_speculative_tables_and_isolation_preserved(client: TestClient, setti
     finally:
         connection.close()
 
-    assert tables == ["documents", "profiles", "schema_version", "translation_tasks"]
+    assert tables == ["annotation_targets", "annotations", "documents", "profiles", "schema_version", "translation_tasks"]
 
 
 def test_duplicate_detections_are_collapsed(two_column_ir):

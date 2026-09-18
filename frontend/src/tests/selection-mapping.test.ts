@@ -37,6 +37,10 @@ function paragraph(
 ): IrParagraph {
   return {
     id,
+    // The anchor the backend computes at extraction time. These fixtures never
+    // exercise it — the mapping works on ids and geometry — but the type carries
+    // it because a real IR always does.
+    source_anchor_id: `anchor_${id}`,
     section_id: "s1",
     text,
     page_number: page,

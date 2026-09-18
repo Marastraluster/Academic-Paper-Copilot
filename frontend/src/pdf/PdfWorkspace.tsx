@@ -71,6 +71,11 @@ interface PdfWorkspaceProps {
     offsetPt: number | null;
     nonce: number;
   } | null;
+  /**
+   * The reader's own marks, by page number — notes and highlights they made and
+   * kept. Drawn alongside a citation's transient mark and cleared by neither.
+   */
+  annotationBoxes?: Record<number, number[][]>;
   allowHighlight?: boolean;
 }
 
@@ -100,6 +105,7 @@ export function PdfWorkspace({
   onReadingPositionChange,
   jump,
   allowHighlight = false,
+  annotationBoxes = {},
 }: PdfWorkspaceProps) {
   const [status, setStatus] = useState<ViewerStatus>("empty");
   const [error, setError] = useState<ViewerError | null>(null);
@@ -386,6 +392,7 @@ export function PdfWorkspace({
           onContainerWidthChange={setContainerWidth}
           highlightPage={highlight?.page ?? null}
           highlightBoxes={highlight?.bboxes ?? []}
+          annotationBoxes={annotationBoxes}
         />
       )}
 

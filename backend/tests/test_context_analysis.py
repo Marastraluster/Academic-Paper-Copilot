@@ -728,7 +728,7 @@ def test_analysis_creates_no_sqlite_table(client: TestClient, settings):
     finally:
         connection.close()
 
-    assert tables == ["documents", "profiles", "schema_version", "translation_tasks"]
+    assert tables == ["annotation_targets", "annotations", "documents", "profiles", "schema_version", "translation_tasks"]
 
 
 def test_a_failed_write_leaves_the_previous_analysis_intact(tmp_path: Path, monkeypatch):

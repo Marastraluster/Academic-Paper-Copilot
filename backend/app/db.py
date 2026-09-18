@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 #: Current schema version. Bump when adding a migration below.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 #: The version every database starts at, before any migration runs.
 BASELINE_VERSION = 1
@@ -128,10 +128,74 @@ def _migration_003_create_documents_and_tasks(connection: sqlite3.Connection) ->
     )
 
 
+def _migration_004_create_annotations(connection: sqlite3.Connection) -> None:
+    """Persistent user annotations and their source targets.
+
+    **Keyed to the content fingerprint, not to the document row.** Document ids
+    are `uuid4().hex` (`documents/store.py`), so a re-imported identical PDF gets a
+    new row and a new id — and a cascade from that id would destroy the user's
+    writing for a file that has not changed by a byte. `document_id` is kept for
+    routing and for listing what the open document holds; it deliberately has **no
+    foreign key**, because the boundary this data belongs to is the fingerprint.
+
+    `source_anchor_id` on the target is the original, immutable anchor. Resolution
+    adds fields beside it and never overwrites it — a note that has been reattached
+    twice must still be able to say what it was originally attached to.
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS annotations (
+            id            TEXT PRIMARY KEY,
+            content_hash  TEXT NOT NULL,
+            document_id   TEXT NOT NULL,
+            kind          TEXT NOT NULL CHECK (kind IN ('highlight', 'note')),
+            color         TEXT NOT NULL DEFAULT 'yellow',
+            quote         TEXT NOT NULL,
+            comment       TEXT,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            deleted_at    TEXT
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_annotations_hash ON annotations(content_hash)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_annotations_document ON annotations(document_id)"
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS annotation_targets (
+            id                     TEXT PRIMARY KEY,
+            annotation_id          TEXT NOT NULL
+                                   REFERENCES annotations(id) ON DELETE CASCADE,
+            target_order           INTEGER NOT NULL DEFAULT 0,
+            source_anchor_id       TEXT NOT NULL,
+            anchor_version         TEXT NOT NULL DEFAULT '1',
+            page_number            INTEGER NOT NULL,
+            original_bbox          TEXT NOT NULL,
+            rects                  TEXT NOT NULL,
+            exact_quote            TEXT NOT NULL,
+            prefix                 TEXT NOT NULL DEFAULT '',
+            suffix                 TEXT NOT NULL DEFAULT '',
+            resolved_paragraph_id  TEXT,
+            resolution_state       TEXT,
+            resolved_at            TEXT
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_targets_annotation "
+        "ON annotation_targets(annotation_id)"
+    )
+
+
 #: version -> migration. Each entry upgrades the database *to* that version.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migration_002_create_profiles,
     3: _migration_003_create_documents_and_tasks,
+    4: _migration_004_create_annotations,
 }
 
 

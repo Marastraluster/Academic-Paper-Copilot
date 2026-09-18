@@ -16,6 +16,7 @@
  * visible history is presentation state and nothing more.
  */
 import { isAbortError } from "@/api/client";
+import { teardownNotes } from "@/notes/session";
 import { listSections } from "@/api/documents";
 import { fetchIr } from "@/api/ir";
 import { listProfiles } from "@/api/profiles";
@@ -351,6 +352,7 @@ const EMPTY_MAPPING: SelectionMapping = {
   pages: [],
   text: "",
   truncated: false,
+  rects: {},
 };
 
 /**
@@ -387,6 +389,7 @@ export function captureSelection(): SelectionMapping | null {
       pages: dom.byPage.map((entry) => entry.page),
       text: dom.text,
       truncated: false,
+      rects: {},
     };
   }
 
@@ -546,6 +549,11 @@ export function teardownQa(): void {
   activeProfiles = null;
   activeIr?.abort();
   activeIr = null;
+
+  // Notes are the user's own data and are cleared from the *view* on close like
+  // every other scope — the rows stay in the database, keyed to the paper's
+  // fingerprint, and come back when the same PDF is opened again.
+  teardownNotes();
 
   useWorkspaceStore.setState({
     turns: [],

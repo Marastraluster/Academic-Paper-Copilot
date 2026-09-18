@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import documents, health, profiles
+from app.api import annotations, documents, health, profiles
 from app.api.documents import register_document_error_handlers
 from app.api.profiles import register_profile_error_handlers
 from app.config import Settings
@@ -58,6 +58,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # One store, built once. Endpoints read it from app.state rather than
         # opening their own connection per request.
         app.state.profile_store = ProfileStore(connection)
+        # Annotations share the application database — one store, one connection,
+        # the same shape as the profile store above.
+        app.state.annotation_connection = connection
 
         document_store = DocumentStore(connection, resolved.documents_dir)
         task_runner = TaskRunner(document_store, app.state.profile_store)
@@ -148,6 +151,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router, prefix="/api")
     app.include_router(profiles.router, prefix="/api")
     app.include_router(documents.router, prefix="/api")
+    app.include_router(annotations.router, prefix="/api")
     return app
 
 

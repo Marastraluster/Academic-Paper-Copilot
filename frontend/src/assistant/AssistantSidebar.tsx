@@ -3,6 +3,7 @@ import { ConversationArea } from "@/assistant/ConversationArea";
 import { QuickActions } from "@/assistant/QuickActions";
 import { ScopeSelector } from "@/assistant/ScopeSelector";
 import { OutlineHeader, OutlinePanel } from "@/outline/OutlinePanel";
+import { NotesPanel } from "@/notes/NotesPanel";
 import { SIDEBAR_WIDTH_PX } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -34,6 +35,7 @@ export function AssistantSidebar() {
   const tabs = [
     { id: "outline" as const, label: "目录" },
     { id: "qa" as const, label: "问答" },
+    { id: "notes" as const, label: "笔记" },
   ];
 
   return (
@@ -84,7 +86,17 @@ export function AssistantSidebar() {
             ))}
           </div>
 
-          {panel === "outline" ? (
+          {panel === "notes" ? (
+            <div
+              id="assistant-tabpanel-notes"
+              role="tabpanel"
+              aria-labelledby="assistant-tab-notes"
+              data-testid="assistant-tabpanel-notes"
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <NotesPanel />
+            </div>
+          ) : panel === "outline" ? (
             <div
               id="assistant-tabpanel-outline"
               role="tabpanel"

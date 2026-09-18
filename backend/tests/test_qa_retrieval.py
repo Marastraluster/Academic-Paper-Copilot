@@ -155,7 +155,7 @@ class TestIndex:
             )
         finally:
             connection.close()
-        assert tables == ["documents", "profiles", "schema_version", "translation_tasks"]
+        assert tables == ["annotation_targets", "annotations", "documents", "profiles", "schema_version", "translation_tasks"]
 
     def test_reindexing_does_not_duplicate(self, corpus) -> None:
         """AC-P0-7 — idempotent."""

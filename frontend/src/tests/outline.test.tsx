@@ -118,8 +118,8 @@ const twoColumn = ir({
     ],
   }],
   paragraphs: [
-    { id: "p1", section_id: "sec_a", text: "", page_number: 1, page_range: [1, 1], block_ids: ["L1", "L2"], bboxes: [] },
-    { id: "p2", section_id: "sec_b", text: "", page_number: 1, page_range: [1, 1], block_ids: ["R1", "R2"], bboxes: [] },
+    { id: "p1", source_anchor_id: "a1", section_id: "sec_a", text: "", page_number: 1, page_range: [1, 1], block_ids: ["L1", "L2"], bboxes: [] },
+    { id: "p2", source_anchor_id: "a2", section_id: "sec_b", text: "", page_number: 1, page_range: [1, 1], block_ids: ["R1", "R2"], bboxes: [] },
   ],
 });
 
@@ -167,7 +167,7 @@ describe("DS-QA-008 · current section (AC-P0-07)", () => {
         { page_number: 1, width_pt: 595, height_pt: 842, rotation: 0, blocks: [{ id: "a", page_number: 1, layout_class: "plain text", bbox: [0, 0, 100, 800], text: "" }] },
         { page_number: 2, width_pt: 595, height_pt: 842, rotation: 0, blocks: [{ id: "b", page_number: 2, layout_class: "figure", bbox: [0, 0, 100, 800], text: "" }] },
       ],
-      paragraphs: [{ id: "p", section_id: "sec_a", text: "", page_number: 1, page_range: [1, 1], block_ids: ["a"], bboxes: [] }],
+      paragraphs: [{ id: "p", source_anchor_id: "a", section_id: "sec_a", text: "", page_number: 1, page_range: [1, 1], block_ids: ["a"], bboxes: [] }],
     });
     // Page 2 maps to nothing; the reader was last in `sec_a`, and looking
     // *forwards* would name a section they have not reached.
