@@ -69,7 +69,8 @@ from app.qa.models import (
     EvidenceItem,
     Scope,
 )
-from app.qa.retrieval import DEFAULT_TOP_K, retrieve
+from app.qa.retrieval import DEFAULT_TOP_K, _is_cjk, retrieve
+from app.qa.rewrite import RewriteUnavailable, rewrite_queries, terminology_hint
 
 logger = get_logger(__name__)
 
@@ -342,6 +343,25 @@ async def generate_answer(
     )
     diagnostics = AnswerDiagnostics()
 
+    # --- the cascade: reach for a rewriter only after the local paths failed ---
+    #
+    # `needs_rewrite` is decided from what came back, not from a score, so an
+    # exact model-name lookup answers in about a millisecond and never pays for a
+    # provider round trip. A rewrite that fails — no provider, timeout, malformed
+    # reply — leaves the local bundle exactly as it was.
+    if bundle.diagnostics.suggest_rewrite:
+        rewrites, failure = await _rewrites_for(provider, question, ir, analysis)
+        if rewrites:
+            bundle = retrieve(
+                ir, directory, query=question, scope=scope, analysis=analysis,
+                top_k=top_k, rewrites=rewrites,
+            )
+            diagnostics.rewrite_outcome = f"used:{len(rewrites)}"
+        else:
+            diagnostics.rewrite_outcome = f"unavailable:{failure}" if failure else "unavailable"
+    else:
+        diagnostics.rewrite_outcome = "not_needed"
+
     def finish(result: AnswerResult) -> AnswerResult:
         result.diagnostics.execution_time_ms = round(
             (time.perf_counter() - started) * 1000, 2
@@ -381,20 +401,26 @@ async def generate_answer(
         return finish(result)
 
     # --- the gate, before any money is spent --------------------------------
+    #
+    # `carried=diagnostics` matters: this path runs *after* a rewrite may have
+    # been attempted, and a fresh diagnostics object would report
+    # `rewrite_outcome="not_needed"` for a question that did try. That is how a
+    # silently-dead stage looks from the outside.
     if _is_empty(bundle):
         rationale = (
             "No text in this document matched the question."
             if bundle.diagnostics.code == "NO_MATCH_TOKEN"
             else "No evidence was retrieved for this question."
         )
-        return await abstain(CODE_NO_EVIDENCE, rationale)
+        return await abstain(CODE_NO_EVIDENCE, rationale, carried=diagnostics)
 
     kept, dropped = fit_to_budget(
         question=question, items=bundle.items, language=language
     )
     if not kept:
         return await abstain(
-            CODE_NO_EVIDENCE, "The retrieved evidence does not fit in one request."
+            CODE_NO_EVIDENCE, "The retrieved evidence does not fit in one request.",
+            carried=diagnostics,
         )
 
     diagnostics.evidence_items = len(kept)
@@ -475,6 +501,43 @@ async def generate_answer(
             ir, directory, question, scope, analysis
         )
     return finish(result)
+
+
+def _paper_language(ir: DocumentIR) -> str:
+    """A name for the script the paper is written in.
+
+    Not language detection — a count of one script against another over the first
+    few paragraphs. It exists so the rewriter is told which language its phrases
+    must be in, and its failure mode is a vaguer instruction rather than a wrong
+    one.
+    """
+    sample = " ".join(paragraph.text for paragraph in ir.paragraphs[:12])
+    cjk = sum(1 for character in sample if _is_cjk(character))
+    if not sample.strip():
+        return "English"
+    return "Chinese" if cjk > len(sample) * 0.2 else "English"
+
+
+async def _rewrites_for(
+    provider: LLMProvider, question: str, ir: DocumentIR, analysis: DocumentAnalysis | None
+) -> tuple[list[str], str | None]:
+    """Ask for lexical queries, and never let a failure reach the caller.
+
+    A rewrite is an enhancement to retrieval, so its failure must not become a
+    failure of the question: the local bundle is still there and is still what
+    answers.
+    """
+    try:
+        rewrites = await rewrite_queries(
+            question,
+            provider=provider,
+            paper_language=_paper_language(ir),
+            terminology=terminology_hint(analysis),
+        )
+    except RewriteUnavailable as exc:
+        logger.info("rewrite unavailable", extra={"document_id": ir.document_id, "reason": str(exc)})
+        return [], str(exc)
+    return rewrites, None
 
 
 async def _scope_hint(

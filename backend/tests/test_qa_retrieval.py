@@ -358,15 +358,24 @@ class TestExpansion:
                                  scope=Scope(type="whole_paper"))
         assert any(item.paragraph_id == "p2" for item in with_analysis.items)
 
-    def test_the_expansion_is_an_alternative_not_a_conjunct(self, corpus) -> None:
-        """The bug this test exists for.
+    def test_the_expansion_is_its_own_query_not_a_conjunct(self, corpus) -> None:
+        """The bug this test exists for, in its DS-QA-004 form.
 
         `原句 AND 英文扩展` returns nothing, because the Chinese characters match
-        no English paragraph and drag the expansion down with them.
+        no English paragraph and drag the expansion down with them. The first fix
+        was to OR everything into one expression; DS-QA-004 replaced that, because
+        within one MATCH every term shares the score and the common words dilute
+        the rare ones. The expansion is now a separate query, fused by rank.
         """
         prepared = prepare("退化问题", build_analysis())
-        assert " OR " in prepared.match
+
         assert prepared.expansions
+        sources = prepared.sources
+        assert sources[0] == "raw", "the user's own query is always first"
+        assert "glossary" in sources
+        # One expression per variant: no expansion is ORed into another's query.
+        assert len(prepared.variants) == len({v.match for v in prepared.variants})
+        assert all(v.match for v in prepared.variants)
 
     def test_an_unattested_acronym_is_not_expanded(self, corpus) -> None:
         """`ResNet` has no expansion in the analysis, so none is invented."""

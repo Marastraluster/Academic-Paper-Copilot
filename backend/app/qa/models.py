@@ -63,7 +63,10 @@ class EvidenceItem(BaseModel):
     block_ids: list[str] = Field(default_factory=list)
     #: Verbatim from `DocumentIR`. Never rewritten, never paraphrased.
     text: str
-    #: BM25 score, or `None` for a neighbour that was expanded in rather than ranked.
+    #: The fused ranking score, or `None` for a neighbour that was expanded in
+    #: rather than ranked. It is a reciprocal-rank-fusion value, not raw BM25:
+    #: DS-QA-004 searches several independent queries and combines them by rank,
+    #: because BM25 scores from different query strings are not comparable.
     score: float | None = None
     #: True when retrieval ranked this; False when it is surrounding context.
     is_direct_hit: bool = True
@@ -90,6 +93,15 @@ class Diagnostics(BaseModel):
     total_candidates_scored: int = 0
     expansions: list[ExpansionApplied] = Field(default_factory=list)
     index_rebuilt: bool = False
+    #: Which queries were run, by origin — `["raw", "entity", "rewrite"]`. Enough
+    #: to attribute a result to the path that produced it without logging any of
+    #: the text. DS-QA-004.
+    query_variants: list[str] = Field(default_factory=list)
+    #: True when the local paths had already failed and a rewrite would be worth
+    #: attempting. A caller without a model ignores it.
+    suggest_rewrite: bool = False
+    #: `["no_match"]`, `["script_mismatch"]`. Never shown to a reader.
+    rewrite_reasons: list[str] = Field(default_factory=list)
 
     @property
     def explanation(self) -> str:  # pragma: no cover - convenience for callers
@@ -179,6 +191,10 @@ class AnswerDiagnostics(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     repair_attempted: bool = False
+    #: What happened to the retrieval rewrite: `not_needed`, `used:N`, or
+    #: `unavailable:<reason>`. Never shown to a reader; it is how an evaluation
+    #: tells a rewrite that helped from one that silently never ran.
+    rewrite_outcome: str = "not_needed"
     #: Evidence rendered into the prompt after pruning, and what pruning removed.
     evidence_items: int = 0
     evidence_dropped: int = 0

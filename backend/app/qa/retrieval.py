@@ -30,6 +30,7 @@ from pathlib import Path
 from app.context.models import DocumentAnalysis
 from app.document.models import DocumentIR
 from app.logging import get_logger
+from app.qa.fusion import PER_QUERY_CANDIDATES, fuse
 from app.qa.index import BM25_EXPRESSION, ensure_index, index_path
 from app.qa.models import (
     Diagnostics,
@@ -167,6 +168,42 @@ def _expand_neighbours(
     return hits + additions
 
 
+def _is_cjk(character: str) -> bool:
+    codepoint = ord(character)
+    return (
+        0x4E00 <= codepoint <= 0x9FFF
+        or 0x3040 <= codepoint <= 0x30FF
+        or 0xAC00 <= codepoint <= 0xD7AF
+        or 0x3000 <= codepoint <= 0x303F
+    )
+
+
+def needs_rewrite(query: str, items: list[EvidenceItem]) -> tuple[bool, list[str]]:
+    """Whether the local paths have already failed, and why.
+
+    Two conditions, both observable without asking a model anything:
+
+    * **Nothing matched.** No expansion, no entity, no user word found a row.
+    * **The scripts do not meet.** The question is written in characters the
+      indexed text does not contain — answerable only by rewriting it into the
+      paper's language, and the reason a Chinese question against an English
+      paper retrieves *zero* rows rather than poor ones.
+
+    Deliberately not a BM25 threshold. The scores are uncalibrated across queries,
+    and this repository has twice refused to treat them as a confidence signal;
+    "did anything come back at all" needs no calibration.
+    """
+    if not items:
+        return True, ["no_match"]
+
+    if any(_is_cjk(character) for character in query) and not any(
+        _is_cjk(character) for item in items for character in item.text
+    ):
+        return True, ["script_mismatch"]
+
+    return False, []
+
+
 def retrieve(
     ir: DocumentIR,
     document_dir: Path,
@@ -176,19 +213,25 @@ def retrieve(
     analysis: DocumentAnalysis | None = None,
     top_k: int = DEFAULT_TOP_K,
     max_items: int | None = None,
+    rewrites: list[str] | None = None,
 ) -> EvidenceBundle:
     """Retrieve source evidence for a question within a scope.
 
     Needs only the `DocumentIR`. `analysis` is optional and, when present, may
-    add glossary and acronym expansions — never evidence, which comes from the
-    document and nowhere else.
+    add glossary, acronym and entity expansions — never evidence, which comes
+    from the document and nowhere else.
+
+    `rewrites` are extra lexical queries, produced by a caller that decided the
+    local paths were not going to work (see `needs_rewrite`). They are searched
+    exactly like the deterministic ones, under the same scope, and fused with
+    them by rank.
     """
     started = time.perf_counter()
     top_k = max(1, min(top_k, 50))
     limit = max_items if max_items is not None else top_k * (1 + 2 * NEIGHBOUR_RADIUS)
 
     stats = ensure_index(document_dir, ir)
-    prepared = prepare(query, analysis)
+    prepared = prepare(query, analysis, rewrites=rewrites)
 
     diagnostics = Diagnostics(
         expansions=[
@@ -196,6 +239,7 @@ def retrieve(
             for term, expanded, source in prepared.expansions
         ],
         index_rebuilt=stats.rebuilt,
+        query_variants=list(prepared.sources),
     )
 
     if prepared.is_empty:
@@ -212,6 +256,9 @@ def retrieve(
     clause, parameters = _scope_clause(scope)
     items: list[EvidenceItem] = []
     candidates = 0
+    rankings: dict[str, list[str]] = {}
+    rows_by_key: dict[str, sqlite3.Row] = {}
+    best_rank: dict[str, int] = {}
 
     if not prepared.is_empty:
         path = index_path(Path(document_dir))
@@ -225,13 +272,36 @@ def retrieve(
                 "FROM chunks WHERE chunks MATCH ? " + clause + " "
                 "ORDER BY score LIMIT ?"
             )
-            rows = connection.execute(sql, [prepared.match, *parameters, top_k]).fetchall()
-            candidates = len(rows)
-            items = [_row_to_item(row, score=float(row["score"])) for row in rows]
-        except sqlite3.OperationalError as exc:
-            # Sanitisation should make this unreachable; if it is reached, saying so
-            # beats an unhandled 500.
-            raise RetrievalError("QUERY_INVALID", f"The query could not be run: {exc}") from exc
+            # **Each variant is its own query.** Running them as one expression
+            # would put every expansion's terms into a single BM25 score, where
+            # common ones dilute the rare ones that identify the answer — measured
+            # on the PPO paper, where "Algorithm 1 PPO" lost to four ordinary
+            # words. Fused by rank afterwards instead: see `app.qa.fusion`.
+            for variant in prepared.variants:
+                try:
+                    rows = connection.execute(
+                        sql, [variant.match, *parameters, PER_QUERY_CANDIDATES]
+                    ).fetchall()
+                except sqlite3.OperationalError as exc:
+                    # Sanitisation should make this unreachable; if it is reached,
+                    # saying so beats an unhandled 500.
+                    raise RetrievalError(
+                        "QUERY_INVALID", f"The query could not be run: {exc}"
+                    ) from exc
+
+                label = f"{variant.source}:{len(rankings)}"
+                rankings[label] = [row["chunk_id"] for row in rows]
+                for position, row in enumerate(rows, start=1):
+                    key = row["chunk_id"]
+                    rows_by_key.setdefault(key, row)
+                    best_rank[key] = min(best_rank.get(key, position), position)
+                candidates += len(rows)
+
+            fused = fuse(rankings)
+            items = [
+                _row_to_item(rows_by_key[key], score=score)
+                for key, score, _contributors in fused[:top_k]
+            ]
         finally:
             connection.close()
 
@@ -264,6 +334,12 @@ def retrieve(
 
     if not items and diagnostics.code == "SUCCESS":
         diagnostics.code = "NO_MATCH_TOKEN"
+
+    # Whether a caller with a model available should try rewriting. Decided from
+    # what actually came back, never from a score: BM25 scores are uncalibrated,
+    # which is why DS-QA-001 forbade them as a sufficiency signal and DS-QA-002
+    # forbade them as a truth oracle.
+    diagnostics.suggest_rewrite, diagnostics.rewrite_reasons = needs_rewrite(query, items)
 
     for index, item in enumerate(items, start=1):
         item.id = f"E{index}"

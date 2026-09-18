@@ -166,23 +166,44 @@ def corpus(tmp_path):
 # --- the fake provider --------------------------------------------------------
 
 
+#: What the fake rewriter returns. Two usable phrases, so it passes validation.
+REWRITE_REPLY = json.dumps({"queries": ["degradation problem", "deeper networks"]})
+
+
 class FakeProvider(LLMProvider):
-    """Returns queued replies, and records exactly what it was asked."""
+    """Returns queued replies, and records exactly what it was asked.
+
+    DS-QA-004 added a second kind of call — the retrieval rewrite — which happens
+    *before* the answer and only when the local paths have already failed. A fake
+    that returned a queued answer to a rewrite prompt would measure the queue
+    rather than the pipeline, so requests are routed by what they ask for: a
+    rewrite prompt gets a rewrite reply.
+    """
 
     protocol = "fake"
 
-    def __init__(self, *replies: str | BaseException) -> None:
+    def __init__(self, *replies: str | BaseException, rewrite: str = REWRITE_REPLY) -> None:
         self.replies = list(replies)
-        self.requests: list[LLMRequest] = []
+        self.rewrite_reply = rewrite
+        self.answer_requests = []
+        self.rewrite_requests = []
+
+    @staticmethod
+    def _is_rewrite(request: LLMRequest) -> bool:
+        return "search queries" in request.messages[0].content
 
     async def generate(self, request: LLMRequest) -> LLMResult:
-        self.requests.append(request)
-        index = min(len(self.requests) - 1, len(self.replies) - 1)
-        reply = self.replies[index]
-        if isinstance(reply, BaseException):
-            raise reply
+        if self._is_rewrite(request):
+            text = self.rewrite_reply
+            self.rewrite_requests.append(request)
+        else:
+            index = min(len(self.answer_requests), len(self.replies) - 1)
+            text = self.replies[index]
+            self.answer_requests.append(request)
+            if isinstance(text, BaseException):
+                raise text
         return LLMResult(
-            text=reply, model="fake", protocol="fake",
+            text=text, model="fake", protocol="fake",
             usage=LLMUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
         )
 
@@ -191,11 +212,21 @@ class FakeProvider(LLMProvider):
 
     @property
     def call_count(self) -> int:
-        return len(self.requests)
+        """Answer calls only.
+
+        The property DS-QA-002 AC-P0-01 defends — and DS-QA-004's
+        AC_CHANGE_REQUEST 5 narrows to — is that no *answer* is asked for from
+        empty evidence. A rewrite is a different call with a different contract.
+        """
+        return len(self.answer_requests)
+
+    @property
+    def total_calls(self) -> int:
+        return len(self.answer_requests) + len(self.rewrite_requests)
 
     @property
     def prompt_text(self) -> str:
-        return "\n".join(m.content for m in self.requests[0].messages)
+        return "\n".join(m.content for m in self.answer_requests[0].messages)
 
 
 def reply(status: str = ANSWERED, answer: str = "", **extra) -> str:
@@ -221,10 +252,24 @@ def no_backoff(monkeypatch):
 
 
 class TestNoEvidence:
-    async def test_an_unmatched_question_never_reaches_the_provider(self, corpus) -> None:
-        """AC-P0-01 — asking a model to look at nothing is how it answers from memory."""
+    """DS-QA-002 AC-P0-01, narrowed by DS-QA-004's AC_CHANGE_REQUEST 5.
+
+    The property the criterion defends is that **no answer is asked for from
+    empty evidence**. It used to be checked as "no provider call at all", which
+    DS-QA-004 had to narrow: the rewrite is a different call with a different
+    contract, and it fires precisely when retrieval came back empty — which is
+    the only condition under which a Chinese question against an English paper
+    can be answered at all. These tests check the property with no rewriter
+    available, which is exactly the state the original criterion described.
+    """
+
+    async def test_an_unmatched_question_never_reaches_the_answer_model(self, corpus) -> None:
         ir, directory = corpus
-        provider = FakeProvider(reply(ANSWERED, "should never be used"))
+        # A rewriter that cannot produce usable queries: the local path is all
+        # there is, which is the condition DS-QA-002 wrote its rule for.
+        provider = FakeProvider(
+            reply(ANSWERED, "should never be used"), rewrite="not json at all"
+        )
 
         result = await ask(ir, directory, "quantum chromodynamics", provider)
 
@@ -234,9 +279,28 @@ class TestNoEvidence:
         assert result.diagnostics.requests_made == 0
         assert result.citations == []
 
-    async def test_a_page_scope_with_no_evidence_abstains_without_a_call(self, corpus) -> None:
+    async def test_an_unmatched_question_is_not_answered_from_nothing_even_with_a_rewrite(
+        self, corpus
+    ) -> None:
+        """The rewrite may search again; it may not manufacture an answer.
+
+        The fake rewriter's phrases match this corpus, so the pipeline does ask
+        the answer model — and the reply it gives ("should never be used") cites
+        nothing and is withheld. That is the grounding guarantee, unchanged by
+        the extra retrieval.
+        """
         ir, directory = corpus
-        provider = FakeProvider(reply(ANSWERED, "unused"))
+        provider = FakeProvider(reply(ANSWERED, "should never be used"))
+
+        result = await ask(ir, directory, "quantum chromodynamics", provider)
+
+        assert result.status == INSUFFICIENT_EVIDENCE
+        assert "should never be used" not in result.answer
+        assert result.diagnostics.rewrite_outcome.startswith("used:")
+
+    async def test_a_page_scope_with_no_evidence_abstains_without_an_answer(self, corpus) -> None:
+        ir, directory = corpus
+        provider = FakeProvider(reply(ANSWERED, "unused"), rewrite="not json")
 
         # `CIFAR-10` is on page 2 and nowhere else.
         result = await ask(
@@ -517,17 +581,51 @@ class TestLanguage:
         assert citation.snippet in source.text, "the citation points at English source"
         assert citation.page_number == source.page_number
 
-    async def test_without_the_glossary_a_chinese_question_abstains_free(
+    async def test_without_the_glossary_a_chinese_question_reaches_for_a_rewrite(
         self, corpus
     ) -> None:
-        """The same question, and the cost of the missing analysis is zero calls."""
+        """DS-QA-004: the missing analysis is no longer the end of the road.
+
+        DS-QA-003 asserted this case cost zero provider calls and returned
+        nothing. It still costs no *answer* call until there is evidence — but it
+        now asks for a rewrite, because a Chinese query against an English index
+        retrieves zero rows by construction and no amount of local work can
+        change that. Measured on the held-out paper, this is the difference
+        between 0% and 33% Hit@5 for the class.
+        """
         ir, directory = corpus
-        provider = FakeProvider(reply(ANSWERED, "unused"))
+        provider = FakeProvider(
+            reply(ANSWERED, "The paper addresses degradation. [E1]"), rewrite="not json"
+        )
 
         result = await ask(ir, directory, "作者是如何解决退化问题的？", provider)
 
         assert result.status == INSUFFICIENT_EVIDENCE
         assert provider.call_count == 0
+        assert result.diagnostics.rewrite_outcome.startswith("unavailable")
+
+    async def test_a_working_rewrite_turns_a_chinese_question_into_english_evidence(
+        self, corpus
+    ) -> None:
+        """The point of Stage B, in one test.
+
+        With no analysis and no glossary, the rewriter supplies the English
+        phrasing and the question is answerable. The citations still come from
+        the index — the rewrite chose queries, not evidence.
+        """
+        ir, directory = corpus
+        provider = FakeProvider(
+            reply(ANSWERED, "Residual learning addresses degradation. [E1]"),
+            rewrite=json.dumps({"queries": ["degradation problem", "residual learning"]}),
+        )
+
+        result = await ask(ir, directory, "作者是如何解决退化问题的？", provider)
+
+        assert result.status == ANSWERED
+        assert provider.call_count == 1
+        assert result.diagnostics.rewrite_outcome == "used:2"
+        source = next(p for p in ir.paragraphs if p.id == result.citations[0].paragraph_id)
+        assert result.citations[0].snippet in source.text
 
     async def test_an_explicit_language_overrides_the_question(self, corpus) -> None:
         ir, directory = corpus

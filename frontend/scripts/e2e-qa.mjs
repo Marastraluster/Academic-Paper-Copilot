@@ -26,7 +26,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -93,6 +95,31 @@ function prepareWorkdir() {
 
 function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+/** The document the browser just uploaded, by newest directory. */
+function newestDocumentId() {
+  const root = join(workDir, "documents");
+  const entries = readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => ({ name: entry.name, at: statSync(join(root, entry.name)).mtimeMs }))
+    .sort((left, right) => right.at - left.at);
+  return entries[0]?.name ?? null;
+}
+
+/**
+ * Give the freshly uploaded document the paper's stored analysis.
+ *
+ * Retrieval reads `analysis.json` from the document directory on every request,
+ * so copying it in is enough — nothing caches it. The analysis's content hash
+ * still describes these exact bytes, because the upload is a copy of the same
+ * paper; only the document id differs, and retrieval does not consult it.
+ */
+function copyAnalysisInto(documentId) {
+  const source = join(realDataDir, "documents", BASELINE_DOCUMENT, "analysis.json");
+  if (!existsSync(source)) return false;
+  copyFileSync(source, join(workDir, "documents", documentId, "analysis.json"));
+  return true;
 }
 
 /* ------------------------------------------------------------------ *
@@ -336,29 +363,45 @@ async function main() {
       !/\[E\d+\]/.test(answerText),
     );
 
-    // --- Chinese question ---------------------------------------------------
-    // This document was uploaded fresh, so it has no `analysis.json` — and
-    // without the glossary the Chinese characters match nothing in the English
-    // text. DS-QA-002 measured exactly this: the cross-lingual path *needs* the
-    // analysis, and a search without it abstains rather than guessing. The
-    // browser run therefore checks what the UI owes in that case — a grounded
-    // outcome, rendered as the backend returned it, with no frontend translation
-    // layer and no invented citations — rather than demanding an answer the
-    // backend has no evidence for.
+    // --- Chinese question, no analysis --------------------------------------
+    // The document was uploaded fresh, so it has no `analysis.json` and no
+    // glossary — which is exactly the state DS-QA-003 measured as a free
+    // abstention, because the Chinese characters match nothing in an English
+    // index. DS-QA-004's whole purpose is this case: the local path fails, a
+    // bounded rewrite supplies English phrasing, and the question becomes
+    // answerable without a 468-second analysis ever running.
     await ask(page, "作者是如何解决退化问题的？");
     turn = page.locator('[data-testid^="qa-turn-"]').last();
     const chineseText = await turn.innerText();
     const chineseChips = await turn.locator('[data-testid^="citation-chip-"]').count();
     check(
-      "a Chinese question produces a grounded outcome, never an error (AC-P0-11)",
-      (await turn.locator('[data-testid="qa-error"]').count()) === 0 &&
-        /[一-鿿]/.test(chineseText),
-      chineseChips > 0 ? `${chineseChips} citation(s)` : "abstained (no analysis uploaded)",
+      "a Chinese question on an unanalysed paper is now answerable (DS-QA-004)",
+      /[一-鿿]/.test(chineseText) &&
+        (await turn.locator('[data-testid="qa-error"]').count()) === 0 &&
+        chineseChips > 0,
+      `${chineseChips} citation(s)`,
     );
-    if (chineseChips > 0) {
+    check(
+      "and its citations point at the English source (AC-P0-11)",
+      /第 \d+ 页/.test(await turn.locator('[data-testid="reference-list"]').innerText()),
+    );
+
+    // --- a generic entity-type question -------------------------------------
+    // Given an analysis, so the entity path has something to work from. The
+    // paper's own analysis is copied in rather than regenerated: this is a
+    // retrieval test, not an analysis test, and 468 seconds of provider time
+    // would measure the wrong thing.
+    const documentId = await newestDocumentId();
+    if (documentId) {
+      copyAnalysisInto(documentId);
+      await ask(page, "What datasets are used for evaluation?");
+      turn = page.locator('[data-testid^="qa-turn-"]').last();
+      const entityChips = await turn.locator('[data-testid^="citation-chip-"]').count();
+      const entityText = (await turn.innerText()).replace(/\s+/g, " ").slice(0, 160);
       check(
-        "and its citations point at the English source (AC-P0-11)",
-        /第 \d+ 页/.test(await turn.locator('[data-testid="reference-list"]').innerText()),
+        "a generic entity-type question reaches the dataset paragraphs (AC-03)",
+        entityChips > 0 && (await turn.locator('[data-testid="qa-error"]').count()) === 0,
+        `${entityChips} citation(s) — ${entityText}`,
       );
     }
 
