@@ -190,7 +190,8 @@ export function seedSelection(
       pages: [1],
       text: "Deeper neural networks are more difficult to train.",
       truncated: false,
-    rects: {},
+      rects: {},
+      reason: "",
       ...overrides,
     },
   };

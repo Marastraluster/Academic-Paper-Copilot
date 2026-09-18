@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.annotations.service import resolve_annotation, summary, summary_unresolved
 from app.annotations.store import AnnotationStore
@@ -43,6 +43,43 @@ class TargetPayload(BaseModel):
     exact_quote: str
     prefix: str = ""
     suffix: str = ""
+
+    @model_validator(mode="after")
+    def _rects_belong_to_their_envelope(self) -> "TargetPayload":
+        """Every line rectangle must lie inside the target's own envelope.
+
+        This is the cheap half of "a target's rects belong to its declared
+        page". The frontend builds a target by intersecting the selection with
+        that paragraph's boxes, so the containment is an invariant of the
+        payload rather than a coincidence — and it is exactly what a
+        cross-page mistake breaks. A target carrying page 2's rectangles under
+        a page 1 envelope would otherwise be stored, rendered at page 2's
+        coordinates on page 1, and look to the reader like a highlight pointing
+        at text that does not support it.
+
+        Deliberately not checked against the IR: reading the extraction to
+        validate a mark is the round trip that cost fourteen seconds on every
+        reopen (DS-QA-010-FIX-001). Containment needs only the payload.
+        """
+        if not self.rects:
+            raise ValueError("A target needs the rectangles the selection covered.")
+        x0, y0, x1, y1 = self.original_bbox
+        if x1 <= x0 or y1 <= y0:
+            raise ValueError("A target's envelope must have a positive area.")
+        for rect in self.rects:
+            rx0, ry0, rx1, ry1 = rect
+            if rx1 <= rx0 or ry1 <= ry0:
+                raise ValueError("A target rectangle must have a positive area.")
+            # Half a point of slack: the sources are floats measured by two
+            # different tools, and a rounding artefact is not a misplaced mark.
+            if (
+                rx0 < x0 - 0.5 or ry0 < y0 - 0.5
+                or rx1 > x1 + 0.5 or ry1 > y1 + 0.5
+            ):
+                raise ValueError(
+                    "A target's rectangles must lie inside its own envelope."
+                )
+        return self
 
 
 class CreateAnnotation(BaseModel):

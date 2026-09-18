@@ -38,6 +38,8 @@ export interface QaSession {
   selection: SelectionMapping | null;
   /** Why the last selection attempt was refused, if it was. */
   selectionStatus: MappingStatus | null;
+  /** The refusal in the reader's own terms, or `""`. See `WorkspaceState`. */
+  selectionReason: string;
   /** True when the composer's question could be sent right now. */
   canAsk: boolean;
   /**
@@ -75,6 +77,7 @@ export function useQaSession(): QaSession {
   const allTurns = useWorkspaceStore((s) => s.turns);
   const selectionState = useWorkspaceStore((s) => s.selection);
   const selectionStatus = useWorkspaceStore((s) => s.selectionStatus);
+  const selectionReason = useWorkspaceStore((s) => s.selectionReason);
   const turns = useMemo(
     () => selectActiveTurns({ document, turns: allTurns }),
     [document, allTurns],
@@ -161,6 +164,7 @@ export function useQaSession(): QaSession {
     availability,
     selection,
     selectionStatus,
+    selectionReason,
     // A question with nothing in it is not askable, and neither is one that
     // already has an answer on its way. Under a Selection an empty question *is*
     // askable — "explain what I highlighted" — because the selection is the

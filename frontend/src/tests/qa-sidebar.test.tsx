@@ -127,6 +127,8 @@ function setupScene(
     scope?: QaScopeType;
     /** Paragraph ids a drag resolved to, or a refusal status instead. */
     selection?: string[] | { status: MappingStatus };
+    /** The refusal's own sentence, when the mapping carried one. */
+    selectionReason?: string;
   } = {},
 ) {
   const document = seedDocument();
@@ -140,6 +142,7 @@ function setupScene(
     useWorkspaceStore.setState({
       selection: null,
       selectionStatus: options.selection.status,
+      selectionReason: options.selectionReason ?? "",
     });
   }
   render(<App />);
@@ -739,9 +742,15 @@ describe("DS-QA-005 · selection scope", () => {
   });
 
   it("says which refusal it was, not just that it failed (AC-05, AC-06)", () => {
-    setupScene({ selection: { status: "cross_page" } });
+    // The mapper's own sentence is shown when it produced one: the status names
+    // a category, and a cross-page refusal covers four situations with four
+    // different fixes.
+    setupScene({
+      selection: { status: "cross_page_refused" },
+      selectionReason: "跨页标注目前支持相邻的两页，请将选区限制在相邻页面内。",
+    });
 
-    expect(screen.getByTestId("selection-refusal")).toHaveTextContent("跨页");
+    expect(screen.getByTestId("selection-refusal")).toHaveTextContent("相邻的两页");
   });
 
   it("sends the canonical paragraph ids and nothing else (AC-09)", async () => {
@@ -854,6 +863,7 @@ describe("DS-QA-005 · selection scope", () => {
           rects: {},
           text: "stale",
           truncated: false,
+          reason: "",
         },
       },
     });

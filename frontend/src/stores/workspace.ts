@@ -341,6 +341,16 @@ interface WorkspaceState {
    */
   selectionStatus: MappingStatus | null;
   setSelectionStatus: (status: MappingStatus | null) => void;
+  /**
+   * The refusal in the reader's own terms, when the mapping carried one.
+   *
+   * A status is a category; `cross_page_refused` covers four different
+   * situations with four different fixes. The sentence the mapper produced is
+   * stored beside the status so the sidebar can show the reader their own
+   * problem. Empty whenever the status is not a refusal.
+   */
+  selectionReason: string;
+  setSelectionReason: (reason: string) => void;
 
   // ---- Sidebar (AC-05) ----
   sidebarOpen: boolean;
@@ -522,7 +532,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   selection: null,
   setSelection: (selection) => set({ selection }),
   selectionStatus: null,
+  selectionReason: "",
   setSelectionStatus: (selectionStatus) => set({ selectionStatus }),
+  setSelectionReason: (selectionReason) => set({ selectionReason }),
 
   // AC-05: expanded by default.
   sidebarOpen: true,

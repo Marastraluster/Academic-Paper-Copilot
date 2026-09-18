@@ -55,7 +55,25 @@ export type MappingStatus =
   /** Some candidates validated and some did not. */
   | "partial"
   | "collapsed"
-  | "cross_page"
+  /**
+   * A cross-page gesture that could not be honoured *as a whole*.
+   *
+   * Replaces DS-QA-005's `cross_page`, which meant "spanning two pages is not
+   * supported". It is supported now, so the status has to say which of the
+   * several ways a cross-page gesture can fail actually happened — the reader
+   * gets a sentence about their own situation instead of a sentence about a
+   * feature that exists.
+   */
+  | "cross_page_refused"
+  /**
+   * The browser reports selected text the page could not measure.
+   *
+   * Its own status because it is a different thing from a refusal: the user's
+   * gesture *succeeded*, and the part of it that cannot be placed is text whose
+   * geometry is gone. Saving the rest would be a silent truncation of what they
+   * visibly selected.
+   */
+  | "unmeasurable"
   | "non_prose"
   | "unavailable";
 
@@ -69,6 +87,16 @@ export interface SelectionMapping {
   /** What the user selected, for the preview. Not identity. */
   text: string;
   truncated: boolean;
+  /**
+   * Why this mapping was refused, in the reader's own terms.
+   *
+   * The status alone cannot say it: `cross_page_refused` covers a span of three
+   * pages, a rotated page, a page with no prose, and a page whose geometry is
+   * gone, and each has a different fix. The refusal's own sentence is carried
+   * here so the sidebar shows the reader's situation rather than a category.
+   * Empty on every mapping that was not refused.
+   */
+  reason: string;
   /**
    * The source-PDF boxes the selection actually covered, by page.
    *
@@ -88,6 +116,7 @@ const EMPTY: SelectionMapping = {
   text: "",
   truncated: false,
   rects: {},
+  reason: "",
 };
 
 /**
@@ -262,6 +291,7 @@ export function matchParagraphs(
     text: selectedText,
     truncated,
     rects: toBboxRecord(rectsByPage),
+    reason: "",
   };
 }
 
@@ -289,66 +319,171 @@ export function pageElementOf(node: Node | null): HTMLElement | null {
   return null;
 }
 
+export interface PageSelectionFragment {
+  page: number;
+  element: HTMLElement;
+  /** Line fragments the browser measured for this page, and nothing else. */
+  rects: ClientRect[];
+  /** The selected text this page's own nodes contributed. */
+  text: string;
+}
+
 export interface DomSelection {
   text: string;
   isCollapsed: boolean;
   /** One entry per page the selection touched, in page order. */
-  byPage: { page: number; element: HTMLElement; rects: ClientRect[] }[];
+  byPage: PageSelectionFragment[];
   crossPage: boolean;
   /** True when the selection lives in a pane that is not source evidence. */
   translatedPane: boolean;
+  /**
+   * Non-whitespace characters of the selection the DOM could measure, and the
+   * count the browser reports as selected.
+   *
+   * These are equal for every honest selection. They differ by exactly the text
+   * whose geometry no longer exists — see `readDomSelection`.
+   */
+  measuredChars: number;
+  reportedChars: number;
+}
+
+const EMPTY_DOM_SELECTION: DomSelection = {
+  text: "",
+  isCollapsed: true,
+  byPage: [],
+  crossPage: false,
+  translatedPane: false,
+  measuredChars: 0,
+  reportedChars: 0,
+};
+
+/** Non-whitespace characters. The unit both completeness counts are in. */
+export function measurableChars(text: string): number {
+  return text.replace(/\s+/g, "").length;
 }
 
 /**
  * Read the live DOM selection, without interpreting it.
  *
- * `getClientRects()` is per line fragment and is the only thing used for
- * geometry. `pageElementOf` walks each fragment's own container, so a range that
- * crosses a page boundary is *detected* here and refused by the caller rather than
- * being mapped onto whichever page happened to come first.
+ * ## Why the range is clamped to each text node rather than to each page
+ *
+ * The obvious implementation reads `range.getClientRects()` once and works out
+ * which page each rectangle belongs to afterwards. **It is wrong, and the
+ * measurement says so.** `Range.getClientRects()` includes the border boxes of
+ * partially-contained elements, so a selection ending inside page 2's absolutely
+ * positioned text layer emits page 2's *entire* box — 1050×1486 at fit-width.
+ * Deciding its owner by hit-testing the centre fails too: a rectangle below the
+ * fold has no element under its centre, `elementFromPoint` returns null, and the
+ * fallback attributes a page-2 rectangle to page 1. The result is a rectangle
+ * covering every paragraph on page 1, which is a highlight over the whole page.
+ *
+ * Clamping the range to each text node and measuring *that* removes both
+ * problems structurally rather than by threshold. Measured on the same live
+ * cross-page selection:
+ *
+ *     clamp to page container → page 1: 7 rects, page 2: 8 rects,
+ *                               including the 1050×1486 artifact
+ *     clamp to text node      → page 1: 4 rects, page 2: 4 rects, no artifact
+ *
+ * A text node is inside exactly one page container, so ownership is known
+ * directly — which is also what the brief asks for: do not assign a fragment to
+ * a page by proximity when the DOM can answer it. And `getClientRects()` on a
+ * range that contains only text returns only line boxes.
+ *
+ * ## The completeness counts
+ *
+ * `Range.toString()` is computed from live node references, so it keeps
+ * reporting text whose nodes have been **removed from the document**: a drag
+ * that auto-scrolls has its starting page virtualised away mid-gesture, and the
+ * page's text is still in `toString()` while `getClientRects()` on it measures
+ * nothing. Measured: 6388 reported characters against a selection whose first
+ * page could no longer be measured at all.
+ *
+ * So the two counts are reported rather than reconciled. When they disagree, the
+ * mapping says so and refuses — saving the measurable part would silently
+ * truncate a span the user can still see highlighted on screen.
  */
 export function readDomSelection(selection: Selection | null): DomSelection {
-  const empty: DomSelection = {
-    text: "",
-    isCollapsed: true,
-    byPage: [],
-    crossPage: false,
-    translatedPane: false,
-  };
-  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return empty;
-
-  const range = selection.getRangeAt(0);
-  const byPage = new Map<number, { page: number; element: HTMLElement; rects: ClientRect[] }>();
-  let translatedPane = false;
-
-  for (const rect of Array.from(range.getClientRects())) {
-    if (rect.width <= 0 || rect.height <= 0) continue;
-    // The fragment's own position identifies its page; a range spanning pages
-    // produces fragments on both, which is how cross-page is detected. When the
-    // environment has no hit-testing, the range's own containers are the honest
-    // fallback — and jsdom, which has neither, is a real example of one that
-    // does not.
-    const element = pageElementOf(range.startContainer) ?? pageElementOf(range.endContainer);
-    const probe =
-      typeof document.elementFromPoint === "function"
-        ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
-        : null;
-    const container = pageElementOf(probe) ?? element;
-    if (!container) continue;
-    if (container.closest('[data-testid="viewer-translated"]')) translatedPane = true;
-
-    const page = Number(container.dataset.pageNumber ?? "0");
-    if (!page) continue;
-    const entry = byPage.get(page) ?? { page, element: container, rects: [] };
-    entry.rects.push({ left: rect.left, top: rect.top, width: rect.width, height: rect.height });
-    byPage.set(page, entry);
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return EMPTY_DOM_SELECTION;
   }
 
+  const range = selection.getRangeAt(0);
+  const doc = range.startContainer.ownerDocument;
+  if (!doc) return EMPTY_DOM_SELECTION;
+
+  const byPage = new Map<number, PageSelectionFragment>();
+  let measuredChars = 0;
+  let translatedPane = false;
+
+  // Only pages whose content the range actually touches are walked. This is the
+  // pre-filter that keeps the walk proportional to the selection rather than to
+  // the document — a page is visited only if some of it is selected.
+  const containers = doc.querySelectorAll<HTMLElement>("[data-page-number]");
+  for (const container of Array.from(containers)) {
+    const page = Number(container.dataset.pageNumber ?? "0");
+    if (!page || !range.intersectsNode(container)) continue;
+
+    const inTranslation = container.closest('[data-testid="viewer-translated"]') !== null;
+    if (inTranslation) translatedPane = true;
+
+    const walker = doc.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode() as Text | null;
+    while (node) {
+      const text = node.nodeValue;
+      if (text && text.trim() && range.intersectsNode(node)) {
+        const sub = clampRangeToNode(doc, range, node);
+        const rects: ClientRect[] = [];
+        for (const rect of Array.from(sub.getClientRects())) {
+          if (rect.width <= 0 || rect.height <= 0) continue;
+          rects.push({ left: rect.left, top: rect.top, width: rect.width, height: rect.height });
+        }
+        const contributed = sub.toString();
+        measuredChars += measurableChars(contributed);
+        if (rects.length > 0) {
+          const entry = byPage.get(page) ?? { page, element: container, rects: [], text: "" };
+          entry.rects.push(...rects);
+          entry.text += contributed;
+          byPage.set(page, entry);
+        }
+      }
+      node = walker.nextNode() as Text | null;
+    }
+  }
+
+  const text = selection.toString();
   return {
-    text: selection.toString(),
+    text,
     isCollapsed: false,
     byPage: [...byPage.values()].sort((left, right) => left.page - right.page),
     crossPage: byPage.size > 1,
     translatedPane,
+    measuredChars,
+    reportedChars: measurableChars(text),
   };
+}
+
+/**
+ * The part of `range` that falls inside one text node.
+ *
+ * A text node is either entirely inside the range, entirely outside it, or
+ * carries one of its boundaries — there is no fourth case, which is why this
+ * needs no intersection arithmetic beyond two comparisons.
+ */
+function clampRangeToNode(doc: Document, range: Range, node: Text): Range {
+  const bounds = doc.createRange();
+  bounds.selectNodeContents(node);
+
+  const sub = doc.createRange();
+  const startsAfter = range.compareBoundaryPoints(Range.START_TO_START, bounds) > 0;
+  sub.setStart(
+    startsAfter ? range.startContainer : node,
+    startsAfter ? range.startOffset : 0,
+  );
+  const endsBefore = range.compareBoundaryPoints(Range.END_TO_END, bounds) < 0;
+  sub.setEnd(
+    endsBefore ? range.endContainer : node,
+    endsBefore ? range.endOffset : (node.nodeValue?.length ?? 0),
+  );
+  return sub;
 }

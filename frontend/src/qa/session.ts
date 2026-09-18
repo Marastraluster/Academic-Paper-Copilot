@@ -27,6 +27,8 @@ import {
   matchParagraphs,
   readDomSelection,
   toPdfRects,
+  type MappingStatus,
+  type PdfRect,
   type SelectionMapping,
 } from "@/qa/selection";
 import {
@@ -353,6 +355,7 @@ const EMPTY_MAPPING: SelectionMapping = {
   text: "",
   truncated: false,
   rects: {},
+  reason: "",
 };
 
 /**
@@ -379,35 +382,121 @@ export function captureSelection(): SelectionMapping | null {
   // not the source's and no validated mapping between them exists.
   if (dom.translatedPane) return { ...EMPTY_MAPPING, status: "non_prose", text: dom.text };
 
-  // Both pages must be mounted for a browser range to span them, and the viewer
-  // windows pages — so this is refused rather than mapped onto whichever page
-  // came first.
+  const pages = dom.byPage.map((entry) => entry.page);
+
+  /**
+   * Text the browser says was selected but no page could measure.
+   *
+   * Checked before anything else, because it is the one failure that would
+   * otherwise be invisible. `Range.toString()` is computed from live node
+   * references and keeps reporting a page the virtualiser removed mid-drag;
+   * that page contributes no geometry, so `byPage` would hold only the
+   * *remaining* pages and every later check would pass on a span shorter than
+   * the one the reader can still see highlighted. Persisting that is a silent
+   * truncation, which the task forbids outright.
+   */
+  if (dom.measuredChars < dom.reportedChars) {
+    return refuse(
+      "unmeasurable",
+      dom.text,
+      pages,
+      "选区的部分文本已随页面滚出而无法测量，请重新选择。",
+    );
+  }
+
+  // Cross-page is supported, but only across the pages the viewer actually keeps
+  // mounted. Measured at fit-width in a 1440×900 window: exactly two adjacent
+  // pages are ever mounted at a boundary, and both were present for every drag
+  // that crossed it. Three or more, or two that are not adjacent, is a selection
+  // the reader could not have made on screen — refused rather than approximated,
+  // and stated as a bound rather than discovered as a surprise.
   if (dom.crossPage) {
-    return {
-      status: "cross_page",
-      paragraphIds: [],
-      pages: dom.byPage.map((entry) => entry.page),
-      text: dom.text,
-      truncated: false,
-      rects: {},
-    };
+    const adjacent =
+      pages.length === 2 && Math.abs(pages[1]! - pages[0]!) === 1;
+    if (!adjacent) {
+      return refuse(
+        "cross_page_refused",
+        dom.text,
+        pages,
+        "跨页标注目前支持相邻的两页，请将选区限制在相邻页面内。",
+      );
+    }
   }
 
   if (!state.ir) return { ...EMPTY_MAPPING, status: "unavailable", text: dom.text };
 
-  const { page: pageNumber, element, rects } = dom.byPage[0]!;
-  const irPage = state.ir.pages.find((candidate) => candidate.page_number === pageNumber);
-  const scale = Number(element.dataset.pageScale ?? "0");
-  if (!irPage || !(scale > 0)) {
-    return { ...EMPTY_MAPPING, status: "unavailable", text: dom.text };
+  // Every touched page is converted with its **own** viewport transform. One
+  // scale and one origin for the whole selection is the defect this task exists
+  // to avoid: pages move independently under scroll and need not even be the
+  // same size.
+  const rectsByPage = new Map<number, PdfRect[]>();
+  for (const fragment of dom.byPage) {
+    const irPage = state.ir.pages.find(
+      (candidate) => candidate.page_number === fragment.page,
+    );
+    const scale = Number(fragment.element.dataset.pageScale ?? "0");
+    // `toPdfRects` returns nothing on a rotated page, by design and by
+    // DS-QA-005's measurement. A cross-page gesture touching one is refused
+    // whole: keeping the unrotated half would save a span the reader did not
+    // select alone.
+    if (!irPage || !(scale > 0) || irPage.rotation !== 0) {
+      return refuse(
+        "cross_page_refused",
+        dom.text,
+        pages,
+        "选区内有页面无法映射（页面旋转或原文结构尚未就绪）。",
+      );
+    }
+    const pdfRects = toPdfRects(
+      fragment.rects,
+      fragment.element.getBoundingClientRect(),
+      scale,
+      irPage,
+    );
+    if (pdfRects.length === 0) {
+      return refuse(
+        "cross_page_refused",
+        dom.text,
+        pages,
+        "选区内有页面没有可用的源几何。",
+      );
+    }
+    rectsByPage.set(fragment.page, pdfRects);
   }
 
-  const pdfRects = toPdfRects(rects, element.getBoundingClientRect(), scale, irPage);
-  if (pdfRects.length === 0) {
-    return { ...EMPTY_MAPPING, status: "unavailable", text: dom.text };
+  const mapping = matchParagraphs(rectsByPage, state.ir.paragraphs, dom.text);
+
+  // A cross-page gesture must land on prose on **both** pages. Mapping one page
+  // and not the other is not a smaller version of what was asked for; it is a
+  // different annotation, over a span the reader never chose.
+  if (dom.crossPage && mapping.paragraphIds.length > 0) {
+    const byId = new Map(state.ir.paragraphs.map((p) => [p.id, p]));
+    const covered = new Set(
+      mapping.paragraphIds.map((id) => byId.get(id)?.page_number),
+    );
+    for (const page of pages) {
+      if (!covered.has(page)) {
+        return refuse(
+          "cross_page_refused",
+          dom.text,
+          pages,
+          "所选范围跨越的页面中，有一页没有可用正文，无法创建跨页标注。",
+        );
+      }
+    }
   }
 
-  return matchParagraphs(new Map([[pageNumber, pdfRects]]), state.ir.paragraphs, dom.text);
+  return mapping;
+}
+
+/** A refusal that keeps the pages and the text, so the reader sees what failed. */
+function refuse(
+  status: MappingStatus,
+  text: string,
+  pages: number[],
+  reason: string,
+): SelectionMapping {
+  return { status, paragraphIds: [], pages, text, truncated: false, rects: {}, reason };
 }
 
 /**
@@ -436,7 +525,11 @@ export function refreshSelection(): SelectionMapping | null {
   if (mapping.status !== "valid" && mapping.status !== "partial") {
     // The refusal is recorded as a *status*, so the sidebar can say which one it
     // was. A generic "unavailable" would leave the reader guessing at the fix.
-    useWorkspaceStore.setState({ selection: null, selectionStatus: mapping.status });
+    useWorkspaceStore.setState({
+      selection: null,
+      selectionStatus: mapping.status,
+      selectionReason: mapping.reason,
+    });
     return mapping;
   }
 
@@ -447,13 +540,14 @@ export function refreshSelection(): SelectionMapping | null {
       mapping,
     },
     selectionStatus: mapping.status,
+    selectionReason: mapping.reason,
   });
   return mapping;
 }
 
 /** Drop the mapping. Called when the reader clicks in the paper, not in the sidebar. */
 export function clearSelection(): void {
-  useWorkspaceStore.setState({ selection: null, selectionStatus: null });
+  useWorkspaceStore.setState({ selection: null, selectionStatus: null, selectionReason: "" });
 }
 
 // --- sections ---------------------------------------------------------------

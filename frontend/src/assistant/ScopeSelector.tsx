@@ -18,7 +18,12 @@ const REFUSALS: Record<MappingStatus, string> = {
   valid: "",
   partial: "",
   collapsed: "在原文中选中一段文字，即可按选区提问。",
-  cross_page: "暂不支持跨页选区问答，请限制在单页内选择。",
+  // The general sentence; a mapping that carries its own `reason` says something
+  // more specific, because "a cross-page selection was refused" covers a span of
+  // three pages, a rotated page, a page with no prose and a page whose geometry
+  // is gone, and a reader can act on exactly one of those.
+  cross_page_refused: "跨页选区未能映射，请调整选区后重试。",
+  unmeasurable: "选区的部分文本已随页面滚出而无法测量，请重新选择。",
   non_prose: "所选内容为标题或图表说明，无法作为选区问答范围。",
   unavailable: "选区映射暂不可用（原文结构尚未就绪）。",
 };
@@ -51,7 +56,7 @@ function selectionLabel(available: boolean, mode: ReaderMode, refused: boolean):
  * user action.
  */
 export function ScopeSelector() {
-  const { scope, setScope, availability, documentState, selection, selectionStatus } =
+  const { scope, setScope, availability, documentState, selection, selectionStatus, selectionReason } =
     useQaSession();
   const sections = useWorkspaceStore((s) => s.sections);
   const activePage = useWorkspaceStore((s) => s.activePage);
@@ -139,7 +144,10 @@ export function ScopeSelector() {
 
       {readerMode !== "translation" && !selection && selectionStatus && (
         <p data-testid="selection-refusal" className="mt-1.5 px-1 text-2xs text-muted-foreground">
-          {REFUSALS[selectionStatus]}
+          {/* The mapper's own sentence wins when it produced one: it names the
+              situation the reader is in, where the status can only name the
+              category. */}
+          {selectionReason !== "" ? selectionReason : REFUSALS[selectionStatus]}
         </p>
       )}
     </div>
