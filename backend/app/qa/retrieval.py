@@ -94,7 +94,11 @@ def _scope_clause(scope: Scope) -> tuple[str, list]:
 
 
 def _row_to_item(
-    row: sqlite3.Row, *, score: float | None, coverage: float | None = None
+    row: sqlite3.Row,
+    *,
+    score: float | None,
+    coverage: float | None = None,
+    sources: list[str] | None = None,
 ) -> EvidenceItem:
     pages = [int(p) for p in str(row["page_range"]).strip(",").split(",") if p]
     block_ids = [b for b in str(row["block_ids"]).split(",") if b]
@@ -113,6 +117,7 @@ def _row_to_item(
         coverage_score=coverage,
         is_direct_hit=score is not None,
         is_caption=row["kind"] == "caption",
+        sources=list(sources or []),
     )
 
 
@@ -217,6 +222,7 @@ def retrieve(
     top_k: int = DEFAULT_TOP_K,
     max_items: int | None = None,
     rewrites: list[str] | None = None,
+    dense_ranking: list[str] | None = None,
 ) -> EvidenceBundle:
     """Retrieve source evidence for a question within a scope.
 
@@ -228,6 +234,21 @@ def retrieve(
     local paths were not going to work (see `needs_rewrite`). They are searched
     exactly like the deterministic ones, under the same scope, and fused with
     them by rank.
+
+    **`dense_ranking` is the DS-QA-007 experimental boundary.** It is a list of
+    canonical chunk ids, already ranked, produced by `app.qa.dense` — which this
+    module deliberately does not import, so the default path carries no
+    dependency on the experiment and removal is deleting a parameter rather than
+    untangling an import graph. It is `None` by default and the production path
+    never passes it: with `None`, this function behaves exactly as it did before
+    the experiment existed.
+
+    Dense candidates join the fusion as one more ranked list, never as a score.
+    Cosine similarity and BM25 are not on a common scale, and adding them
+    directly would be arithmetic on two different units. Every dense id is
+    re-resolved against the `chunks` table under the *same* scope clause the
+    lexical variants use, so an out-of-scope id — one the caller should already
+    have excluded — is dropped here rather than trusted.
     """
     started = time.perf_counter()
     top_k = max(1, min(top_k, 50))
@@ -274,6 +295,10 @@ def retrieve(
     rankings: dict[str, list[str]] = {}
     rows_by_key: dict[str, sqlite3.Row] = {}
     best_rank: dict[str, int] = {}
+    #: Phase 19 provenance. Two sets, subtracted at the end, so a paragraph both
+    #: paths found is one candidate carrying both labels.
+    retrieved_by_lexical: set[str] = set()
+    retrieved_by_dense: set[str] = set()
 
     if not prepared.is_empty:
         path = index_path(Path(document_dir))
@@ -310,7 +335,40 @@ def retrieve(
                     key = row["chunk_id"]
                     rows_by_key.setdefault(key, row)
                     best_rank[key] = min(best_rank.get(key, position), position)
+                retrieved_by_lexical.update(rankings[label])
                 candidates += len(rows)
+
+            if dense_ranking:
+                # The experimental arm. Re-resolved under the same scope clause
+                # as the lexical variants, so a dense id outside the scope has no
+                # row and is dropped — the scope stays a property of this
+                # function rather than a promise from its caller. A dense-only
+                # hit has no BM25 row of its own, so its row is fetched by id.
+                missing = [key for key in dense_ranking if key not in rows_by_key]
+                if missing:
+                    placeholders = ", ".join("?" for _ in missing)
+                    extra = connection.execute(
+                        "SELECT chunk_id, kind, section_id, page_number, page_range, "
+                        "       block_ids, section_title, text, NULL AS score "
+                        f"FROM chunks WHERE chunk_id IN ({placeholders}) " + clause,
+                        [*missing, *parameters],
+                    ).fetchall()
+                    for row in extra:
+                        rows_by_key.setdefault(row["chunk_id"], row)
+
+                in_scope = [key for key in dense_ranking if key in rows_by_key]
+                if in_scope:
+                    rankings[f"dense:{len(rankings)}"] = in_scope
+                    retrieved_by_dense.update(in_scope)
+
+            def sources_of(key: str) -> list[str]:
+                """Which retrievers found this candidate. Diagnostic only."""
+                labels = []
+                if key in retrieved_by_lexical:
+                    labels.append("lexical")
+                if key in retrieved_by_dense:
+                    labels.append("dense")
+                return labels
 
             # Term coverage against the *question*, added to the fused score.
             # A CJK question has no content terms and scores 0.0 throughout, which
@@ -327,6 +385,7 @@ def retrieve(
                     rows_by_key[key],
                     score=score,
                     coverage=coverage_of[key] if coverage_of else None,
+                    sources=sources_of(key),
                 )
                 for key, score, _contributors in fused[:top_k]
             ]
@@ -376,6 +435,13 @@ def retrieve(
         item.id = f"E{index}"
 
     diagnostics.total_candidates_scored = candidates
+    if dense_ranking is not None:
+        # Reported only when an experimental caller asked for it, so the default
+        # path cannot advertise a strategy it did not use.
+        diagnostics.dense_candidates_scored = len(retrieved_by_dense)
+        diagnostics.ranking_strategy = (
+            "rrf_coverage_hybrid" if retrieved_by_dense else "rrf_coverage"
+        )
     diagnostics.execution_time_ms = round((time.perf_counter() - started) * 1000, 2)
 
     bundle = EvidenceBundle(

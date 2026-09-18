@@ -328,18 +328,26 @@ async def generate_answer(
     analysis: DocumentAnalysis | None = None,
     top_k: int = DEFAULT_TOP_K,
     language: str | None = None,
+    dense_ranking: list[str] | None = None,
 ) -> AnswerResult:
     """Retrieve, decide whether the evidence can answer, then either answer or refuse.
 
     Raises :class:`~app.llm.errors.LLMError` subclasses for provider failures —
     including a truncated reply, which is a system failure rather than a verdict
     on the evidence.
+
+    `dense_ranking` is the DS-QA-007 experimental boundary, passed straight
+    through to `retrieve`. It is `None` on every production call and changes
+    nothing when it is: the answering prompt, the grounding rules and the
+    abstention logic are untouched, so an experiment that feeds hybrid evidence
+    through this measures *retrieval*, not a change in how answers are produced.
     """
     started = time.perf_counter()
     directory = Path(document_dir)
 
     bundle = retrieve(
-        ir, directory, query=question, scope=scope, analysis=analysis, top_k=top_k
+        ir, directory, query=question, scope=scope, analysis=analysis, top_k=top_k,
+        dense_ranking=dense_ranking,
     )
     diagnostics = AnswerDiagnostics()
 

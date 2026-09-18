@@ -80,6 +80,14 @@ class EvidenceItem(BaseModel):
     #: True when retrieval ranked this; False when it is surrounding context.
     is_direct_hit: bool = True
     is_caption: bool = False
+    #: Which retrievers ranked this candidate — any of `"lexical"`, `"dense"`.
+    #: DS-QA-007 Phase 19: developer diagnostic only, never shown to a reader. It
+    #: exists so an experiment can say *which* path found a paragraph, and so a
+    #: hybrid result can be attributed rather than merely counted. A paragraph
+    #: found by both is one candidate with two provenance entries, not two
+    #: candidates — deduplication is by canonical id, and this field is how that
+    #: deduplication is auditable.
+    sources: list[str] = Field(default_factory=list)
 
 
 class ExpansionApplied(BaseModel):
@@ -114,6 +122,13 @@ class Diagnostics(BaseModel):
     #: Which ranking produced this order. A developer reading a bundle needs to
     #: know whether `score` is comparable across two runs at all.
     ranking_strategy: str = "rrf_coverage"
+    #: DS-QA-007 experimental diagnostics. Zero and `None` on the production path,
+    #: which is the state they are in unless a caller explicitly supplied a dense
+    #: ranking. `dense_similarity` is deliberately **not** published as a
+    #: confidence: cosine similarity is a ranking signal and this repository has
+    #: refused three times to let an uncalibrated score be read as one.
+    dense_candidates_scored: int = 0
+    dense_latency_ms: float | None = None
 
     @property
     def explanation(self) -> str:  # pragma: no cover - convenience for callers

@@ -32,6 +32,21 @@ dev = [
     "pytest-asyncio~=1.4.0",
     "httpx~=0.28.1",
 ]
+# DS-QA-007 experimental extra. `tokenizers` is the exact XLM-R tokenizer the
+# embedding model requires; reimplementing it would risk tokenization that is
+# subtly wrong, which produces a *false negative* about semantic retrieval —
+# the one result that experiment must not manufacture. It is declared here
+# rather than in `dependencies` for two reasons: AC-11's rule is that a
+# dependency we program against is named rather than inherited (it was reaching
+# us transitively, through the upstream PDF translation library), and the dense
+# retriever it serves is an experiment whose adoption gate has not been
+# evaluated yet.
+# Declared explicitly, so nothing is transitive; optional, so a rejected
+# experiment leaves no runtime weight. Promotion to `dependencies` is a
+# one-line change in whichever task adopts the result.
+experiment = [
+    "tokenizers~=0.23.2",
+]
 
 [tool.pytest.ini_options]
 # Makes `import app` resolve when pytest is run from backend/ (AC-12).
