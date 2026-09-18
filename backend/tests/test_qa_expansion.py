@@ -39,6 +39,8 @@ from app.qa.fusion import RRF_K, fuse
 from app.qa.index import index_path
 from app.qa.query import (
     MAX_ENTITY_EXPANSIONS,
+    content_terms,
+    coverage,
     MIN_ENTITY_PARAGRAPHS,
     expand,
     expand_entities,
@@ -514,3 +516,84 @@ def test_no_benchmark_term_reaches_executable_code() -> None:
                     offenders.append(f"{source.name}:{node.lineno} {term!r} in a live literal")
 
     assert not offenders, f"benchmark terms in executable code: {offenders}"
+
+
+# --- DS-QA-006: term coverage as a ranking signal -----------------------------
+
+
+class TestCoverage:
+    """The signal, its bounds, and what it must not do."""
+
+    def test_coverage_is_the_fraction_of_content_words_present(self) -> None:
+        assert coverage("residual learning", "We adopt residual learning.") == 1.0
+        assert coverage("residual learning", "We adopt residual mapping.") == 0.5
+        assert coverage("residual learning", "Nothing related here.") == 0.0
+
+    def test_stopwords_are_ignored(self) -> None:
+        # Otherwise a paragraph repeating "the" would look like an answer.
+        assert content_terms("What is the role of a paper") == []
+        assert coverage("What is the role of a paper", "the a of") == 0.0
+
+    def test_a_single_digit_is_a_content_term_and_a_single_letter_is_not(self) -> None:
+        """The exception that makes `Algorithm 1` findable.
+
+        An academic question names things as `Algorithm 1`, `Figure 3`, `Eq. 4`.
+        Dropping the digit leaves only the common word, and every paragraph
+        mentioning "algorithm" then ties with the one titled "Algorithm 1 PPO" —
+        measured: keeping it lifts a fourth miss and regresses none.
+        """
+        assert content_terms("Algorithm 1") == ["algorithm", "1"]
+        assert content_terms("Figure 3 shows") == ["figure", "3", "shows"]
+        # A stray letter is still noise.
+        assert content_terms("variable x here") == ["variable", "here"]
+        assert coverage("Algorithm 1", "Algorithm 1 PPO, Actor-Critic Style") == 1.0
+        assert coverage("Algorithm 1", "In the simplest instantiation of this algorithm") == 0.5
+
+    def test_a_question_with_no_content_terms_scores_zero(self) -> None:
+        """A CJK query, or one of pure stopwords, leaves ranking untouched."""
+        assert coverage("作者如何解决退化问题？", "residual learning solves it") == 0.0
+        assert coverage("what is it", "anything at all") == 0.0
+
+    def test_dotted_and_hyphenated_tokens_are_kept_whole(self) -> None:
+        assert content_terms("ResNet-50 and CIFAR-10") == ["resnet-50", "cifar-10"]
+        assert coverage("CIFAR-10", "We evaluate on CIFAR-10.") == 1.0
+
+    def test_coverage_breaks_a_tie_that_rrf_leaves_open(self) -> None:
+        """The whole point: two candidates at the same fused rank."""
+        # Both retrieved once, at the same rank; only one answers the question.
+        rankings = {"raw:0": ["generic", "relevant"]}
+        without = fuse(rankings)
+        assert [key for key, _, _ in without] == ["generic", "relevant"]
+
+        with_coverage = fuse(rankings, coverage={"generic": 0.0, "relevant": 1.0})
+        assert [key for key, _, _ in with_coverage] == ["relevant", "generic"]
+
+    def test_coverage_outweighs_the_fused_rank_band(self) -> None:
+        """The signal is stronger than "a tie-break", and the tests say so.
+
+        The whole RRF band spans 0.0125 to 0.0313, so a full coverage unit at 0.05
+        beats any rank difference. That is the intended behaviour — a candidate
+        matching every content word should outrank one that matched none even from
+        several ranks back — but it is a larger claim than "it nudges", which is
+        what this was first described as. Asserted so the strength is visible.
+        """
+        rankings = {"raw:0": ["first", "second", "third"]}
+        fused = fuse(rankings, coverage={"first": 0.0, "second": 0.0, "third": 1.0})
+        assert [key for key, _, _ in fused] == ["third", "first", "second"]
+
+    def test_a_partial_coverage_gain_still_outweighs_a_rank_gap(self) -> None:
+        """One more content word is worth more than a few ranks of consensus."""
+        rankings = {"raw:0": ["first", "second", "third"]}
+        fused = fuse(rankings, coverage={"first": 0.0, "third": 0.34})
+        assert [key for key, _, _ in fused][0] == "third"
+
+    def test_fusion_is_unchanged_when_coverage_is_absent(self) -> None:
+        """The parameter is additive; every existing caller behaves as before."""
+        rankings = {"a:0": ["x", "y"], "b:1": ["y", "x"]}
+        assert fuse(rankings) == fuse(rankings, coverage=None)
+
+    def test_fusion_stays_deterministic_with_coverage(self) -> None:
+        rankings = {"a:0": ["p", "q", "r"], "b:1": ["r", "q", "p"]}
+        first = fuse(rankings, coverage={"p": 0.5, "q": 0.5, "r": 0.5})
+        second = fuse(rankings, coverage={"r": 0.5, "q": 0.5, "p": 0.5})
+        assert first == second

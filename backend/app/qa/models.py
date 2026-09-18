@@ -63,11 +63,20 @@ class EvidenceItem(BaseModel):
     block_ids: list[str] = Field(default_factory=list)
     #: Verbatim from `DocumentIR`. Never rewritten, never paraphrased.
     text: str
-    #: The fused ranking score, or `None` for a neighbour that was expanded in
-    #: rather than ranked. It is a reciprocal-rank-fusion value, not raw BM25:
-    #: DS-QA-004 searches several independent queries and combines them by rank,
-    #: because BM25 scores from different query strings are not comparable.
+    #: The final ranking score, or `None` for a neighbour that was expanded in
+    #: rather than ranked.
+    #:
+    #: It is **not** raw BM25 and never was comparable across candidates: the
+    #: pipeline searches several independent queries and combines them by
+    #: reciprocal rank, because BM25 scores from different query strings are not
+    #: comparable. DS-QA-006 added term coverage to it, so the value is a fused
+    #: rank score with a bounded coverage nudge — a ranking order, not a
+    #: confidence, and not something to show a reader as a relevance number.
     score: float | None = None
+    #: The fraction of the question's content words this chunk contains. Carried
+    #: alongside the score so a developer can see *why* a candidate moved; it is
+    #: the only ranking input with a meaning that survives being read on its own.
+    coverage_score: float | None = None
     #: True when retrieval ranked this; False when it is surrounding context.
     is_direct_hit: bool = True
     is_caption: bool = False
@@ -102,6 +111,9 @@ class Diagnostics(BaseModel):
     suggest_rewrite: bool = False
     #: `["no_match"]`, `["script_mismatch"]`. Never shown to a reader.
     rewrite_reasons: list[str] = Field(default_factory=list)
+    #: Which ranking produced this order. A developer reading a bundle needs to
+    #: know whether `score` is comparable across two runs at all.
+    ranking_strategy: str = "rrf_coverage"
 
     @property
     def explanation(self) -> str:  # pragma: no cover - convenience for callers

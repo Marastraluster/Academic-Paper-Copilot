@@ -39,7 +39,7 @@ from app.qa.models import (
     ExpansionApplied,
     Scope,
 )
-from app.qa.query import prepare
+from app.qa.query import coverage, prepare
 
 logger = get_logger(__name__)
 
@@ -93,7 +93,9 @@ def _scope_clause(scope: Scope) -> tuple[str, list]:
     raise RetrievalError("BAD_REQUEST", f"Unknown scope {scope.type!r}.")
 
 
-def _row_to_item(row: sqlite3.Row, *, score: float | None) -> EvidenceItem:
+def _row_to_item(
+    row: sqlite3.Row, *, score: float | None, coverage: float | None = None
+) -> EvidenceItem:
     pages = [int(p) for p in str(row["page_range"]).strip(",").split(",") if p]
     block_ids = [b for b in str(row["block_ids"]).split(",") if b]
     return EvidenceItem(
@@ -108,6 +110,7 @@ def _row_to_item(row: sqlite3.Row, *, score: float | None) -> EvidenceItem:
         block_ids=block_ids,
         text=row["text"],
         score=score,
+        coverage_score=coverage,
         is_direct_hit=score is not None,
         is_caption=row["kind"] == "caption",
     )
@@ -251,6 +254,7 @@ def retrieve(
         ],
         index_rebuilt=stats.rebuilt,
         query_variants=list(prepared.sources),
+        ranking_strategy="rrf_coverage",
     )
 
     if prepared.is_empty:
@@ -308,9 +312,22 @@ def retrieve(
                     best_rank[key] = min(best_rank.get(key, position), position)
                 candidates += len(rows)
 
-            fused = fuse(rankings)
+            # Term coverage against the *question*, added to the fused score.
+            # A CJK question has no content terms and scores 0.0 throughout, which
+            # leaves the fused order exactly as it was — the cross-language path is
+            # ranked by RRF and its rewritten variants, not by this.
+            coverage_of = (
+                {key: coverage(query, str(row["text"])) for key, row in rows_by_key.items()}
+                if not selection_scope
+                else None
+            )
+            fused = fuse(rankings, coverage=coverage_of)
             items = [
-                _row_to_item(rows_by_key[key], score=score)
+                _row_to_item(
+                    rows_by_key[key],
+                    score=score,
+                    coverage=coverage_of[key] if coverage_of else None,
+                )
                 for key, score, _contributors in fused[:top_k]
             ]
         finally:
