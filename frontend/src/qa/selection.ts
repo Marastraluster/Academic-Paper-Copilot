@@ -291,9 +291,15 @@ export function readDomSelection(selection: Selection | null): DomSelection {
   for (const rect of Array.from(range.getClientRects())) {
     if (rect.width <= 0 || rect.height <= 0) continue;
     // The fragment's own position identifies its page; a range spanning pages
-    // produces fragments on both, which is how cross-page is detected.
+    // produces fragments on both, which is how cross-page is detected. When the
+    // environment has no hit-testing, the range's own containers are the honest
+    // fallback — and jsdom, which has neither, is a real example of one that
+    // does not.
     const element = pageElementOf(range.startContainer) ?? pageElementOf(range.endContainer);
-    const probe = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const probe =
+      typeof document.elementFromPoint === "function"
+        ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+        : null;
     const container = pageElementOf(probe) ?? element;
     if (!container) continue;
     if (container.closest('[data-testid="viewer-translated"]')) translatedPane = true;

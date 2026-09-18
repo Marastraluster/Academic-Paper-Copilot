@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import type { IrParagraph } from "@/api/ir";
 import {
   MAX_SELECTED_PARAGRAPHS,
   matchParagraphs,
   normalizeText,
+  readDomSelection,
   textSupports,
   toPdfRects,
   type PdfRect,
@@ -169,6 +170,81 @@ describe("DS-QA-005 · the text validator", () => {
 
   it("rejects a short selection that does not appear at all", () => {
     expect(textSupports("quantum chromodynamics", "Residual learning reformulates it.")).toBe(false);
+  });
+});
+
+describe("DS-QA-005 · the pane guard", () => {
+  /** A page container inside a pane, with a selectable span. */
+  function pane(testId: string, pageNumber: number, text: string) {
+    const viewer = document.createElement("section");
+    viewer.dataset.testid = testId;
+    const container = document.createElement("div");
+    container.dataset.testid = "pdf-page-container";
+    container.dataset.pageNumber = String(pageNumber);
+    const span = document.createElement("span");
+    span.textContent = text;
+    container.append(span);
+    viewer.append(container);
+    document.body.append(viewer);
+    return span;
+  }
+
+  // jsdom has no layout, so a Range reports no client rects at all and the
+  // reader would see nothing selected. A plausible fragment is enough here: what
+  // this suite asks is *which pane* a selection is in, not where it is on the
+  // page, and the geometry is covered by the suites above.
+  const rects = Range.prototype.getClientRects;
+  beforeAll(() => {
+    Range.prototype.getClientRects = function getClientRects(this: Range) {
+      return [
+        {
+          x: 100, y: 100, left: 100, top: 100, width: 50, height: 12,
+          right: 150, bottom: 112, toJSON: () => ({}),
+        },
+      ] as unknown as DOMRectList;
+    };
+  });
+  afterAll(() => {
+    Range.prototype.getClientRects = rects;
+  });
+
+  afterEach(() => {
+    document.body.replaceChildren();
+    window.getSelection()?.removeAllRanges();
+  });
+
+  it("recognises a selection inside the original pane", () => {
+    const span = pane("viewer-original", 3, "the left pane text");
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const dom = readDomSelection(selection);
+
+    expect(dom.isCollapsed).toBe(false);
+    expect(dom.translatedPane).toBe(false);
+    expect(dom.byPage[0]?.page).toBe(3);
+  });
+
+  it("flags a selection inside the translated pane (AC-07)", () => {
+    // The translated PDF is re-laid-out: its geometry is not the source's, and
+    // there is no validated mapping between them. A selection here must never
+    // become source Selection QA.
+    const span = pane("viewer-translated", 3, "译文窗格中的文本");
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(readDomSelection(selection).translatedPane).toBe(true);
+  });
+
+  it("treats a collapsed selection as nothing selected (AC-06)", () => {
+    expect(readDomSelection(window.getSelection()).isCollapsed).toBe(true);
+    expect(readDomSelection(null).isCollapsed).toBe(true);
   });
 });
 

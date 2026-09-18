@@ -3,7 +3,7 @@
 - **Date:** 2026-09-18
 - **Agent:** DeepSeek (Claude Code CLI)
 - **Acceptance criteria:** `docs/acceptance/DS-QA-005.md` (Gemini, frozen before implementation,
-  with four `AC_CHANGE_REQUEST`s raised in review)
+  with five `AC_CHANGE_REQUEST`s — four before implementation, one after the final review)
 - **Baseline:** `79ed9ec` (the DS-QA-004 disposition)
 - **Verdict:** **A reader drags across source text and asks about exactly that text.** Mapping is
   geometric, page-aware, reading-order-correct, zoom-independent and two-column-safe; the
@@ -19,7 +19,7 @@ frontend/src/qa/useSelectionCapture.ts   the browser listeners, and when a selec
 frontend/src/qa/session.ts          capture, refresh, clear; the Selection request scope
 frontend/src/stores/workspace.ts    the IR and the selection, both bound to the document
 frontend/src/assistant/ScopeSelector.tsx  enabling, preview, and one sentence per refusal
-frontend/src/tests/selection-mapping.test.ts  24 tests, no browser
+frontend/src/tests/selection-mapping.test.ts  26 tests, no browser
 frontend/scripts/e2e-selection.mjs  the real-drag verification
 ```
 
@@ -42,10 +42,10 @@ place twice, in both directions (below).
 
 ```
 backend       807 passed
-frontend      146 passed   (112 before this task)
+frontend      149 passed   (112 before this task)
 typecheck     PASS
 build         exit 0
-bundle        306.98 kB initial (ceiling 350 kB) — +7.5 kB, no new dependency
+bundle        307.03 kB initial (ceiling 350 kB) — +7.6 kB, no new dependency
 real browser  48/48 against the real backend and the real provider in Edge
 ```
 
@@ -108,7 +108,7 @@ verified against the IR: **zero of 101 paragraphs is a heading**. **G** a valida
 usable, an all-failing selection is not. **H/I** Original and the original pane of Bilingual.
 **J** Translation mode disables it and offers the switch.
 
-## AC_CHANGE_REQUESTs, all four resolved before implementation
+## AC_CHANGE_REQUESTs
 
 1. **AC-09 named `/api/chat` or `/api/qa` and a `query` field.** Neither route exists; the
    endpoint is `POST /api/documents/{id}/answer` with `question` and a `profile_id`. The
@@ -120,6 +120,11 @@ usable, an all-failing selection is not. **H/I** Original and the original pane 
 4. **AC-12 required the cached IR to be "garbage collected"**, which JavaScript cannot assert.
    Restated as the release being observable: after a switch the store's IR is `null` and the
    previous paper's ids cannot be sent.
+
+5. **AC-12's abort-on-clear is narrowed** *(raised in the final review)*. A document switch and a mode change abort an in-flight
+   question; clearing the selection does not, because clicking elsewhere does not retract a
+   question already asked, and the turn's own document and scope binding is what prevents anything
+   stale being shown. Raised as a change request rather than done quietly.
 
 Also recorded rather than claimed as measured: the containment thresholds (0.35, 0.25, 80 pt²,
 40%) are Gemini's specified defaults. No sweep produced them.

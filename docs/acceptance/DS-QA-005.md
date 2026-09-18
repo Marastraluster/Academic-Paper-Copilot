@@ -71,6 +71,15 @@ mid-drag collapses the range.
 | **Resolution** | Restated as: after a document switch or close, the cached IR is released from the store and the selection state is empty, asserted directly. The in-flight request is aborted via `AbortController`, which the criterion already required and which is observable. |
 | **Not accepted** | Leaving it as written and marking it PASS on the strength of "nothing references it any more". |
 
+### AC_CHANGE_REQUEST 5 — clearing the selection must not abort a question already asked
+
+| | |
+|---|---|
+| **As written** | AC-12: *"When the user clears the selection, switches documents, or changes reader mode, the client must immediately abort the in-flight request."* |
+| **Problem** | Two of those three are right and one is not. A document switch and a mode change invalidate the question's premise, so aborting is correct and is implemented. **Clearing the selection does not.** The reader asked a question about a specific passage; clicking elsewhere afterwards does not retract the question, and the answer is being computed from the paragraphs they chose — which are frozen onto the turn and shown on its card. Aborting would discard an answer the user asked for, and the stale-state the criterion is guarding against does not exist: the turn carries its own document identity and its own scope label, so it can neither be shown against another paper nor relabelled with a scope it was not asked in. |
+| **Resolution** | The abort stays for document switch and mode change, and is dropped for clearing the selection. The property AC-12 was defending — that nothing stale is ever displayed — is preserved by the turn's own identity binding, which is asserted by existing tests. |
+| **Not accepted** | Aborting on clear to satisfy the sentence literally, which turns a click in the margin into a cancelled answer. |
+
 ### Note on the matching thresholds (§4.2), recorded rather than claimed as measured
 
 The containment and n-gram thresholds — token containment ≥ 0.35, character 3-gram Jaccard
