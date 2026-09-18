@@ -67,7 +67,7 @@ function prepareWorkdir() {
 }
 
 function startBackend(corsPort, { database, documentsDir }) {
-  return spawn(python, ["-m", "uvicorn", "app.main:app", "--port", String(BACKEND_PORT)], {
+  const child = spawn(python, ["-m", "uvicorn", "app.main:app", "--port", String(BACKEND_PORT)], {
     cwd: backendDir,
     env: {
       ...process.env, PYTHONIOENCODING: "utf-8", PYTHONPATH: backendDir,
@@ -76,6 +76,10 @@ function startBackend(corsPort, { database, documentsDir }) {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  child.on("exit", (code, signal) =>
+    console.log(`    [backend] exited code=${code} signal=${signal}`));
+  child.stderr.on("data", (chunk) => console.log(`    [backend] ${String(chunk).trimEnd()}`));
+  return child;
 }
 
 async function waitFor(url, timeoutMs = 60000) {
@@ -188,6 +192,16 @@ async function main() {
   // The API's own answer when a save fails: an error the UI reports as "could
   // not be saved" is a status code and a body somewhere, and guessing which is
   // how a real cause gets mistaken for a broken component.
+  page.on("request", (r) => {
+    if (r.url().includes("/annotations")) {
+      console.log(`    [req] ${r.method()} ${r.url().slice(-34)}`);
+    }
+  });
+  page.on("requestfailed", (r) => {
+    if (r.url().includes("/annotations")) {
+      console.log(`    [reqfail] ${r.url().slice(-34)} :: ${r.failure()?.errorText}`);
+    }
+  });
   page.on("response", async (r) => {
     if (!r.url().includes("/annotations")) return;
     let body = "";
@@ -265,6 +279,9 @@ async function main() {
     await page.click('[data-testid="assistant-tab-notes"]');
     await sleep(1500);
     const afterReload = await page.locator("li[data-testid^='note-']").count();
+    const trace = await page.evaluate(() => window.__notesTrace ?? []);
+    console.log("    --- trace since page load ---");
+    for (const e of trace) console.log(`      ${String(e.t).padStart(6)}ms ${e.stage} :: ${e.detail}`);
     const panelState = await page.evaluate(() => ({
       panel: document.querySelectorAll('[data-testid="notes-panel"]').length,
       none: document.querySelectorAll('[data-testid="notes-none"]').length,
@@ -318,8 +335,13 @@ async function main() {
 
     check("creating and editing notes made no provider call", providerCalls.length === 0,
       providerCalls.slice(0, 2).join(" | "));
-    check("no uncaught console errors during the run", consoleErrors.length === 0,
-      consoleErrors.slice(0, 2).join(" | "));
+    // The restart phase deliberately takes the backend down, so the browser
+    // logs a connection failure for it. That is the test's own doing, not the
+    // product's, and counting it would make the check unfalsifiable in the
+    // other direction.
+    const unexpected = consoleErrors.filter((text) => !/ERR_CONNECTION_/.test(text));
+    check("no uncaught console errors during the run", unexpected.length === 0,
+      unexpected.slice(0, 2).join(" | "));
   } finally {
     await browser.close();
     preview.kill();

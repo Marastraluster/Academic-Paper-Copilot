@@ -33,7 +33,9 @@ let activeListDocument: string | null = null;
 /** Load the open document's annotations, if they are not already loaded. */
 export async function loadAnnotations(): Promise<void> {
   const { document } = useWorkspaceStore.getState();
-  if (!document || document.documentId === null) return;
+  if (!document || document.documentId === null) {
+    return;
+  }
 
   const { documentId, sessionToken } = document;
 
@@ -42,7 +44,9 @@ export async function loadAnnotations(): Promise<void> {
   // document settles, and the effect re-runs, which is normal rather than a
   // reason to throw the first call away. Only a genuinely different document
   // supersedes an in-flight list.
-  if (activeList !== null && activeListDocument === documentId) return;
+  if (activeList !== null && activeListDocument === documentId) {
+    return;
+  }
   activeList?.abort();
   const controller = new AbortController();
   activeList = controller;
@@ -56,7 +60,9 @@ export async function loadAnnotations(): Promise<void> {
     // paper's content, and the token is re-minted whenever the same file is
     // re-registered. Comparing the token dropped a perfectly good list on exactly
     // the reopen this feature exists for, which the browser run caught.
-    if (useWorkspaceStore.getState().document?.documentId !== documentId) return;
+    if (useWorkspaceStore.getState().document?.documentId !== documentId) {
+      return;
+    }
     useWorkspaceStore.setState({
       annotations: payload.annotations,
       annotationsFor: documentId,

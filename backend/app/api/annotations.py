@@ -10,13 +10,15 @@ be addressed only through the document that happened to be open.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.annotations.service import resolve_annotation, summary
+from app.annotations.service import resolve_annotation, summary, summary_unresolved
 from app.annotations.store import AnnotationStore
+from app.document.persistence import read_ir
 from app.errors import error_response
 
 router = APIRouter(tags=["annotations"])
@@ -73,38 +75,72 @@ def _require_ir(request: Request, document_id: str):
 
 @router.get("/documents/{document_id}/annotations")
 async def list_annotations(request: Request, document_id: str) -> Any:
-    """Every annotation on this paper, each target resolved against the current IR.
+    """Every annotation on this paper, resolved if the document has been read.
 
-    Resolution happens here, on read, rather than being baked in at write time:
-    the target stores the anchor the user made and this asks where that anchor is
-    *now*. A target that resolved last week and not today is a fact about the
-    extraction, and reading is when the reader needs to know it.
+    **This route does not extract the document, and that is the whole point.**
+    It used to call `_require_ir`, which runs the full ONNX extraction on first
+    read — fourteen seconds for a real paper. Reopening a PDF creates a new
+    document record, so every reopen paid that cost before a single note could be
+    listed, and the reader saw an empty panel for as long as it took. The list
+    needs the *fingerprint*, and a fingerprint is a file hash.
+
+    Resolution is what needs the IR, and it is genuinely optional here: a target
+    carries the page and rectangles it was made with, which belong to the
+    immutable PDF and stay true whether or not the current extraction has been
+    computed. When there is no IR the targets are reported `UNRESOLVED` — the
+    honest answer — and the list still renders. The brief asks for exactly this
+    separation: a note's existence does not depend on its resolution.
     """
     store = _store(request)
     if store is None:
         return error_response("UNAVAILABLE", "Annotations are not available.", 503)
 
-    result, failure = await _require_ir(request, document_id)
-    if failure is not None:
-        return failure
-    ir, _summary = result
+    document_store = request.app.state.document_store
+    record = document_store.get_document(document_id)
+    if record is None:
+        return error_response("NOT_FOUND", "No such document.", 404)
 
-    # Listed by **fingerprint**, not by the document row.
-    #
-    # Document ids are `uuid4().hex`, so reopening the same PDF — even from the
-    # same file on disk — produces a new row and a new id. Listing by that id
-    # meant a reload showed an empty panel while the rows sat in the database,
-    # which is what this line was changed from after the browser test found it.
-    # The content hash is the boundary the user's writing belongs to.
-    annotations = store.list_for_content(ir.content_hash)
+    directory = document_store.document_dir(document_id)
+    ir = read_ir(directory)  # a file read; never an extraction
+
+    content_hash = ir.content_hash if ir is not None else _fingerprint_of(directory)
+    if content_hash is None:
+        return error_response(
+            "NOT_FOUND", "The source file is no longer available.", 404
+        )
+
+    # Listed by **fingerprint**, not by the document row. Document ids are
+    # `uuid4().hex`, so reopening the same PDF produces a new row; the content
+    # hash is the boundary the user's writing belongs to.
+    annotations = store.list_for_content(content_hash)
     return {
         "document_id": document_id,
-        "content_hash": ir.content_hash,
+        "content_hash": content_hash,
+        "resolved": ir is not None,
         "annotations": [
             summary(annotation, resolve_annotation(ir, annotation, store=store))
+            if ir is not None
+            else summary_unresolved(annotation)
             for annotation in annotations
         ],
     }
+
+
+def _fingerprint_of(directory) -> str | None:
+    """The source PDF's content hash, without reading its IR.
+
+    The document's own identity, available in the time it takes to hash a file —
+    which is what lets the notes list answer before the paper has been read.
+    """
+    from app.document.extract import _fingerprint
+
+    source = Path(directory) / "source.pdf"
+    if not source.is_file():
+        return None
+    try:
+        return str(_fingerprint(source)[0])
+    except OSError:
+        return None
 
 
 @router.post("/documents/{document_id}/annotations", status_code=201)

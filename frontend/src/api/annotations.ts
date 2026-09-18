@@ -9,7 +9,18 @@ import { apiFetch, apiJson } from "@/api/client";
 import type { Bbox } from "@/api/ir";
 
 /** What became of a target when it was looked for in the current extraction. */
-export type ResolutionState = "EXACT" | "REATTACHED" | "AMBIGUOUS" | "ORPHANED";
+export type ResolutionState =
+  | "EXACT"
+  | "REATTACHED"
+  | "AMBIGUOUS"
+  | "ORPHANED"
+  /**
+   * The document has not been read yet, so where this target sits *now* is not
+   * known. The annotation itself is fully known — page, rectangles and quote come
+   * from the immutable PDF — and it is listed; only the current paragraph
+   * association is outstanding.
+   */
+  | "UNRESOLVED";
 
 export interface ResolvedTarget {
   order: number;

@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
  */
 const STATE_TEXT: Record<ResolutionState, string | null> = {
   EXACT: null,
+  UNRESOLVED: null,
   REATTACHED: "位置已根据更新后的解析重新定位。",
   AMBIGUOUS: "文中找到多处匹配，需要你确认。",
   ORPHANED: "未能在此版本中定位到原位置。",

@@ -72,6 +72,44 @@ def resolve_annotation(
     return tuple(resolved)
 
 
+def summary_unresolved(annotation: Annotation) -> dict:
+    """The same shape as `summary`, from what is *stored* rather than resolved.
+
+    Used when the document's extraction is not available yet. Nothing here is a
+    guess: the page, the rectangles and the quote were recorded when the user made
+    the annotation, they belong to the immutable PDF, and they are still true.
+
+    What is absent is the EXACT/REATTACHED/AMBIGUOUS/ORPHANED verdict, which is a
+    statement about the current extraction and cannot be made without one. It is
+    reported as `UNRESOLVED` rather than omitted, so the reader is told what the
+    system does not yet know instead of being shown a confident default.
+    """
+    return {
+        "id": annotation.id,
+        "kind": annotation.kind,
+        "color": annotation.color,
+        "quote": annotation.quote,
+        "comment": annotation.comment,
+        "created_at": annotation.created_at,
+        "updated_at": annotation.updated_at,
+        "targets": [
+            {
+                "order": target.target_order,
+                "page_number": target.page_number,
+                "rects": [list(r) for r in target.rects],
+                "quote": target.exact_quote,
+                "state": "UNRESOLVED",
+                "paragraph_id": None,
+                "resolved_paragraph_id": None,
+                "detail": "the document has not been read yet",
+                "showable": bool(target.rects),
+                "amenable_to_jump": target.page_number >= 1,
+            }
+            for target in annotation.targets
+        ],
+    }
+
+
 def summary(annotation: Annotation, resolved: tuple[ResolvedTarget, ...]) -> dict:
     """What the reader needs to draw this annotation, and nothing else.
 
