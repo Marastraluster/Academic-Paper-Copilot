@@ -184,10 +184,7 @@ async function main() {
   const browser = await chromium.launch({ channel: "msedge" });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const consoleErrors = [];
-  page.on("console", (m) => {
-    if (m.type() === "error") consoleErrors.push(m.text());
-    else if (m.text().startsWith("[notes]")) console.log(`    ${m.text()}`);
-  });
+  page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
   page.on("pageerror", (e) => consoleErrors.push(String(e)));
   // The API's own answer when a save fails: an error the UI reports as "could
   // not be saved" is a status code and a body somewhere, and guessing which is
@@ -279,9 +276,6 @@ async function main() {
     await page.click('[data-testid="assistant-tab-notes"]');
     await sleep(1500);
     const afterReload = await page.locator("li[data-testid^='note-']").count();
-    const trace = await page.evaluate(() => window.__notesTrace ?? []);
-    console.log("    --- trace since page load ---");
-    for (const e of trace) console.log(`      ${String(e.t).padStart(6)}ms ${e.stage} :: ${e.detail}`);
     const panelState = await page.evaluate(() => ({
       panel: document.querySelectorAll('[data-testid="notes-panel"]').length,
       none: document.querySelectorAll('[data-testid="notes-none"]').length,
