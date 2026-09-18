@@ -142,6 +142,15 @@ export function PdfWorkspace({
   }, []);
 
   useEffect(() => {
+    // A highlight belongs to the document it was measured against, so a new
+    // document drops it. This clearing lives *here* rather than in its own
+    // `[active]` effect because of the order effects run on mount: a separate
+    // one declared after the jump effect would run after it and wipe the
+    // highlight a citation click had just asked for — which is exactly what
+    // happened when a citation switched the reader back from translation mode
+    // and remounted this pane.
+    setHighlight(null);
+
     if (active === null) {
       releaseDocument();
       resetToEmpty();
@@ -269,11 +278,6 @@ export function PdfWorkspace({
     const timer = window.setTimeout(() => setHighlight(null), HIGHLIGHT_FADE_MS);
     return () => window.clearTimeout(timer);
   }, [jump, allowHighlight, rotation]);
-
-  // A new document has no highlights: they belonged to the previous paper.
-  useEffect(() => {
-    setHighlight(null);
-  }, [active]);
 
   const openPicker = () => inputRef.current?.click();
   const showPicker = !controlled || onFileChosen !== undefined;

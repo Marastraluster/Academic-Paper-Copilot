@@ -71,7 +71,7 @@ export function Composer() {
               ? documentState === "none"
                 ? "请先打开 PDF 论文…"
                 : "正在把文档注册到后端…"
-              : "Ask about paper…"
+              : "输入问题，回车发送…"
           }
           className="max-h-28 min-h-8 flex-1 resize-none rounded-md border bg-background px-2 py-1.5 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-60"
         />

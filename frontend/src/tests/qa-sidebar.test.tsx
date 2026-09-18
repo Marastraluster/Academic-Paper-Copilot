@@ -643,6 +643,14 @@ describe("DS-QA-003 · citation jumping", () => {
     // A source page number and a source box mean nothing on a re-laid-out PDF.
     expect(useWorkspaceStore.getState().readerMode).toBe("original");
     expect(useWorkspaceStore.getState().notice).toContain("第 3 页");
+
+    // The original pane was unmounted while the translation was showing, so this
+    // is a *remount*. The highlight has to survive it: an effect that clears the
+    // mark on a new document runs after the jump effect on mount, and a
+    // separate one declared later wiped the mark the click had just asked for.
+    await waitFor(() =>
+      expect(screen.getByTestId("pdf-highlight-box")).toBeInTheDocument(),
+    );
   });
 
   it("moves only the original pane in bilingual mode (AC-P0-17)", async () => {

@@ -163,7 +163,7 @@ Before specifying criteria, Gemini audits the brief against the repository archi
   When a document is loaded locally but backend registration is in flight (`document.registration === "pending"` or `document.documentId === null`):
   - `ScopeSelector`, `QuickActions`, and `Composer` remain disabled.
   - A subtle status banner displays: `"正在把文档注册到后端…"` (AC_CHANGE_REQUEST 2 — registration is an upload; indexing happens lazily on the first question and is not claimed here).
-  - When registration fails (`document.registration === "failed"`): controls remain disabled and an error message with retry affordance is displayed: `"文档索引建立失败，问答服务暂不可用"`.
+  - When registration fails (`document.registration === "failed"`): controls remain disabled and an error message is displayed: `"文档注册失败"` with `"问答服务暂不可用。请重新打开该论文，或确认后端服务正在运行。"` (AC_CHANGE_REQUEST 2 — the same correction as the pending banner: nothing was being indexed, so nothing failed to index).
 
 - **AC-P0-03: Document Ready State & Session Binding.**
   When `document.registration === "ready"` and `document.documentId !== null`:
