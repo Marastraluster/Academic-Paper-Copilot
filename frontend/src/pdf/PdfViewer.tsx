@@ -20,6 +20,10 @@ interface PdfViewerProps {
   onCurrentPageChange: (page: number) => void;
   onContainerWidthChange: (width: number) => void;
   viewerRef: React.MutableRefObject<PdfViewerHandle | null>;
+  /** The page a citation is marking, or `null` for none. */
+  highlightPage?: number | null;
+  /** Source-PDF boxes in points, drawn on `highlightPage` only. */
+  highlightBoxes?: number[][];
 }
 
 export interface PdfViewerHandle {
@@ -42,6 +46,8 @@ export function PdfViewer({
   onCurrentPageChange,
   onContainerWidthChange,
   viewerRef,
+  highlightPage = null,
+  highlightBoxes = [],
 }: PdfViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -180,6 +186,7 @@ export function PdfViewer({
             width={width}
             height={height}
             shouldRender={visiblePages.has(page)}
+            highlightBoxes={page === highlightPage ? highlightBoxes : []}
             containerRef={(element) => {
               if (element) pageRefs.current.set(page, element);
               else pageRefs.current.delete(page);

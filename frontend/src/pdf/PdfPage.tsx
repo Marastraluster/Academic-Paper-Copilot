@@ -15,6 +15,15 @@ interface PdfPageProps {
   /** False when the page is far from the viewport; the canvas is released. */
   shouldRender: boolean;
   /**
+   * Source-PDF boxes to mark on this page, in points, top-left origin.
+   *
+   * Scaled by the same `scale` the page was rendered at, which is the whole
+   * transform: the `DocumentIR` measures from the top-left in points, and so does
+   * a PDF.js viewport at rotation 0. Rotated pages are filtered out before they
+   * reach here rather than being transformed approximately.
+   */
+  highlightBoxes?: number[][];
+  /**
    * The page's own element, handed up so the viewer can observe it directly.
    * A wrapper element would leave the observer watching a node with no page
    * number on it — which silently rendered nothing at all.
@@ -39,6 +48,7 @@ export function PdfPage({
   width,
   height,
   shouldRender,
+  highlightBoxes = [],
   containerRef,
 }: PdfPageProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -143,6 +153,27 @@ export function PdfPage({
             aria-label={`Page ${pageNumber}`}
           />
           <div ref={textLayerRef} className="textLayer" data-testid="pdf-text-layer" />
+          {highlightBoxes.length > 0 && (
+            <div
+              data-testid="pdf-highlight-layer"
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0"
+            >
+              {highlightBoxes.map((box, index) => (
+                <span
+                  key={index}
+                  data-testid="pdf-highlight-box"
+                  className="absolute rounded-sm border border-primary/40 bg-primary/15 transition-opacity duration-500"
+                  style={{
+                    left: box[0]! * scale,
+                    top: box[1]! * scale,
+                    width: Math.max((box[2]! - box[0]!) * scale, 1),
+                    height: Math.max((box[3]! - box[1]!) * scale, 1),
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </>
       )}
       {!shouldRender && (

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Languages } from "lucide-react";
 
 import { PdfWorkspace, type PdfSource } from "@/pdf/PdfWorkspace";
+import { JumpNotice } from "@/qa/JumpNotice";
 import {
   selectEffectiveMode,
   selectActiveTranslation,
@@ -28,6 +29,8 @@ export function ReaderWorkspace() {
   const document = useWorkspaceStore((s) => s.document);
   const mode = useWorkspaceStore(selectEffectiveMode);
   const translation = useWorkspaceStore(selectActiveTranslation);
+  const setActivePage = useWorkspaceStore((s) => s.setActivePage);
+  const jumpRequest = useWorkspaceStore((s) => s.jumpRequest);
 
   const showOriginal = mode === "original" || mode === "bilingual";
   const showTranslated = mode === "translation" || mode === "bilingual";
@@ -54,6 +57,7 @@ export function ReaderWorkspace() {
       className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden bg-workspace p-2"
     >
       <TranslationNotice />
+      <JumpNotice />
 
       <div className="flex min-h-0 min-w-0 flex-1 gap-2">
         {showOriginal && (
@@ -62,6 +66,12 @@ export function ReaderWorkspace() {
             label="原文 PDF"
             source={originalSource}
             onFileChosen={openDocument}
+            onCurrentPageChange={setActivePage}
+            // The citation's page and boxes describe the *source* document, so
+            // they are applied here and nowhere else. In bilingual mode the
+            // translated pane is left exactly where the reader left it.
+            jump={jumpRequest}
+            allowHighlight
           />
         )}
         {showTranslated && (

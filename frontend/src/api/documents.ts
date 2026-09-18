@@ -63,6 +63,34 @@ export async function fetchTranslatedPdf(
   });
 }
 
+/** One entry of `GET /api/documents/{id}/sections`. */
+export interface SectionSummary {
+  id: string;
+  title: string;
+  /** `null` when the heading carries no numbering and no reliable signal. */
+  level: number | null;
+  /** 1-based page the section starts on. */
+  page_number: number;
+  is_references: boolean;
+}
+
+/**
+ * The document outline, for Section-scoped questions.
+ *
+ * Resolving the current section from this rather than by re-parsing headings in
+ * the browser is the point: the outline already exists in the `DocumentIR`, and a
+ * second detector in the frontend would be a second answer to a settled question.
+ */
+export async function listSections(
+  documentId: string,
+  { signal }: UploadOptions = {},
+): Promise<SectionSummary[]> {
+  return apiJson<SectionSummary[]>(
+    `/api/documents/${encodeURIComponent(documentId)}/sections`,
+    { signal },
+  );
+}
+
 // The dual (interleaved, 2N-page) artifact is deliberately absent here. It is an
 // export-only download, so ExportMenu links straight to it rather than streaming
 // it through a blob that would then need an owner and a revoke.

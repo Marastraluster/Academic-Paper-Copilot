@@ -23,6 +23,7 @@ import {
   subscribeToTask,
   type TaskOutcome,
 } from "@/api/translation";
+import { loadProfiles, loadSections, teardownQa } from "@/qa/session";
 import {
   nextSessionToken,
   useWorkspaceStore,
@@ -131,6 +132,7 @@ export function teardownTranslation(): void {
 export function openDocument(file: File): void {
   // A new document invalidates everything the previous one was doing.
   teardownTranslation();
+  teardownQa();
   activeUpload?.abort();
 
   const sessionToken = nextSessionToken();
@@ -173,6 +175,14 @@ export function openDocument(file: File): void {
         },
         engine: { state: "ready", label: "本地服务" },
       });
+
+      // The document now has a backend identity — which is what Section scope
+      // and a question both need. Fetched here rather than when the sidebar
+      // opens, so opening a paper prepares everything a question needs without a
+      // round trip at the moment the user asks. Neither failure is fatal: one
+      // disables a single scope, the other disables asking and says so.
+      void loadSections();
+      void loadProfiles();
     } catch (cause) {
       if (isAbortError(cause)) return;
       if (!isCurrentSession(sessionToken)) return;
@@ -196,6 +206,7 @@ export function openDocument(file: File): void {
 /** Close the open document. */
 export function closeDocument(): void {
   teardownTranslation();
+  teardownQa();
   activeUpload?.abort();
   activeUpload = null;
   useWorkspaceStore.setState({

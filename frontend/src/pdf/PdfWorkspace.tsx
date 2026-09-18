@@ -47,7 +47,22 @@ interface PdfWorkspaceProps {
   emptyState?: React.ReactNode;
   /** Reports what was loaded, so a caller can compare page counts. */
   onDocumentLoaded?: (info: { name: string; pageCount: number }) => void;
+  /** Reports the page being read, 1-based, so the app can scope a question to it. */
+  onCurrentPageChange?: (page: number) => void;
+  /**
+   * A citation asking to be shown.
+   *
+   * `bboxes` are source-PDF points. They are drawn only when `allowHighlight` is
+   * set and the page is unrotated: a highlight in the wrong place points the
+   * reader at text that does not support the claim, which is worse than no
+   * highlight at all.
+   */
+  jump?: { pageNumber: number; bboxes: number[][]; nonce: number } | null;
+  allowHighlight?: boolean;
 }
+
+/** How long a citation's highlight stays before it fades. */
+const HIGHLIGHT_FADE_MS = 4000;
 
 const DEFAULT_PAGE_SIZE: PageSize = { width: 595, height: 842 };
 
@@ -68,12 +83,21 @@ export function PdfWorkspace({
   onFileChosen,
   emptyState,
   onDocumentLoaded,
+  onCurrentPageChange,
+  jump,
+  allowHighlight = false,
 }: PdfWorkspaceProps) {
   const [status, setStatus] = useState<ViewerStatus>("empty");
   const [error, setError] = useState<ViewerError | null>(null);
   const [documentName, setDocumentName] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+  /** The first page's rotation; source boxes are only meaningful at 0. */
+  const [rotation, setRotation] = useState(0);
+  const [highlight, setHighlight] = useState<{
+    page: number;
+    bboxes: number[][];
+  } | null>(null);
   const [zoom, setZoom] = useState<ZoomMode>({ kind: "fit-width" });
   const [baseSize, setBaseSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -162,6 +186,7 @@ export function PdfWorkspace({
         const viewport = firstPage.getViewport({ scale: 1 });
 
         setBaseSize({ width: viewport.width, height: viewport.height });
+        setRotation(viewport.rotation);
         setPageCount(proxy.numPages);
         // A different paper has different dimensions; carrying a zoom ratio
         // across documents produces broken layouts.
@@ -214,6 +239,41 @@ export function PdfWorkspace({
     setCurrentPage(page);
     viewerRef.current?.scrollToPage(page);
   };
+
+  /** Report upward as well as inward: the app scopes questions by this page. */
+  const handleCurrentPageChange = useCallback(
+    (page: number) => {
+      setCurrentPage(page);
+      onCurrentPageChange?.(page);
+    },
+    [onCurrentPageChange],
+  );
+
+  // --- citation jump --------------------------------------------------------
+  useEffect(() => {
+    if (!jump) return;
+
+    setCurrentPage(jump.pageNumber);
+    viewerRef.current?.scrollToPage(jump.pageNumber);
+
+    // The highlight is drawn only when the geometry it came from is the geometry
+    // on screen. A rotated page has a viewport the source points were not
+    // measured against, so the box is dropped rather than guessed at — the jump
+    // and the citation's excerpt still tell the reader where to look.
+    if (!allowHighlight || rotation !== 0 || jump.bboxes.length === 0) {
+      setHighlight(null);
+      return;
+    }
+
+    setHighlight({ page: jump.pageNumber, bboxes: jump.bboxes });
+    const timer = window.setTimeout(() => setHighlight(null), HIGHLIGHT_FADE_MS);
+    return () => window.clearTimeout(timer);
+  }, [jump, allowHighlight, rotation]);
+
+  // A new document has no highlights: they belonged to the previous paper.
+  useEffect(() => {
+    setHighlight(null);
+  }, [active]);
 
   const openPicker = () => inputRef.current?.click();
   const showPicker = !controlled || onFileChosen !== undefined;
@@ -303,8 +363,10 @@ export function PdfWorkspace({
           scale={effectiveScale}
           baseSize={baseSize}
           viewerRef={viewerRef}
-          onCurrentPageChange={setCurrentPage}
+          onCurrentPageChange={handleCurrentPageChange}
           onContainerWidthChange={setContainerWidth}
+          highlightPage={highlight?.page ?? null}
+          highlightBoxes={highlight?.bboxes ?? []}
         />
       )}
 

@@ -71,3 +71,46 @@ export function seedTranslatedDocument(
   const seeded = seedDocument(document);
   return { document: seeded, translation: seedTranslation(translation) };
 }
+
+/* ------------------------------------------------------------------ *
+ * Paper QA (DS-QA-003)
+ * ------------------------------------------------------------------ */
+
+export const TEST_PROFILE_ID = "prof_qa";
+
+/**
+ * A provider profile, so the composer is usable.
+ *
+ * Paper QA cannot ask anything without one, and "no provider configured" is a
+ * distinct state from "no document" — a test that forgets this measures the
+ * wrong disabled state.
+ */
+export function seedQaProvider(id: string = TEST_PROFILE_ID): void {
+  useWorkspaceStore.getState().setProfiles([
+    {
+      id,
+      name: "Deepseek",
+      base_url: "http://127.0.0.1:9/v1",
+      model: "deepseek-flash",
+      protocol: "auto",
+      has_key: true,
+      api_key_masked: "sk-••••••••test",
+    },
+  ]);
+}
+
+/** A document outline, so Section scope has a real identity. */
+export function seedQaSections(): void {
+  useWorkspaceStore.getState().setSections([
+    { id: "sec_1", title: "1. Introduction", level: 1, pageNumber: 1, isReferences: false },
+    { id: "sec_2", title: "2. Method", level: 1, pageNumber: 3, isReferences: false },
+    { id: "sec_3", title: "3. Results", level: 1, pageNumber: 7, isReferences: false },
+  ]);
+}
+
+/** Everything needed to ask a question: a registered paper and a provider. */
+export function seedQaReady(): OpenDocument {
+  const document = seedDocument();
+  seedQaProvider();
+  return document;
+}

@@ -47,6 +47,9 @@ function fakeDocument(pageCount = 3) {
       getViewport: ({ scale }: { scale: number }) => ({
         width: 600 * scale,
         height: 800 * scale,
+        // Source bounding boxes are only drawn on an unrotated page, so the
+        // mock reports what a real unrotated viewport reports.
+        rotation: 0,
       }),
       render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
       streamTextContent: () => ({}),

@@ -1,17 +1,90 @@
 import { create } from "zustand";
 
+import type { ProviderProfile } from "@/api/profiles";
+import type { AnswerDiagnostics } from "@/api/qa";
+import type { Citation } from "@/qa/parse";
 import type { UserFacingError } from "@/translation/errors";
 
 /** AC-04: the three reader modes. */
 export type ReaderMode = "original" | "bilingual" | "translation";
 
-/** AC-06: assistant context scope. */
-export type AssistantScope = "selection" | "page" | "section" | "document";
+/* ------------------------------------------------------------------ *
+ * Paper QA (DS-QA-003)
+ * ------------------------------------------------------------------ */
 
-export interface ChatMessage {
+/**
+ * The scopes the backend accepts, in its own vocabulary.
+ *
+ * The UI used to say `"document"` where the API says `"whole_paper"`, and the
+ * two must not be mixed: `Scope` is `extra="forbid"`, so the wrong word is a 422
+ * rather than a silently different search.
+ */
+export type QaScopeType = "whole_paper" | "page" | "section" | "selection";
+
+/** A section as `GET /api/documents/{id}/sections` returns it. */
+export interface QaSection {
   id: string;
-  role: "user" | "assistant";
-  content: string;
+  title: string;
+  level: number | null;
+  /** 1-based page the section starts on. */
+  pageNumber: number;
+  isReferences: boolean;
+}
+
+/**
+ * The two axes, kept apart.
+ *
+ * `grounded` is the backend's semantic answer and is always a success — including
+ * `insufficient_evidence`, which is the system correctly declining to answer.
+ * `error` is a transport or provider failure, which is a different thing that
+ * happens to also produce no answer. Collapsing them would tell a user the paper
+ * does not answer their question when the provider was simply unreachable.
+ */
+export type QaResult =
+  | { state: "pending" }
+  | {
+      state: "grounded";
+      status: "answered" | "partial" | "insufficient_evidence";
+      answer: string;
+      citations: Citation[];
+      unansweredAspects: string[];
+      rationale: string | null;
+      diagnostics: AnswerDiagnostics | null;
+    }
+  /** A status this build does not recognise. Never rendered as an answer. */
+  | { state: "unknown_status"; status: string; answer: string; citations: Citation[] }
+  /** The body was not an answer at all. */
+  | { state: "malformed" }
+  | { state: "error"; error: UserFacingError };
+
+/**
+ * One asked question and whatever came back.
+ *
+ * Every turn carries the document it belongs to. History is a *presentation*
+ * convenience — each request is a separate single-turn call and none of this is
+ * ever sent back as context — but a turn still has to know which paper it is
+ * about, or switching documents would show paper A's answer under paper B.
+ */
+export interface QaTurn {
+  id: string;
+  question: string;
+  scopeType: QaScopeType;
+  /** What the scope was when the question was asked, for display. Frozen. */
+  scopeLabel: string;
+  profileId: string;
+  documentId: string;
+  sessionToken: string;
+  result: QaResult;
+}
+
+/** A request for the original viewer to move, and to mark the cited region. */
+export interface JumpRequest {
+  /** 1-based, exactly as `ResolvedCitation.page_number` gives it. */
+  pageNumber: number;
+  /** Source-PDF boxes in points. Never applied to the translated pane. */
+  bboxes: number[][];
+  /** Bumped per request so an identical jump repeated still fires. */
+  nonce: number;
 }
 
 export type EngineState = "offline" | "connecting" | "ready" | "error";
@@ -25,7 +98,7 @@ export interface OpenDocument {
    *
    * A new token is minted every time a file is opened, so a late response from a
    * previous opening can be recognised and dropped even when it concerns the
-   * same file — and, more importantly, before a `documentId` exists at all.
+   * same file — and, before a `documentId` exists at all.
    */
   sessionToken: string;
   name: string;
@@ -91,49 +164,122 @@ interface WorkspaceState {
   readerMode: ReaderMode;
   setReaderMode: (mode: ReaderMode) => void;
 
+  /**
+   * The page the *original* viewer is showing, 1-based.
+   *
+   * Reported by the original pane and used for Page scope and its label. It is
+   * never estimated from scroll position here: the viewer already knows which
+   * page it is on, and a second estimate would be a second source of truth.
+   */
+  activePage: number;
+  setActivePage: (page: number) => void;
+
+  /** A pending request for the original viewer to move and highlight. */
+  jumpRequest: JumpRequest | null;
+  requestJump: (pageNumber: number, bboxes: number[][]) => void;
+
+  /**
+   * A transient message about what just happened — currently only the "switched
+   * to the original to show this citation" notice. Dismissed by the reader.
+   */
+  notice: string | null;
+  setNotice: (notice: string | null) => void;
+
+  /** The page the last jump landed on, so its highlight can fade on a page move. */
+  clearJump: () => void;
+
+  // ---- Paper QA ----
+  scope: QaScopeType;
+  setScope: (scope: QaScopeType) => void;
+  question: string;
+  setQuestion: (value: string) => void;
+  /** True while a question is in flight. One at a time. */
+  submitting: boolean;
+  turns: QaTurn[];
+
+  /**
+   * Sections for the open document.
+   *
+   * `null` means "not resolved yet" — distinct from `[]`, which means the
+   * backend has no section structure for this paper. Section scope is offered
+   * only in the second case being false.
+   */
+  sections: QaSection[] | null;
+  setSections: (sections: QaSection[] | null) => void;
+
+  /**
+   * Provider profiles, loaded once per document rather than once per component.
+   *
+   * Four sidebar components need to know whether a provider exists; four copies
+   * of that state would mean four requests and four chances to disagree.
+   */
+  profiles: ProviderProfile[] | null;
+  profilesError: string | null;
+  profileId: string;
+  setProfiles: (profiles: ProviderProfile[] | null, error?: string | null) => void;
+  setProfileId: (id: string) => void;
+
   // ---- Sidebar (AC-05) ----
   sidebarOpen: boolean;
   toggleSidebar: () => void;
-
-  // ---- Assistant (AC-06) ----
-  scope: AssistantScope;
-  setScope: (scope: AssistantScope) => void;
-  messages: ChatMessage[];
-  composerValue: string;
-  setComposerValue: (value: string) => void;
-  /** AC-18: blank / whitespace-only submissions are ignored. */
-  submitComposer: () => void;
-  runQuickAction: (label: string) => void;
 
   // ---- Status bar (AC-08) ----
   engine: { state: EngineState; label: string };
 }
 
-/** AC-06: the six required academic quick actions. */
-export const QUICK_ACTIONS = [
-  "总结本页",
-  "解释选中内容",
-  "解释公式",
-  "总结方法",
-  "提取创新点",
-  "总结实验结果",
-] as const;
+/** AC-P1-04: the academic quick actions, wired to real questions and scopes. */
+export const QUICK_ACTIONS: ReadonlyArray<{
+  label: string;
+  /** `null` means "whatever scope is currently selected". */
+  scope: QaScopeType | null;
+  question: string;
+  /** False for actions whose capability does not exist yet. */
+  enabled: boolean;
+}> = [
+  {
+    label: "总结本页",
+    scope: "page",
+    question: "请总结本页的核心内容与关键结论。",
+    enabled: true,
+  },
+  {
+    // DS-QA-003 §Decision D: there is no selection → paragraph mapping, so this
+    // is disabled rather than answering about something the user did not select.
+    label: "解释选中内容",
+    scope: "selection",
+    question: "请解释选中内容的含义。",
+    enabled: false,
+  },
+  {
+    label: "解释公式",
+    scope: null,
+    question: "请解释此处的数学公式及各变量的物理含义。",
+    enabled: true,
+  },
+  {
+    label: "总结方法",
+    scope: "whole_paper",
+    question: "请详细总结本文提出的方法、模型架构与核心算法。",
+    enabled: true,
+  },
+  {
+    label: "提取创新点",
+    scope: "whole_paper",
+    question: "本文的主要创新点与核心贡献是什么？",
+    enabled: true,
+  },
+  {
+    label: "总结实验结果",
+    scope: "whole_paper",
+    question: "请总结本文的实验设置、基线对比及主要实验结果。",
+    enabled: true,
+  },
+];
 
-export type QuickAction = (typeof QUICK_ACTIONS)[number];
-
-/**
- * DS-FE-001 was a shell task with no backend. DS-FE-003 wires the real one, so
- * replies must still say plainly that Paper QA is not built — an assistant that
- * invents a plausible answer about a real paper would be far worse than one that
- * admits it cannot yet read.
- */
-const NO_BACKEND_NOTICE =
-  "论文问答（Paper QA）尚未实现（Phase 8）。此回复不是论文内容。";
-
-let messageSeq = 0;
-const nextMessageId = (): string => {
-  messageSeq += 1;
-  return `msg-${messageSeq}`;
+let turnSeq = 0;
+export const nextTurnId = (): string => {
+  turnSeq += 1;
+  return `qa-${turnSeq}`;
 };
 
 let sessionSeq = 0;
@@ -143,63 +289,81 @@ export function nextSessionToken(): string {
   return `open-${sessionSeq}`;
 }
 
-const INITIAL_MESSAGES: ChatMessage[] = [
-  {
-    id: nextMessageId(),
-    role: "assistant",
-    content: "已就绪。可以询问这篇论文，或使用上方的快捷操作。",
-  },
-];
+let jumpSeq = 0;
 
-export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
+export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   document: null,
   translation: null,
 
   // AC-04 / DS-FE-003 §14: nothing is translated yet, so the only mode that can
-  // honestly be shown is the original. Bilingual is no longer the default — it
-  // became a promise the app could not keep once the panels stopped being
-  // placeholders.
+  // honestly be shown is the original.
   readerMode: "original",
   setReaderMode: (mode) => set({ readerMode: mode }),
+
+  activePage: 1,
+  setActivePage: (page) => set({ activePage: page }),
+
+  jumpRequest: null,
+  requestJump: (pageNumber, bboxes) =>
+    set({ jumpRequest: { pageNumber, bboxes, nonce: (jumpSeq += 1) } }),
+
+  notice: null,
+  setNotice: (notice) => set({ notice }),
+  clearJump: () => set({ jumpRequest: null }),
+
+  scope: "whole_paper",
+  setScope: (scope) => set({ scope }),
+  question: "",
+  setQuestion: (value) => set({ question: value }),
+  submitting: false,
+  turns: [],
+  sections: null,
+  setSections: (sections) => set({ sections }),
+
+  profiles: null,
+  profilesError: null,
+  profileId: "",
+  setProfiles: (profiles, error = null) =>
+    set((state) => ({
+      profiles,
+      profilesError: error,
+      // Keep a chosen profile if it is still present; otherwise take the first,
+      // so a deleted profile cannot leave the composer pointing at nothing.
+      profileId:
+        profiles && profiles.some((profile) => profile.id === state.profileId)
+          ? state.profileId
+          : (profiles?.[0]?.id ?? ""),
+    })),
+  setProfileId: (profileId) => set({ profileId }),
 
   // AC-05: expanded by default.
   sidebarOpen: true,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
 
-  scope: "document",
-  setScope: (scope) => set({ scope }),
-
-  messages: INITIAL_MESSAGES,
-  composerValue: "",
-  setComposerValue: (value) => set({ composerValue: value }),
-
-  submitComposer: () => {
-    const text = get().composerValue.trim();
-    if (!text) return; // AC-18
-    set((s) => ({
-      composerValue: "",
-      messages: [
-        ...s.messages,
-        { id: nextMessageId(), role: "user", content: text },
-        { id: nextMessageId(), role: "assistant", content: NO_BACKEND_NOTICE },
-      ],
-    }));
-  },
-
-  runQuickAction: (label) => {
-    set((s) => ({
-      messages: [
-        ...s.messages,
-        { id: nextMessageId(), role: "user", content: label },
-        { id: nextMessageId(), role: "assistant", content: NO_BACKEND_NOTICE },
-      ],
-    }));
-  },
-
   // No backend contact has happened yet. Saying "connecting" would imply a
   // request is in flight; saying "ready" would claim a fact we have not checked.
   engine: { state: "offline", label: "未连接" },
 }));
+
+/**
+ * The QA turns for the document currently open.
+ *
+ * The same guarantee `selectActiveTranslation` provides, for the same reason: a
+ * turn belonging to a document the user has left is *unreachable* from the UI
+ * rather than merely ignored by it. Filtering on read means no code path can
+ * forget to check.
+ */
+export function selectActiveTurns(
+  state: Pick<WorkspaceState, "document" | "turns">,
+): QaTurn[] {
+  const { document, turns } = state;
+  if (!document || document.documentId === null) return [];
+  return turns.filter(
+    (turn) =>
+      turn.documentId === document.documentId &&
+      turn.sessionToken === document.sessionToken,
+  );
+}
 
 /**
  * The translation for the document currently open, or `null`.
@@ -240,4 +404,25 @@ export function selectEffectiveMode(
 ): ReaderMode {
   if (state.readerMode === "original") return "original";
   return selectHasTranslation(state) ? state.readerMode : "original";
+}
+
+/**
+ * The section that governs the page the reader is on, or `null`.
+ *
+ * The last section whose start page is at or before the current one — sections
+ * arrive in reading order, so "last" is "the most recent one a reader has
+ * passed". Deliberately returns `null` rather than guessing when there is no such
+ * section: Section scope is only offered when it has a real identity.
+ */
+export function selectSectionForPage(
+  sections: QaSection[] | null,
+  page: number,
+): QaSection | null {
+  if (!sections || sections.length === 0) return null;
+  let found: QaSection | null = null;
+  for (const section of sections) {
+    if (section.pageNumber <= page) found = section;
+    else break;
+  }
+  return found;
 }

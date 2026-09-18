@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 /**
- * AC-05 — collapsible AI assistant sidebar.
+ * AC-05 — collapsible Paper QA sidebar.
  *
  * The <aside> element stays mounted in both states so its width is measurable
  * (AC-05 verification asks for computed width in each state), but when
@@ -16,6 +16,10 @@ import { useWorkspaceStore } from "@/stores/workspace";
  *
  * The expand trigger lives in the top bar, satisfying AC-05's requirement that
  * an expand affordance stay reachable when collapsed.
+ *
+ * This is the **only** assistant surface. Questions asked here go through the
+ * grounded backend; there is no path that reaches a model directly, which is why
+ * there is no "ask AI" escape hatch anywhere in this panel.
  */
 export function AssistantSidebar() {
   const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen);
