@@ -64,7 +64,14 @@ FULL_WIDTH_RATIO = 0.62
 #:
 #: 2 — reading-order section assignment correction reached cached documents, and
 #:     sections gained ``parent_id`` and ``heading_block_id``.
-IR_PIPELINE_VERSION = "2"
+#: 3 — the column-gutter floor was lowered, so multi-column pages whose gutter
+#:     measured under 7.5 pt are no longer y-sorted. This **re-segments
+#:     paragraphs** on the documents it affects: block ids and paragraph ids are
+#:     reading positions, so correcting an order renumbers both. Any consumer
+#:     holding a stored id — the FTS index, `analysis.json`, a citation in a saved
+#:     answer — is pointing at a different paragraph afterwards and must be
+#:     invalidated rather than reused.
+IR_PIPELINE_VERSION = "3"
 
 #: Numbered heading, e.g. "3 Method", "3.1 Encoder", "4.2.1 Details",
 #: "A.1 Normalization", "C.1.2 Evaluation".
@@ -495,7 +502,26 @@ _GUTTER_REACH_PT = 12.0
 
 #: Narrower than this, an empty vertical channel is a gap between words rather
 #: than a gutter between columns.
-_MIN_GUTTER_PT = 8.0
+#:
+#: **6.0, lowered from 8.0 by DS-DOC-002, on measurement.** The floor was
+#: rejecting real gutters: on Diffusion Policy twelve of fifteen two-column bands
+#: had their gutter measured just under 7.5 pt, the split was refused, and
+#: `_order_band` fell back to a y-sort that interleaves the columns.
+#:
+#: Swept over the four development papers and six more (two of them held-out
+#: two-column camera-ready papers), every value from 2.0 to 12.0 produces the
+#: *same* false-split count — the failures there are gold disagreements, not
+#: threshold artefacts — while missed splits fall from 13 to 0 at 7.0 and stay
+#: there. 6.0 sits below the observed cliff (between 7.0 and 7.5) rather than on
+#: it, which is deliberate: a floor placed exactly at the observed boundary would
+#: be fitted to these papers.
+#:
+#: The corpus cannot distinguish this from a *normalized* rule — every paper in it
+#: is 595-612 pt wide and set at 10 pt, so `page width x 0.010` gives an identical
+#: floor and identical results. Normalization is the better rule in principle and
+#: is recorded as unmeasured rather than adopted on an argument; see
+#: `.agent/evidence/DS-DOC-002.md`.
+_MIN_GUTTER_PT = 6.0
 
 #: Resolution of the horizontal occupancy profile used to find the gutter.
 _PROFILE_CELLS = 200

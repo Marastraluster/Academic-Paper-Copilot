@@ -115,6 +115,25 @@ def _stored_signature(connection: sqlite3.Connection) -> str | None:
     return row["value"] if row else None
 
 
+def _stored_pipeline(connection: sqlite3.Connection) -> str | None:
+    """Which extraction pipeline the rows were built from.
+
+    `content_hash` answers "did the PDF change" and cannot answer "did the
+    extraction change". DS-DOC-002 made the difference matter: correcting reading
+    order re-segments paragraphs, and **paragraph ids are reading positions**, so
+    a rebuilt IR renumbers the very ids this index stores as `chunk_id`.
+
+    Without this check the index would stay "fresh" after such a change — same
+    PDF, same schema — and retrieval would return rows whose `chunk_id` now names
+    a different paragraph. Every citation built from one would point at text that
+    does not support the claim, silently.
+    """
+    row = connection.execute(
+        "SELECT value FROM meta WHERE key = 'pipeline_version'"
+    ).fetchone()
+    return row["value"] if row else None
+
+
 def _chunk_rows(ir: DocumentIR):
     """The units this index holds.
 
@@ -178,6 +197,7 @@ def ensure_index(
                 not force
                 and _stored_hash(connection) == ir.content_hash
                 and _stored_signature(connection) == SCHEMA_SIGNATURE
+                and _stored_pipeline(connection) == ir.pipeline_version
             )
             if fresh:
                 count = connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
@@ -204,6 +224,11 @@ def ensure_index(
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (SCHEMA_SIGNATURE,),
             )
+            connection.execute(
+                "INSERT INTO meta (key, value) VALUES ('pipeline_version', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (ir.pipeline_version,),
+            )
             connection.commit()
         finally:
             connection.close()
@@ -228,6 +253,7 @@ def is_stale(document_dir: Path, ir: DocumentIR) -> bool:
         return not (
             _stored_hash(connection) == ir.content_hash
             and _stored_signature(connection) == SCHEMA_SIGNATURE
+            and _stored_pipeline(connection) == ir.pipeline_version
         )
     finally:
         connection.close()
