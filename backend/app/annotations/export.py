@@ -261,7 +261,8 @@ def render_markdown(
     for index, entry in enumerate(entries, start=1):
         annotation = entry.annotation
         kind = "Note" if annotation.kind == "note" else "Highlight"
-        lines.append(f"## {index}. {kind}")
+        label = _source_kind_label(entry)
+        lines.append(f"## {index}. {kind}" + (f"（{label}）" if label else ""))
         lines.append("")
         location = (
             f"**Page:** {entry.page_first}"
@@ -294,6 +295,34 @@ def render_markdown(
 # --- JSON ---------------------------------------------------------------------
 
 
+#: Human labels for the source kinds, for the Markdown export only.
+#:
+#: The internal class name is not what a reader calls it. `figure_caption` is a
+#: database value; "图注" is what the reader sees. JSON keeps the machine name,
+#: because that is the file a program reads.
+_SOURCE_LABELS = {
+    "paragraph": "正文",
+    "figure_caption": "图注",
+    "table_caption": "表注",
+    "formula_caption": "公式编号",
+    "isolate_formula": "公式",
+}
+
+
+def _source_kind_label(entry: "ExportEntry") -> str | None:
+    """One label for the entry, or `None` when it is entirely prose.
+
+    `None` for a prose-only annotation on purpose: labelling every ordinary note
+    "正文" would add a line to hundreds of entries that say nothing the reader did
+    not already know, and bury the ones that do.
+    """
+    kinds = {target.source_class for target in entry.annotation.targets}
+    if kinds == {"paragraph"}:
+        return None
+    labels = [_SOURCE_LABELS.get(kind, kind) for kind in sorted(kinds)]
+    return "、".join(labels)
+
+
 def _target_payload(target: AnnotationTarget, state: str) -> dict:
     """`state` is this **target's** own, not the annotation's."""
     """One target, as the archive will keep it.
@@ -308,6 +337,11 @@ def _target_payload(target: AnnotationTarget, state: str) -> dict:
     """
     return {
         "target_order": target.target_order,
+        #: What kind of source this names. Without it a future importer cannot
+        #: know whether an anchor belongs to a paragraph, a caption or a formula
+        #: — and would have to guess, which is how a note ends up attached to the
+        #: wrong kind of thing while resolving to the right words.
+        "source_class": target.source_class,
         "source_anchor_id": target.source_anchor_id,
         "anchor_version": target.anchor_version,
         "page_number": target.page_number,

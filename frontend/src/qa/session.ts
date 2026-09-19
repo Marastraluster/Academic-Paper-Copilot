@@ -522,6 +522,22 @@ export function refreshSelection(): SelectionMapping | null {
   if (!document || document.documentId === null || !mapping) return null;
   if (mapping.status === "collapsed") return null;
 
+  // The geometry is recorded whatever the paragraph outcome, because the
+  // annotation path reads the same rectangles for classes a question may never
+  // use. A caption selection that maps to no paragraph is a note the reader is
+  // entitled to make; it is not a question, and the two facts are different.
+  if (document.documentId !== null) {
+    useWorkspaceStore.setState({
+      selectionGeometry: {
+        documentId: document.documentId,
+        sessionToken: document.sessionToken,
+        pages: mapping.pages,
+        text: mapping.text,
+        rects: mapping.rects,
+      },
+    });
+  }
+
   if (mapping.status !== "valid" && mapping.status !== "partial") {
     // The refusal is recorded as a *status*, so the sidebar can say which one it
     // was. A generic "unavailable" would leave the reader guessing at the fix.
@@ -547,7 +563,9 @@ export function refreshSelection(): SelectionMapping | null {
 
 /** Drop the mapping. Called when the reader clicks in the paper, not in the sidebar. */
 export function clearSelection(): void {
-  useWorkspaceStore.setState({ selection: null, selectionStatus: null, selectionReason: "" });
+  useWorkspaceStore.setState({
+    selection: null, selectionStatus: null, selectionReason: "", selectionGeometry: null,
+  });
 }
 
 // --- sections ---------------------------------------------------------------

@@ -48,6 +48,17 @@ export interface IrBlock {
   layout_class: string;
   bbox: Bbox;
   text: string;
+  /**
+   * **Persistent** identity, for the classes a reader may annotate.
+   *
+   * Empty on every other class, and that is the honest value: being present in
+   * the IR and being annotatable are different things. Computed by the backend
+   * at extraction time for the same reason the paragraph anchor is — a hash
+   * whose whole purpose is to be identical everywhere must have one
+   * implementation, and a second one in the browser is a divergence waiting to
+   * happen whose symptom would be a caption note that silently never resolves.
+   */
+  source_anchor_id: string;
 }
 
 export interface IrPage {

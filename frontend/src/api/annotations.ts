@@ -24,6 +24,8 @@ export type ResolutionState =
 
 export interface ResolvedTarget {
   order: number;
+  /** `paragraph`, or the layout class of the block this target names. */
+  source_class?: string;
   /** 1-based, as the source PDF numbers it. */
   page_number: number;
   /** Line rectangles in source-PDF points. */
@@ -60,6 +62,8 @@ export interface AnnotationList {
 }
 
 export interface NewTarget {
+  /** What kind of source unit this names. Defaults to a paragraph server-side. */
+  source_class?: string;
   source_anchor_id: string;
   anchor_version?: string;
   page_number: number;

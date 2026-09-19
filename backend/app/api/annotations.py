@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from urllib.parse import quote
 
@@ -26,8 +26,10 @@ from app.annotations.export import (
     render_markdown,
     to_export_dict,
 )
+from app.annotations.models import BLOCK_SOURCE_CLASSES, SOURCE_CLASSES
 from app.annotations.service import resolve_annotation, summary, summary_unresolved
 from app.annotations.store import AnnotationStore
+from app.document.anchors import anchorable_blocks
 from app.document.persistence import read_ir
 from app.errors import error_response
 
@@ -44,6 +46,11 @@ class TargetPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_anchor_id: str
+    #: What kind of canonical source unit this names. Rejected rather than
+    #: stored when it is not one of the classes the extraction produces and the
+    #: browser was measured to be able to select — a kind nothing downstream can
+    #: resolve is a target that can never be placed again.
+    source_class: str = "paragraph"
     anchor_version: str = "1"
     page_number: int = Field(ge=1)
     #: `[x0, y0, x1, y1]` in source-PDF points — the paragraph envelope.
@@ -53,6 +60,13 @@ class TargetPayload(BaseModel):
     exact_quote: str
     prefix: str = ""
     suffix: str = ""
+
+    @field_validator("source_class")
+    @classmethod
+    def _known_source_class(cls, value: str) -> str:
+        if value not in SOURCE_CLASSES:
+            raise ValueError(f"Unknown source class {value!r}.")
+        return value
 
     @model_validator(mode="after")
     def _rects_belong_to_their_envelope(self) -> "TargetPayload":
@@ -140,21 +154,19 @@ async def list_annotations(request: Request, document_id: str) -> Any:
     """
     store = _store(request)
     if store is None:
-        return error_response("UNAVAILABLE", "Annotations are not available.", 503)
+        return error_response(503, "UNAVAILABLE", "Annotations are not available.")
 
     document_store = request.app.state.document_store
     record = document_store.get_document(document_id)
     if record is None:
-        return error_response("NOT_FOUND", "No such document.", 404)
+        return error_response(404, "NOT_FOUND", "No such document.")
 
     directory = document_store.document_dir(document_id)
     ir = read_ir(directory)  # a file read; never an extraction
 
     content_hash = ir.content_hash if ir is not None else _fingerprint_of(directory)
     if content_hash is None:
-        return error_response(
-            "NOT_FOUND", "The source file is no longer available.", 404
-        )
+        return error_response(404, "NOT_FOUND", "The source file is no longer available.")
 
     # Listed by **fingerprint**, not by the document row. Document ids are
     # `uuid4().hex`, so reopening the same PDF produces a new row; the content
@@ -199,18 +211,18 @@ def _export(request: Request, document_id: str, flavour: str) -> Any:
     """
     store = _store(request)
     if store is None:
-        return error_response("UNAVAILABLE", "Annotations are not available.", 503)
+        return error_response(503, "UNAVAILABLE", "Annotations are not available.")
 
     document_store = request.app.state.document_store
     record = document_store.get_document(document_id)
     if record is None:
-        return error_response("NOT_FOUND", "No such document.", 404)
+        return error_response(404, "NOT_FOUND", "No such document.")
 
     directory = document_store.document_dir(document_id)
     ir = read_ir(directory)  # a file read; never an extraction
     content_hash = ir.content_hash if ir is not None else _fingerprint_of(directory)
     if content_hash is None:
-        return error_response("NOT_FOUND", "The source file is no longer available.", 404)
+        return error_response(404, "NOT_FOUND", "The source file is no longer available.")
 
     annotations = store.list_for_content(content_hash)
     entries = prepare(annotations, ir=ir, store=store)
@@ -283,7 +295,7 @@ async def create_annotation(
     """
     store = _store(request)
     if store is None:
-        return error_response("UNAVAILABLE", "Annotations are not available.", 503)
+        return error_response(503, "UNAVAILABLE", "Annotations are not available.")
 
     result, failure = await _require_ir(request, document_id)
     if failure is not None:
@@ -291,28 +303,34 @@ async def create_annotation(
     ir, _summary = result
 
     if payload.kind not in ("highlight", "note"):
-        return error_response("BAD_REQUEST", "Unknown annotation kind.", 400)
+        return error_response(400, "BAD_REQUEST", "Unknown annotation kind.")
     if not payload.targets:
-        return error_response(
-            "BAD_REQUEST", "An annotation needs at least one source target.", 400
-        )
+        return error_response(400, "BAD_REQUEST", "An annotation needs at least one source target.")
 
-    known = {p.source_anchor_id for p in ir.paragraphs if p.source_anchor_id}
+    # Both domains: a caption target's anchor is not a paragraph's, and checking
+    # only the paragraph set would refuse every non-prose note this task exists
+    # to allow. The kinds are separate sets rather than one, so an anchor is
+    # validated against the domain its own class names.
+    known_paragraphs = {p.source_anchor_id for p in ir.paragraphs if p.source_anchor_id}
+    known_blocks = {
+        block.source_anchor_id for block in anchorable_blocks(ir) if block.source_anchor_id
+    }
     unknown = [
         target.source_anchor_id
         for target in payload.targets
-        if target.source_anchor_id not in known
+        if target.source_anchor_id
+        not in (
+            known_blocks
+            if target.source_class in BLOCK_SOURCE_CLASSES
+            else known_paragraphs
+        )
     ]
     if unknown:
         # Refused rather than stored. A target whose anchor does not exist in the
         # paper it names could never resolve, and would sit in the user's panel
         # looking like a bug they caused.
-        return error_response(
-            "BAD_REQUEST",
-            "The selection does not match this paper's current extraction. "
-            "Re-select and try again.",
-            400,
-        )
+        return error_response(400, "BAD_REQUEST", "The selection does not match this paper's current extraction. "
+            "Re-select and try again.")
 
     try:
         annotation = store.create(
@@ -325,7 +343,7 @@ async def create_annotation(
             targets=[target.model_dump() for target in payload.targets],
         )
     except sqlite3.Error:
-        return error_response("STORAGE_FAILED", "The annotation could not be saved.", 500)
+        return error_response(500, "STORAGE_FAILED", "The annotation could not be saved.")
 
     return summary(annotation, resolve_annotation(ir, annotation, store=store))
 
@@ -337,15 +355,15 @@ async def update_annotation(
     """Edit the user's words. Touches no target."""
     store = _store(request)
     if store is None:
-        return error_response("UNAVAILABLE", "Annotations are not available.", 503)
+        return error_response(503, "UNAVAILABLE", "Annotations are not available.")
 
     existing = store.get(annotation_id)
     if existing is None or existing.is_deleted:
-        return error_response("NOT_FOUND", "No such annotation.", 404)
+        return error_response(404, "NOT_FOUND", "No such annotation.")
 
     updated = store.update_comment(annotation_id, payload.comment)
     if updated is None:
-        return error_response("NOT_FOUND", "No such annotation.", 404)
+        return error_response(404, "NOT_FOUND", "No such annotation.")
 
     result, failure = await _require_ir(request, updated.document_id)
     if failure is not None:
@@ -363,7 +381,7 @@ async def delete_annotation(request: Request, annotation_id: str) -> Response:
     """
     store = _store(request)
     if store is None:
-        return error_response("UNAVAILABLE", "Annotations are not available.", 503)
+        return error_response(503, "UNAVAILABLE", "Annotations are not available.")
     if not store.delete(annotation_id):
-        return error_response("NOT_FOUND", "No such annotation.", 404)
+        return error_response(404, "NOT_FOUND", "No such annotation.")
     return Response(status_code=204)

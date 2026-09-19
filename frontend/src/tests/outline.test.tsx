@@ -111,10 +111,10 @@ const twoColumn = ir({
   pages: [{
     page_number: 1, width_pt: 595, height_pt: 842, rotation: 0,
     blocks: [
-      { id: "L1", page_number: 1, layout_class: "plain text", bbox: [50, 70, 290, 400], text: "" },
-      { id: "L2", page_number: 1, layout_class: "plain text", bbox: [50, 410, 290, 740], text: "" },
-      { id: "R1", page_number: 1, layout_class: "plain text", bbox: [305, 70, 545, 400], text: "" },
-      { id: "R2", page_number: 1, layout_class: "plain text", bbox: [305, 410, 545, 740], text: "" },
+      { id: "L1", page_number: 1, source_anchor_id: "", layout_class: "plain text", bbox: [50, 70, 290, 400], text: "" },
+      { id: "L2", page_number: 1, source_anchor_id: "", layout_class: "plain text", bbox: [50, 410, 290, 740], text: "" },
+      { id: "R1", page_number: 1, source_anchor_id: "", layout_class: "plain text", bbox: [305, 70, 545, 400], text: "" },
+      { id: "R2", page_number: 1, source_anchor_id: "", layout_class: "plain text", bbox: [305, 410, 545, 740], text: "" },
     ],
   }],
   paragraphs: [
@@ -154,7 +154,7 @@ describe("DS-QA-008 · current section (AC-P0-07)", () => {
     const bare = ir({
       pages: [{
         page_number: 1, width_pt: 595, height_pt: 842, rotation: 0,
-        blocks: [{ id: "z", page_number: 1, layout_class: "figure", bbox: [0, 0, 10, 10], text: "" }],
+        blocks: [{ id: "z", page_number: 1, source_anchor_id: "", layout_class: "figure", bbox: [0, 0, 10, 10], text: "" }],
       }],
       paragraphs: [],
     });
@@ -164,8 +164,8 @@ describe("DS-QA-008 · current section (AC-P0-07)", () => {
   it("falls back to the nearest earlier page that can answer", () => {
     const multi = ir({
       pages: [
-        { page_number: 1, width_pt: 595, height_pt: 842, rotation: 0, blocks: [{ id: "a", page_number: 1, layout_class: "plain text", bbox: [0, 0, 100, 800], text: "" }] },
-        { page_number: 2, width_pt: 595, height_pt: 842, rotation: 0, blocks: [{ id: "b", page_number: 2, layout_class: "figure", bbox: [0, 0, 100, 800], text: "" }] },
+        { page_number: 1, width_pt: 595, height_pt: 842, rotation: 0, blocks: [{ id: "a", page_number: 1, source_anchor_id: "", layout_class: "plain text", bbox: [0, 0, 100, 800], text: "" }] },
+        { page_number: 2, width_pt: 595, height_pt: 842, rotation: 0, blocks: [{ id: "b", page_number: 2, source_anchor_id: "", layout_class: "figure", bbox: [0, 0, 100, 800], text: "" }] },
       ],
       paragraphs: [{ id: "p", source_anchor_id: "a", section_id: "sec_a", text: "", page_number: 1, page_range: [1, 1], block_ids: ["a"], bboxes: [] }],
     });

@@ -115,6 +115,18 @@ class TextBlockIR(BaseModel):
     #: Set on a caption, naming the figure/table block it belongs to.
     caption_of: str | None = None
 
+    #: **Persistent** identity for the classes a reader may annotate.
+    #:
+    #: Empty on every other class, and that is the honest value: being present in
+    #: the IR and being annotatable are different things. Computed at extraction
+    #: so the browser never has to re-derive a hash whose whole purpose is to be
+    #: identical everywhere — the same reason `ParagraphIR` carries one.
+    #:
+    #: Uses the block recipe, not the paragraph one: the layout class is inside
+    #: the payload, so a caption and a paragraph that share a page, a rectangle
+    #: and their words cannot collide.
+    source_anchor_id: str = ""
+
 
 class PageIR(BaseModel):
     model_config = ConfigDict(extra="forbid")

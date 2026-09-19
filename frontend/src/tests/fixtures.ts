@@ -138,6 +138,7 @@ export function seedQaSections(): void {
       blocks: [
         {
           id: `b_p${page}`, page_number: page, layout_class: "plain text",
+          source_anchor_id: "",
           bbox: [50, 70, 545, 700] as [number, number, number, number],
           text: `page ${page}`,
         },

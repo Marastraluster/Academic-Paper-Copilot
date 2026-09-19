@@ -76,7 +76,7 @@ FULL_WIDTH_RATIO = 0.62
 #:     untouched, so nothing downstream had to move, but an IR written without
 #:     anchors is not reusable — the field is what a persistent artifact binds to,
 #:     and `""` is not a binding.
-IR_PIPELINE_VERSION = "4"
+IR_PIPELINE_VERSION = "5"
 
 #: Numbered heading, e.g. "3 Method", "3.1 Encoder", "4.2.1 Details",
 #: "A.1 Normalization", "C.1.2 Evaluation".
@@ -216,6 +216,17 @@ def extract_document_ir(
             paragraph.source_anchor_id = _anchor_for(
                 before[0], paragraph
             )
+
+        # The same treatment for the non-prose blocks a reader may annotate. The
+        # anchor is computed here rather than in the browser for the reason the
+        # paragraph one is: a hash whose whole purpose is to be identical
+        # everywhere must have one implementation. Blocks outside the anchorable
+        # classes keep the empty default — being *in the IR* and *being
+        # annotatable* are different things, and only the second is restricted.
+        for page in pages:
+            for block in page.blocks:
+                if block.layout_class in anchors.ANCHORABLE_CLASSES and block.text.strip():
+                    block.source_anchor_id = anchors.block_source_anchor_id_for(before[0], block)
 
         ir = DocumentIR(
             document_id=document_id,

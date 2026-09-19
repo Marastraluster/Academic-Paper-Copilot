@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import type { DocumentIr } from "@/api/ir";
+import type { Bbox, DocumentIr } from "@/api/ir";
 import type { ProviderProfile } from "@/api/profiles";
 import type { AnnotationView } from "@/api/annotations";
 import type { AnswerDiagnostics } from "@/api/qa";
@@ -89,6 +89,20 @@ export interface QaTurn {
   documentId: string;
   sessionToken: string;
   result: QaResult;
+}
+
+/**
+ * Where a drag covered source geometry, before any domain has interpreted it.
+ *
+ * `rects` is per page in source-PDF points; `text` is what the browser reported.
+ * Neither says what the selection *means* — that is what the two mappers decide.
+ */
+export interface SelectionGeometry {
+  documentId: string;
+  sessionToken: string;
+  pages: number[];
+  text: string;
+  rects: Record<number, Bbox[]>;
 }
 
 /**
@@ -351,6 +365,21 @@ interface WorkspaceState {
    */
   selectionReason: string;
   setSelectionReason: (reason: string) => void;
+  /**
+   * The source geometry of the last selection, whatever it mapped to.
+   *
+   * Kept separate from `selection` because the two answer different questions.
+   * `selection` is *"what may a question be scoped to"* and is deliberately
+   * paragraph-only. This is *"where on the page did the reader drag"* — the
+   * measured rectangles and the text — which the annotation path also needs for
+   * the non-prose classes a question may never use.
+   *
+   * One DOM read, one coordinate conversion, two domain filters. The alternative
+   * — reading the browser selection twice and converting twice — is two answers
+   * that agree until one of them is edited.
+   */
+  selectionGeometry: SelectionGeometry | null;
+  setSelectionGeometry: (geometry: SelectionGeometry | null) => void;
 
   // ---- Sidebar (AC-05) ----
   sidebarOpen: boolean;
@@ -535,6 +564,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   selectionReason: "",
   setSelectionStatus: (selectionStatus) => set({ selectionStatus }),
   setSelectionReason: (selectionReason) => set({ selectionReason }),
+  selectionGeometry: null,
+  setSelectionGeometry: (selectionGeometry) => set({ selectionGeometry }),
 
   // AC-05: expanded by default.
   sidebarOpen: true,

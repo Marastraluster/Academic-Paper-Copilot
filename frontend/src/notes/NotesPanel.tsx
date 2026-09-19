@@ -10,6 +10,7 @@ import {
   removeAnnotation,
 } from "@/notes/session";
 import { buildSearchIndex, filterAnnotations } from "@/notes/search";
+import { buildAnnotationTargets } from "@/notes/targets";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { jumpToAnnotation } from "@/notes/jump";
 import { cn } from "@/lib/utils";
@@ -36,7 +37,8 @@ const STATE_TEXT: Record<ResolutionState, string | null> = {
 export function NotesPanel() {
   const document_ = useWorkspaceStore((s) => s.document);
   const annotations = useWorkspaceStore((s) => s.annotations);
-  const selection = useWorkspaceStore((s) => s.selection);
+  const ir = useWorkspaceStore((s) => s.ir);
+  const geometry = useWorkspaceStore((s) => s.selectionGeometry);
   const activeId = useWorkspaceStore((s) => s.activeAnnotationId);
   const setActiveId = useWorkspaceStore((s) => s.setActiveAnnotationId);
 
@@ -105,7 +107,21 @@ export function NotesPanel() {
   }, [ordered, searchIndex, query]);
   const searching = query.trim() !== "";
 
-  const hasSelection = (selection?.mapping.paragraphIds.length ?? 0) > 0;
+  /* Whether a note can be made, asked the same way `createFromSelection` asks
+     it — by building the targets.
+   *
+   * It used to read the **QA** mapping's paragraph count, which is a different
+   * question with a narrower answer: a drag across a figure caption maps to no
+   * paragraph, so the button stayed disabled for a selection that could create a
+   * perfectly good note. Measured in a browser: the formula `y = F(x, {Wi}) + x`
+   * selected correctly and the action was refused.
+   *
+   * Asking the builder means the button and the action cannot disagree — there
+   * is one implementation of "does this selection name a source unit". */
+  const canAnnotate = useMemo(() => {
+    if (!ir || !geometry) return false;
+    return buildAnnotationTargets(ir, { rects: geometry.rects, text: geometry.text }).length > 0;
+  }, [ir, geometry]);
 
   const create = async (kind: "highlight" | "note") => {
     setError(null);
@@ -136,7 +152,7 @@ export function NotesPanel() {
           <button
             type="button"
             data-testid="notes-create-highlight"
-            disabled={!hasSelection}
+            disabled={!canAnnotate}
             onClick={() => void create("highlight")}
             className="flex items-center gap-1 rounded-sm px-2 py-1 text-xs enabled:hover:bg-accent/60 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
@@ -146,7 +162,7 @@ export function NotesPanel() {
           <button
             type="button"
             data-testid="notes-create-note"
-            disabled={!hasSelection}
+            disabled={!canAnnotate}
             onClick={() => void create("note")}
             className="flex items-center gap-1 rounded-sm px-2 py-1 text-xs enabled:hover:bg-accent/60 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
@@ -158,7 +174,7 @@ export function NotesPanel() {
           data-testid="notes-draft"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder={hasSelection ? "为选中文字添加笔记…" : "先在论文中选择文字"}
+          placeholder={canAnnotate ? "为选中文字添加笔记…" : "先在论文中选择文字"}
           aria-label="笔记内容"
           className="mt-1 w-full rounded-sm border bg-background px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         />

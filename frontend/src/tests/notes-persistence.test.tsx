@@ -147,6 +147,7 @@ describe("DS-QA-010 · same-source idempotency (AC-P0-12)", () => {
     const { findEquivalent } = await import("@/notes/session");
     const existing = [annotation("mine")];
     const same = findEquivalent(existing, [{
+      sourceClass: "paragraph",
       sourceAnchorId: "a", anchorVersion: "1", pageNumber: 1,
       bbox: RECT, rects: [RECT], quote: "A selected sentence.",
       prefix: "", suffix: "",
@@ -159,6 +160,7 @@ describe("DS-QA-010 · same-source idempotency (AC-P0-12)", () => {
        paragraphs stay two notes even if the drawing looks similar. */
     const { findEquivalent } = await import("@/notes/session");
     const other = findEquivalent([annotation("mine")], [{
+      sourceClass: "paragraph",
       sourceAnchorId: "b", anchorVersion: "1", pageNumber: 2,
       bbox: RECT, rects: [RECT], quote: "A different sentence.",
       prefix: "", suffix: "",

@@ -139,11 +139,20 @@ export async function createFromSelection({
   if (!document || document.documentId === null) {
     return { ok: false, reason: "No document is open." };
   }
-  if (!state.ir || !state.selection) {
+  // The **geometry**, not the QA mapping. A drag across a figure caption maps to
+  // no paragraph — `selection` is null for it, and deliberately so, because a
+  // caption is not something a question may be scoped to. It is still something
+  // the reader is entitled to annotate, and refusing here would have made the
+  // QA domain's boundary decide the annotation domain's capability.
+  const geometry = state.selectionGeometry;
+  if (!state.ir || !geometry) {
     return { ok: false, reason: "Select text in the paper first." };
   }
 
-  const sources: TargetSource[] = buildAnnotationTargets(state.ir, state.selection.mapping);
+  const sources: TargetSource[] = buildAnnotationTargets(state.ir, {
+    rects: geometry.rects,
+    text: geometry.text,
+  });
   if (sources.length === 0) {
     return { ok: false, reason: "The selection does not map onto this paper's text." };
   }
@@ -158,6 +167,7 @@ export async function createFromSelection({
   }
 
   const targets: NewTarget[] = sources.map((source) => ({
+    source_class: source.sourceClass,
     source_anchor_id: source.sourceAnchorId,
     anchor_version: source.anchorVersion,
     page_number: source.pageNumber,
@@ -172,7 +182,7 @@ export async function createFromSelection({
   try {
     const created = await createAnnotation(documentId, {
       kind,
-      quote: state.selection.mapping.text,
+      quote: geometry.text,
       comment,
       targets,
     });

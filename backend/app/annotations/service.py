@@ -19,12 +19,27 @@ from __future__ import annotations
 
 from app.annotations.models import Annotation, AnnotationTarget, ResolvedTarget
 from app.annotations.store import AnnotationStore
-from app.document.anchors import AnchorState, reattach
+from app.document.anchors import AnchorState, anchorable_blocks, reattach, reattach_block
+from app.annotations.models import BLOCK_SOURCE_CLASSES
 from app.document.models import DocumentIR
 
 
 def _index_by_anchor(ir: DocumentIR) -> dict[str, str]:
     return {p.source_anchor_id: p.id for p in ir.paragraphs if p.source_anchor_id}
+
+
+def _block_index(ir: DocumentIR) -> dict[str, str]:
+    """Non-prose anchors, keyed exactly as the paragraph ones are.
+
+    One dict per kind rather than one merged dict, so a paragraph anchor can
+    never be found under a caption's key even if a future recipe made the two
+    payloads coincide. The lookup that matters is the one that cannot cross.
+    """
+    return {
+        block.source_anchor_id: block.id
+        for block in anchorable_blocks(ir)
+        if block.source_anchor_id
+    }
 
 
 def resolve_target(ir: DocumentIR, target: AnnotationTarget) -> ResolvedTarget:
@@ -35,6 +50,23 @@ def resolve_target(ir: DocumentIR, target: AnnotationTarget) -> ResolvedTarget:
     Only a miss pays for the page-scoped scan in `reattach`, and it is a scan of
     one page of an in-memory IR, not a search.
     """
+    block_backed = target.source_class in BLOCK_SOURCE_CLASSES
+
+    if block_backed:
+        current = _block_index(ir).get(target.source_anchor_id)
+        if current is not None:
+            return ResolvedTarget(
+                target, AnchorState.EXACT, (current,), "exact block anchor"
+            )
+        result = reattach_block(
+            ir,
+            anchor_id=target.source_anchor_id,
+            page_number=target.page_number,
+            layout_class=target.source_class,
+            quote=target.exact_quote,
+        )
+        return ResolvedTarget(target, result.state, result.paragraph_ids, result.detail)
+
     index = _index_by_anchor(ir)
     current = index.get(target.source_anchor_id)
     if current is not None:
@@ -96,6 +128,7 @@ def summary_unresolved(annotation: Annotation) -> dict:
             {
                 "order": target.target_order,
                 "page_number": target.page_number,
+                "source_class": target.source_class,
                 "rects": [list(r) for r in target.rects],
                 "quote": target.exact_quote,
                 "state": "UNRESOLVED",
@@ -130,6 +163,7 @@ def summary(annotation: Annotation, resolved: tuple[ResolvedTarget, ...]) -> dic
             {
                 "order": item.target.target_order,
                 "page_number": item.target.page_number,
+                "source_class": item.target.source_class,
                 "rects": [list(r) for r in item.target.rects],
                 "quote": item.target.exact_quote,
                 "state": item.state.value,

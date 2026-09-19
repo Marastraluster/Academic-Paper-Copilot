@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 #: Current schema version. Bump when adding a migration below.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 #: The version every database starts at, before any migration runs.
 BASELINE_VERSION = 1
@@ -191,11 +191,36 @@ def _migration_004_create_annotations(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_005_add_target_source_class(connection: sqlite3.Connection) -> None:
+    """Record what kind of source unit a target names.
+
+    Additive and non-destructive: every existing row is a paragraph target,
+    because paragraphs were the only thing a target could name, so the default
+    is not a guess — it is the only value those rows could have had.
+
+    The kind is stored rather than inferred. It could be derived from
+    `anchor_version` while there are exactly two recipes, and that inference
+    would break the day either recipe is versioned independently — which is
+    precisely what `BLOCK_ANCHOR_VERSION` exists to allow. A kind that is data
+    survives a version bump; a kind that is arithmetic does not.
+
+    Deliberately **not** added to `_migration_004`'s `CREATE TABLE` as well: a
+    fresh database replays every migration from v1, so a column present in both
+    places would be created and then added again. Migrations are history, and
+    both paths converge on the same schema by running the same history.
+    """
+    connection.execute(
+        "ALTER TABLE annotation_targets "
+        "ADD COLUMN source_class TEXT NOT NULL DEFAULT 'paragraph'"
+    )
+
+
 #: version -> migration. Each entry upgrades the database *to* that version.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migration_002_create_profiles,
     3: _migration_003_create_documents_and_tasks,
     4: _migration_004_create_annotations,
+    5: _migration_005_add_target_source_class,
 }
 
 

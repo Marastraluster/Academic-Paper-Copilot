@@ -42,7 +42,7 @@ import hashlib
 from dataclasses import dataclass
 from enum import Enum
 
-from app.document.models import BoundingBox, DocumentIR, ParagraphIR
+from app.document.models import BoundingBox, DocumentIR, ParagraphIR, TextBlockIR
 from app.document.normalize import join_wrapped_lines
 
 #: Bumped whenever the canonical payload changes — a normalization rule, the
@@ -288,3 +288,137 @@ def reattach(
             f"{len(contained_by)} paragraphs could hold the source",
         )
     return AnchorResolution(AnchorState.ORPHANED, (), "no paragraph on this page holds it")
+
+
+# --- non-prose source units ---------------------------------------------------
+#
+# Captions and formulas are canonical source the extraction sees and the
+# paragraph domain deliberately does not hold. DS-QA-013 measured 100 caption
+# blocks and 32 formula blocks outside every paragraph across five real papers,
+# and measured that all of them are selectable in a browser with their canonical
+# text intact — so a reader can mark them and the mark must survive a
+# re-extraction the same way a paragraph note does.
+#
+# Nothing here changes the paragraph recipe above. Its anchors are persisted user
+# data, and DS-DOC-002 measured 150 of 160 of them surviving a real extraction
+# change; re-deriving them under a new payload would invalidate every stored note
+# to no benefit.
+#
+# ## Why the layout class is inside the hash
+#
+# A paragraph and a caption can share a page, a rectangle and their text. Without
+# the class in the payload those two would produce the same digest, and an
+# annotation would be able to resolve to the wrong *kind* of source while
+# resolving to exactly the right words. The class is what makes the namespace
+# separation hold by construction rather than by improbability.
+
+#: Separate from `SOURCE_ANCHOR_VERSION` on purpose: the two recipes change for
+#: different reasons, and a version bump on one must not silently reinterpret the
+#: other. This is the block recipe's own version.
+BLOCK_ANCHOR_VERSION = "1"
+
+#: The classes a reader may persistently annotate.
+#:
+#: Narrow by measurement, not by taste. `figure` and `table` hold run-together
+#: fragments (`"identityweight layerweight layerrelu…"`) that would persist a
+#: quote no one wrote; `abandon` holds page furniture — the arXiv stamp, running
+#: footnotes, page numbers — which is not the paper's content; `title` is
+#: deferred because 163 heading blocks exist against 100 captions and the layout
+#: model mislabels some prose fragments as headings.
+ANCHORABLE_CLASSES = frozenset({
+    "figure_caption",
+    "table_caption",
+    "formula_caption",
+    "isolate_formula",
+})
+
+
+def block_anchor_payload_for(content_hash: str, block: TextBlockIR) -> str:
+    """The exact bytes a non-prose block's anchor hashes.
+
+    Same shape as the paragraph payload with one field added: the layout class.
+    Everything else — the version, the document fingerprint, the page, the
+    quantized envelope and the canonical text — is what the paragraph anchor
+    already uses, because those are the fields that were measured to survive a
+    re-extraction.
+    """
+    geometry = "|".join(str(quantize(value)) for value in block.bbox)
+    return "|".join([
+        BLOCK_ANCHOR_VERSION,
+        content_hash,
+        str(block.page_number),
+        block.layout_class,
+        geometry,
+        canonical_source_text(block.text),
+    ])
+
+
+def block_source_anchor_id_for(content_hash: str, block: TextBlockIR) -> str:
+    return hashlib.sha256(
+        block_anchor_payload_for(content_hash, block).encode("utf-8")
+    ).hexdigest()
+
+
+def block_source_anchor_id(ir: DocumentIR, block: TextBlockIR) -> str:
+    return block_source_anchor_id_for(ir.content_hash, block)
+
+
+def anchorable_blocks(ir: DocumentIR) -> list[TextBlockIR]:
+    """Every block a reader may annotate, in page and reading order.
+
+    Reading order is the IR's own: `PageIR.blocks` is already ordered by the
+    reading-order pass, so this does not re-sort and cannot disagree with it.
+    """
+    return [
+        block
+        for page in ir.pages
+        for block in page.blocks
+        if block.layout_class in ANCHORABLE_CLASSES and block.text.strip()
+    ]
+
+
+def reattach_block(
+    ir: DocumentIR,
+    *,
+    anchor_id: str,
+    page_number: int,
+    layout_class: str,
+    quote: str,
+) -> AnchorResolution:
+    """Find where a non-prose anchor's source went, on its own page and in its own class.
+
+    The same cascade the paragraph path uses, with one rung tightened rather than
+    added: the search is restricted to the block's **layout class**, because a
+    caption that can no longer be found must not reattach to a paragraph, and a
+    formula must not reattach to a caption. Both would be a mark on the wrong
+    kind of source, which is the failure this module exists to avoid.
+    """
+    for block in anchorable_blocks(ir):
+        if block_source_anchor_id(ir, block) == anchor_id:
+            return AnchorResolution(
+                AnchorState.EXACT, (block.id,), "exact block anchor"
+            )
+
+    needle = canonical_source_text(quote)
+    if not needle:
+        return AnchorResolution(AnchorState.ORPHANED, (), "no quote to search for")
+
+    same_page = [
+        block for block in anchorable_blocks(ir)
+        if block.page_number == page_number and block.layout_class == layout_class
+    ]
+    holding = [
+        block for block in same_page
+        if _coverage(needle, canonical_source_text(block.text)) >= MIN_REATTACH_COVERAGE
+    ]
+    if len(holding) == 1:
+        return AnchorResolution(
+            AnchorState.REATTACHED, (holding[0].id,), "quote found on the page"
+        )
+    if len(holding) > 1:
+        return AnchorResolution(
+            AnchorState.AMBIGUOUS,
+            tuple(block.id for block in holding),
+            f"{len(holding)} blocks on the page hold the quote",
+        )
+    return AnchorResolution(AnchorState.ORPHANED, (), "no block on this page holds it")

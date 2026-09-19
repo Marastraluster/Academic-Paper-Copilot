@@ -45,6 +45,7 @@ def _target_from_row(row: sqlite3.Row) -> AnnotationTarget:
         id=row["id"],
         annotation_id=row["annotation_id"],
         target_order=int(row["target_order"]),
+        source_class=row["source_class"] or "paragraph",
         source_anchor_id=row["source_anchor_id"],
         anchor_version=row["anchor_version"],
         page_number=int(row["page_number"]),
@@ -168,11 +169,12 @@ class AnnotationStore:
             for order, target in enumerate(targets):
                 self._connection.execute(
                     "INSERT INTO annotation_targets (id, annotation_id, "
-                    "target_order, source_anchor_id, anchor_version, page_number, "
+                    "target_order, source_class, source_anchor_id, anchor_version, page_number, "
                     "original_bbox, rects, exact_quote, prefix, suffix) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         _new_id("tgt_"), annotation_id, order,
+                        target.get("source_class", "paragraph"),
                         target["source_anchor_id"], target.get("anchor_version", "1"),
                         target["page_number"],
                         json.dumps(list(target["original_bbox"])),

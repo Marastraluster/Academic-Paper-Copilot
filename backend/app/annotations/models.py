@@ -31,6 +31,32 @@ AnnotationKind = Literal["highlight", "note"]
 #: The palette is a fixed set of tokens, never a user-supplied CSS string.
 DEFAULT_COLOR = "yellow"
 
+#: What kind of canonical source unit a target names.
+#:
+#: `paragraph` is the historical value and the only one that existed before
+#: DS-QA-013, which is why it is the column's default: for every stored row the
+#: default is not a guess but the only value it could have had. The other four
+#: are the layout classes measured to be annotatable — visible, selectable, and
+#: carrying their canonical text in a browser's own text layer.
+#:
+#: This is a *closed* set. A block whose class is not in it is not annotatable,
+#: and the API rejects a payload that says otherwise rather than storing a kind
+#: nothing downstream can resolve.
+SourceClass = Literal[
+    "paragraph",
+    "figure_caption",
+    "table_caption",
+    "formula_caption",
+    "isolate_formula",
+]
+
+SOURCE_CLASSES: frozenset[str] = frozenset(
+    {"paragraph", "figure_caption", "table_caption", "formula_caption", "isolate_formula"}
+)
+
+#: The classes that name a non-prose block rather than a paragraph.
+BLOCK_SOURCE_CLASSES: frozenset[str] = SOURCE_CLASSES - {"paragraph"}
+
 
 @dataclass(frozen=True)
 class AnnotationTarget:
@@ -57,6 +83,11 @@ class AnnotationTarget:
     #: The part of the user's selection that falls in this paragraph, and bounded
     #: context either side, all from canonical source text.
     exact_quote: str
+    #: What this target names — a paragraph, or one of the measured non-prose
+    #: classes. Part of identity, not decoration: it decides which reattachment
+    #: cascade runs, and two sources of different kinds must never resolve to
+    #: each other.
+    source_class: str = "paragraph"
     prefix: str = ""
     suffix: str = ""
 
