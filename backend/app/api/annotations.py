@@ -16,6 +16,16 @@ from typing import Any
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from urllib.parse import quote
+
+from app.annotations.export import (
+    export_filename,
+    now_iso,
+    prepare,
+    render_json,
+    render_markdown,
+    to_export_dict,
+)
 from app.annotations.service import resolve_annotation, summary, summary_unresolved
 from app.annotations.store import AnnotationStore
 from app.document.persistence import read_ir
@@ -161,6 +171,87 @@ async def list_annotations(request: Request, document_id: str) -> Any:
             for annotation in annotations
         ],
     }
+
+
+@router.get("/documents/{document_id}/export/notes.md")
+async def export_notes_markdown(request: Request, document_id: str) -> Any:
+    return _export(request, document_id, "markdown")
+
+
+@router.get("/documents/{document_id}/export/notes.json")
+async def export_notes_json(request: Request, document_id: str) -> Any:
+    return _export(request, document_id, "json")
+
+
+def _export(request: Request, document_id: str, flavour: str) -> Any:
+    """Both formats, one preparation.
+
+    The two routes exist rather than one route with a `format` query parameter
+    for a small reason with a large failure mode: the browser derives the saved
+    filename from the URL path when `Content-Disposition` is ignored, and a
+    download called `notes.json?format=json` is a file the reader has to rename.
+
+    **This route does not extract the document.** It reads a cached IR when one
+    already exists, to say the paper's title and which section a note sits in.
+    Producing one is a fourteen-second ONNX pass, and a download must never pay
+    for it — the same boundary DS-QA-010-FIX-001 drew for the notes list, and
+    load-bearing for the same reason.
+    """
+    store = _store(request)
+    if store is None:
+        return error_response("UNAVAILABLE", "Annotations are not available.", 503)
+
+    document_store = request.app.state.document_store
+    record = document_store.get_document(document_id)
+    if record is None:
+        return error_response("NOT_FOUND", "No such document.", 404)
+
+    directory = document_store.document_dir(document_id)
+    ir = read_ir(directory)  # a file read; never an extraction
+    content_hash = ir.content_hash if ir is not None else _fingerprint_of(directory)
+    if content_hash is None:
+        return error_response("NOT_FOUND", "The source file is no longer available.", 404)
+
+    annotations = store.list_for_content(content_hash)
+    entries = prepare(annotations, ir=ir, store=store)
+    filename = export_filename(record.name, "md" if flavour == "markdown" else "json")
+    exported_at = now_iso()
+    title = (ir.metadata.title if ir is not None and ir.metadata.title else None) or record.name
+
+    if flavour == "markdown":
+        body = render_markdown(
+            entries, title=title, filename=record.name,
+            content_hash=content_hash, exported_at=exported_at,
+        )
+        media_type = "text/markdown; charset=utf-8"
+    else:
+        payload = to_export_dict(
+            entries, document_id=document_id, filename=record.name,
+            content_hash=content_hash, exported_at=exported_at,
+        )
+        body = render_json(payload)
+        media_type = "application/json; charset=utf-8"
+
+    return Response(
+        content=body.encode("utf-8"),
+        media_type=media_type,
+        headers={
+            # `filename*` carries the UTF-8 name for clients that read RFC 5987,
+            # and the quoted `filename` is the ASCII-safe fallback — without it a
+            # paper titled 深度学习 downloads as mojibake on any client that only
+            # understands the older parameter.
+            "Content-Disposition": (
+                f'attachment; filename="{_ascii_fallback(filename)}"; '
+                f"filename*=UTF-8''{quote(filename)}"
+            ),
+        },
+    )
+
+
+def _ascii_fallback(filename: str) -> str:
+    """The name with anything outside ASCII replaced, never dropped."""
+    cleaned = filename.encode("ascii", "replace").decode("ascii")
+    return cleaned.replace("?", "_").replace("\\", "_").replace('"', "_")
 
 
 def _fingerprint_of(directory) -> str | None:

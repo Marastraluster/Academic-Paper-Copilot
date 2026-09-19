@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { Highlighter, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
+import { Download, Highlighter, MessageSquarePlus, Pencil, Search, Trash2, X } from "lucide-react";
 
 import type { AnnotationView, ResolutionState } from "@/api/annotations";
+import { apiUrl } from "@/api/config";
 import {
   createFromSelection,
   editAnnotation,
   loadAnnotations,
   removeAnnotation,
 } from "@/notes/session";
+import { buildSearchIndex, filterAnnotations } from "@/notes/search";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { jumpToAnnotation } from "@/notes/jump";
 import { cn } from "@/lib/utils";
@@ -41,6 +43,7 @@ export function NotesPanel() {
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   const ready = document_?.registration === "ready";
   const documentId = document_?.documentId ?? null;
@@ -58,6 +61,14 @@ export function NotesPanel() {
     }
   }, [ready, documentId, annotationsFor]);
 
+  // Switching papers clears the query. A filter carried across would show the
+  // new paper's notes already reduced, with the reason sitting in a box the
+  // reader has to notice — which is an empty-looking panel for a paper that has
+  // notes, the exact confusion this feature must not add.
+  useEffect(() => {
+    setQuery("");
+  }, [documentId]);
+
   const ordered = useMemo(() => {
     const list = [...(annotations ?? [])];
     list.sort((left, right) => {
@@ -68,6 +79,31 @@ export function NotesPanel() {
     });
     return list;
   }, [annotations]);
+
+  /* Normalised once per list rather than once per keystroke. The corpus does not
+     change while the reader types, and re-folding five hundred notes to answer
+     one keystroke is five hundred times the work for the same result. Rebuilt
+     when the list is replaced — which a create, edit or delete does, so a search
+     is never stale. */
+  const searchIndex = useMemo(() => buildSearchIndex(ordered), [ordered]);
+  const visible = useMemo(() => {
+    const started = performance.now();
+    const matched = filterAnnotations(ordered, searchIndex, query);
+    /* Timed where it runs, and only where it runs.
+     *
+     * The budget the criteria freeze is on the *filtering*, and the number a
+     * reader experiences includes React re-rendering every matching row — five
+     * hundred of them. Measuring the second and reporting it as the first would
+     * fail a criterion the code passes, and measuring it in a test runner would
+     * report jsdom's `String.normalize` rather than the browser's. Two marks per
+     * keystroke cost nothing and make the frozen quantity observable from
+     * outside. */
+    performance.mark("notes-filter-start", { startTime: started });
+    performance.mark("notes-filter-end");
+    performance.measure("notes-filter", "notes-filter-start", "notes-filter-end");
+    return matched;
+  }, [ordered, searchIndex, query]);
+  const searching = query.trim() !== "";
 
   const hasSelection = (selection?.mapping.paragraphIds.length ?? 0) > 0;
 
@@ -133,16 +169,110 @@ export function NotesPanel() {
         )}
       </div>
 
+      {/* Search and export sit under the create block rather than in a toolbar of
+          their own: three controls in a 340 px column do not need a chrome layer,
+          and a reader who wants either one is already looking here. */}
+      <div className="shrink-0 border-b px-2 py-1.5" data-testid="notes-tools">
+        <div className="relative">
+          <Search
+            className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <input
+            data-testid="notes-search-input"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && query !== "") {
+                event.stopPropagation();
+                setQuery("");
+              }
+            }}
+            placeholder="搜索笔记…"
+            aria-label="搜索笔记"
+            className="w-full rounded-sm border bg-background py-1 pl-6 pr-6 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          />
+          {query !== "" && (
+            <button
+              type="button"
+              data-testid="notes-search-clear"
+              aria-label="清除搜索"
+              onClick={() => setQuery("")}
+              className="absolute right-1 top-1/2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <X className="h-3 w-3" aria-hidden="true" />
+            </button>
+          )}
+        </div>
+
+        {/* Plain anchor downloads, like the translation menu: the browser streams
+            the file the backend generated straight to disk, so there is no object
+            URL to own or revoke. No `download` attribute, deliberately — the name
+            the reader gets is the one the backend sanitised for their filesystem,
+            and a second sanitiser here would be a second answer to disagree with. */}
+        <div className="mt-1 flex items-center gap-1 text-2xs text-muted-foreground">
+          <Download className="h-3 w-3" aria-hidden="true" />
+          <span>导出</span>
+          <a
+            data-testid="export-notes-markdown"
+            href={documentId ? apiUrl(`/api/documents/${encodeURIComponent(documentId)}/export/notes.md`) : undefined}
+            aria-disabled={ordered.length === 0}
+            title={ordered.length === 0 ? "当前文档暂无笔记可导出" : "导出为 Markdown"}
+            onClick={(event) => {
+              if (ordered.length === 0) event.preventDefault();
+            }}
+            className={cn(
+              "rounded-sm px-1.5 py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+              ordered.length === 0
+                ? "pointer-events-none opacity-40"
+                : "hover:bg-accent hover:text-foreground",
+            )}
+          >
+            Markdown
+          </a>
+          <a
+            data-testid="export-notes-json"
+            href={documentId ? apiUrl(`/api/documents/${documentId}/export/notes.json`) : undefined}
+            aria-disabled={ordered.length === 0}
+            title={ordered.length === 0 ? "当前文档暂无笔记可导出" : "导出为 JSON"}
+            onClick={(event) => {
+              if (ordered.length === 0) event.preventDefault();
+            }}
+            className={cn(
+              "rounded-sm px-1.5 py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+              ordered.length === 0
+                ? "pointer-events-none opacity-40"
+                : "hover:bg-accent hover:text-foreground",
+            )}
+          >
+            JSON
+          </a>
+          {searching && ordered.length > 0 && (
+            <span data-testid="notes-export-scope" className="ml-auto">
+              全部 {ordered.length} 条
+            </span>
+          )}
+        </div>
+      </div>
+
       {annotations !== null && annotations.length === 0 ? (
         <p data-testid="notes-none" className="px-3 py-6 text-xs text-muted-foreground">
           在论文中选择文字即可添加高亮或笔记。
+        </p>
+      ) : searching && visible.length === 0 ? (
+        /* A different sentence from the one above, on purpose. "You have not
+           written anything yet" and "nothing matches what you typed" call for
+           different next actions, and one sentence for both teaches the reader
+           nothing about which they are in. */
+        <p data-testid="notes-search-empty" className="px-3 py-6 text-xs text-muted-foreground">
+          未找到匹配的笔记或高亮
         </p>
       ) : (
         <ul
           data-testid="notes-list"
           className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1 py-1"
         >
-          {ordered.map((annotation) => (
+          {visible.map((annotation) => (
             <NoteRow
               key={annotation.id}
               annotation={annotation}
@@ -198,14 +328,24 @@ function NoteRow({
     <li
       data-testid={`note-${annotation.id}`}
       data-active={active}
+      onClick={onSelect}
       className={cn(
-        "mb-1 rounded-sm border px-2 py-1.5 text-xs",
+        "mb-1 cursor-pointer rounded-sm border px-2 py-1.5 text-xs",
         active ? "border-primary/40 bg-primary/5" : "border-transparent hover:bg-accent/50",
       )}
     >
+      {/* The whole row selects, not only the quote line. A reader clicking a
+          search result aims at the result; with the handler on the quote alone,
+          a click on the note's own text did nothing — which reads as a result
+          that cannot be opened. The controls inside the row stop the event, so
+          editing or deleting never also jumps the reader somewhere. */}
       <button
         type="button"
-        onClick={onSelect}
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect();
+        }}
+        aria-label="跳转到标注位置"
         className="w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
         <p className="line-clamp-2 text-2xs italic text-muted-foreground">
@@ -226,7 +366,10 @@ function NoteRow({
           <button
             type="button"
             data-testid={`note-save-${annotation.id}`}
-            onClick={() => onSave(value)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSave(value);
+            }}
             className="rounded-sm px-1.5 py-0.5 text-2xs hover:bg-accent"
           >
             保存
