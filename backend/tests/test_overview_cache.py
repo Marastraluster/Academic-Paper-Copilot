@@ -16,11 +16,14 @@ from pathlib import Path
 import pytest
 
 from app.overview.cache import (
+    STALE_TEMP_SECONDS,
+    TEMP_PREFIX,
     cache_is_compatible,
     delete_overview,
     overview_dir,
     overview_path,
     read_overview,
+    remove_temp_files,
     write_overview,
 )
 from app.overview.models import (
@@ -135,6 +138,26 @@ class TestWhatInvalidates:
             write_overview(Path(root), an_overview(schema_version="0"))
             assert read_overview(Path(root), **store(Path(root))) is None
 
+    def test_a_pipeline_change_invalidates(self) -> None:
+        """A third axis, and a real one: the prompt can be unchanged while the
+        code around it changes what the answer becomes. The reader would be
+        shown a run this pipeline no longer produces."""
+        with tempfile.TemporaryDirectory() as root:
+            write_overview(Path(root), an_overview(pipeline_version="0.9.0"))
+            assert read_overview(Path(root), **store(Path(root))) is None
+
+    def test_an_artifact_written_before_the_dimension_existed_still_reads(self) -> None:
+        """It was written by the only pipeline version there has ever been.
+        Reading it as empty would charge the reader for a rename."""
+        with tempfile.TemporaryDirectory() as root:
+            write_overview(Path(root), an_overview())
+            path = overview_path(Path(root), HASH_A, "zh-CN")
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            del payload["pipeline_version"]
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            assert read_overview(Path(root), **store(Path(root))) is not None
+
     def test_a_re_extraction_invalidates(self) -> None:
         """Evidence ids are paragraph ids, and an extraction change renumbers
         them — DS-DOC-002 measured 145 of 160. An overview from a previous
@@ -154,6 +177,22 @@ class TestWhatInvalidates:
             found = read_overview(Path(root), **store(Path(root)))
             assert found is not None and found.status == "PARTIAL"
 
+    def test_reported_usage_survives_the_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            write_overview(Path(root), an_overview(input_tokens=1200, output_tokens=340))
+            found = read_overview(Path(root), **store(Path(root)))
+            assert found is not None
+            assert (found.input_tokens, found.output_tokens) == (1200, 340)
+
+    def test_unreported_usage_reads_back_as_absent(self) -> None:
+        """Absent, not zero. Zero is a measurement; this is the absence of one,
+        and the panel renders the two differently."""
+        with tempfile.TemporaryDirectory() as root:
+            write_overview(Path(root), an_overview(input_tokens=None, output_tokens=None))
+            found = read_overview(Path(root), **store(Path(root)))
+            assert found is not None
+            assert found.input_tokens is None and found.output_tokens is None
+
     def test_another_model_does_not_invalidate(self) -> None:
         """A different model produces a different overview, but the one already
         made still describes a paper that has not changed. Throwing it away would
@@ -168,6 +207,26 @@ class TestWhatInvalidates:
 
 
 class TestBadFilesAreAbsentRatherThanFatal:
+    def test_a_corrupt_cache_says_so_in_the_log(self, caplog) -> None:
+        """AC-P0-12. "Absent" is the right answer, but a file that exists and
+        cannot be read is a different situation from no file at all, and the only
+        way anyone finds out is if it is said out loud."""
+        import logging
+
+        with tempfile.TemporaryDirectory() as root:
+            path = overview_path(Path(root), HASH_A, "zh-CN")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{not json at all", encoding="utf-8")
+
+            with caplog.at_level(logging.WARNING):
+                assert read_overview(Path(root), **store(Path(root))) is None
+
+            assert any(
+                "unreadable" in record.message for record in caplog.records
+            ), caplog.text
+            # And never the file's content: it holds paper prose.
+            assert "not json at all" not in caplog.text
+
     def test_corrupt_json_reads_as_absent(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             path = overview_path(Path(root), HASH_A, "zh-CN")
@@ -239,6 +298,36 @@ class TestAtomicWrite:
             assert payload["items"][0]["evidence"] == [
                 {"paragraph_id": "p_1", "page_number": 1}
             ]
+
+    def test_a_killed_process_leaves_nothing_behind_forever(self) -> None:
+        """AC-P0-14. A write that dies mid-flight leaves a temporary file, and
+        nothing in the process that died will ever clean it up. The next write
+        does, once the file is old enough that no live writer could own it."""
+        with tempfile.TemporaryDirectory() as root:
+            directory = overview_dir(Path(root))
+            directory.mkdir(parents=True, exist_ok=True)
+            stale = directory / f"{TEMP_PREFIX}abc123.tmp"
+            fresh = directory / f"{TEMP_PREFIX}def456.tmp"
+            stale.write_text('{"half an ov', encoding="utf-8")
+            fresh.write_text('{"half an ov', encoding="utf-8")
+
+            import os
+            import time
+
+            old = time.time() - STALE_TEMP_SECONDS - 60
+            os.utime(stale, (old, old))
+
+            write_overview(Path(root), an_overview())
+
+            assert not stale.exists(), "the stale temporary file was left behind"
+            assert fresh.exists(), "an in-flight write was destroyed by the sweep"
+            assert overview_path(Path(root), HASH_A, "zh-CN").is_file()
+            assert read_overview(Path(root), **store(Path(root))) is not None
+
+    def test_the_sweep_never_raises_on_an_unreadable_directory(self) -> None:
+        """Housekeeping must not be the reason a paid-for write fails."""
+        with tempfile.TemporaryDirectory() as root:
+            assert remove_temp_files(Path(root) / "does-not-exist") == []
 
     def test_deleting_removes_only_that_language(self) -> None:
         with tempfile.TemporaryDirectory() as root:

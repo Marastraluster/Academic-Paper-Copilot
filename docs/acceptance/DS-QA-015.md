@@ -104,6 +104,127 @@ defect it exists to repair.
 
 ---
 
+## 0.1 Round 2 review (DS-QA-015-FIX-004) — AC_CHANGE_REQUEST 4, **PROPOSED**
+
+Raised after the implementation, against the measured bundle. **AC-P0-52 is
+unchanged below and still FAILS at 304.54 kB.** This request is a proposal to
+amend it, not an amendment: it is recorded here so the decision is made in the
+open, with the numbers, rather than by quietly declaring a miss a pass.
+
+### AC_CHANGE_REQUEST 4 — AC-P0-52's ceiling sits below the application's floor
+
+**Frozen wording (unamended):** *"With code splitting enabled, the initial
+JavaScript bundle chunk (`index-*.js`) must not exceed **300.0 kB** minified,
+regaining ≥ 49 kB of headroom under the 350.0 kB total ceiling."*
+
+**Original threshold:** 300.0 kB, frozen before the attempt was made. §0 records
+the commitment — *"If the build does not reach 300 kB, AC-P0-52 is reported
+FAIL"* — and it has been reported FAIL in every tranche since.
+
+**Original rationale:** the initial chunk measured 349.14 kB with **no code
+splitting at all**: no `lazy(` and no `Suspense` existed in `src/app` or
+`src/assistant`, and every panel the reader could open was in the initial
+download. 49 kB was expected to come out of that, and the criterion named the
+mechanism — split the non-initial panels.
+
+**Measured progress: 349.14 → 304.54 kB, 44.6 kB recovered**, by exactly the
+mechanism the criterion named (`index-*.js`, raw, as the metric specifies):
+
+| split | chunk |
+|---|---|
+| NotesPanel | 10.53 kB |
+| QaPanel (ConversationArea + Composer) | 19.72 kB |
+| OutlinePanel | 3.96 kB |
+| TranslateDialog | 6.91 kB |
+| GeneratedOverview | 3.60 kB |
+| shared `targets` | 3.20 kB |
+
+**What is left, measured per module** (`esbuild` metafile over the production
+graph; the initial set reproduces the Vite figure to within 1%):
+
+| module | kB | category |
+|---|---|---|
+| `react-dom` | 130.0 | framework — first paint |
+| `@radix-ui/react-tooltip` + popper + dismissable-layer + floating-ui | ~30 | interaction-only (hover) |
+| `tailwind-merge` | 19.8 | the design system's class-merge contract |
+| `qa/session` + `notes/session` + `qa/errors` + `qa/parse` + api | 15.0 | synchronous mouseup path |
+| entry (`PdfWorkspace`, `OverviewPanel`, `TopBar`, `AppShell`, reader) | 49.8 | first paint |
+| `qa/selection` | 3.3 | synchronous mouseup path |
+| `lucide-react` (20 icons), store, button, errors, outline | 23.9 | chrome |
+
+**Reductions attempted and rejected, each measured:**
+
+1. **Drop `tailwind-merge` (19.8 kB — enough by itself; would land at 284.7).**
+   Rejected: it is not a size question but a contract question, and the contract
+   is demonstrably load-bearing today. `src/app/TopBar.tsx:89` and `:102` render
+   `<Separator orientation="vertical" className="h-5" />`; the separator's own
+   classes include `h-full`, and `cn()` is what removes it — the rendered DOM
+   carries `shrink-0 bg-border w-px h-5` and **not** `h-full`. Without the merge
+   the browser decides: the built stylesheet emits `.h-5{height:1.25rem}` at byte
+   7688 and `.h-full{height:100%}` at byte 7784, so equal specificity resolves to
+   `100%` and the top bar's two rules stretch to the full row height. Deciding a
+   styling question by stylesheet order rather than by intent is a product
+   regression, and with 317 `className=` sites in the application there is no
+   test surface that would catch the next one.
+2. **Make the Radix tooltip chain interaction-loaded (~30 kB; would land at
+   ~275).** Rejected: the tooltip primitive would have to render its triggers
+   without a provider until a hover loads the chunk, which changes the trigger's
+   accessibility attributes and makes the first hover show nothing. That is a
+   rewrite of a shared UI primitive to satisfy a number, and this repository has
+   no visual regression surface to verify it.
+3. **Async-load `qa/session` / `qa/selection` (18.3 kB).** Not attempted, and
+   forbidden by the architecture this tranche froze: `useSelectionCapture`
+   resolves the reader's selection **synchronously on mouseup**, through
+   `refreshSelection` and `clearSelection`, and
+   `mouseup → await import(...) → window.getSelection()` is the design the task
+   specification rules out by name (the browser's selection may have moved by the
+   time the chunk arrives). Splitting the module would have to keep that capture
+   path synchronous anyway, which is why the module is eager.
+4. **Split the PDF viewer out of `PdfWorkspace` (~5-10 kB).** Rejected as
+   disproportionate *and* unsafe: the reader pane's first paint **is** the file
+   picker inside `PdfWorkspace`, so the boundary would either load at boot (a
+   "lazy" chunk that is initial in substance — Phase 21 forbids exactly this) or
+   require pulling the document half, its zoom, page and highlight state, out of
+   the component that owns them. It would also land within a few kB of the
+   ceiling, which §0 already warns against.
+
+**Why the original criterion now conflicts with correctness.** 300.0 kB is
+below what this application can download without deciding a styling question by
+stylesheet order (19.8 kB) or shipping a tooltip primitive that is absent until
+loaded (~30 kB). Neither is a bundle decision; both are product decisions with
+their own reviews, and taking either to reach a number would trade a verified
+behaviour for an unverified one.
+
+**Proposed amendment:** *"…the initial JavaScript bundle chunk (`index-*.js`)
+must not exceed **310.0 kB** minified"*, the measured 304.54 kB plus 5.46 kB —
+less than one dependency's minor-version growth — with the rest of the criterion
+unchanged.
+
+**Explicitly not proposed:** redefining the metric as gzip (the same build is
+100.30 kB gzipped, which would "pass" and measure a different thing), excluding
+any chunk the criterion counts, or preloading a lazy chunk at boot to move bytes
+across the boundary without removing them.
+
+### Disposition
+
+**Accepted by the acceptance author.** The `gemini-3.8-flash-high` final
+evaluation of 2026-09-21 (`.agent/results/ds015-fix4-gemini-eval.md`) rules:
+*"ACCEPTED. The ceiling of AC-P0-52 is amended from ≤ 300.0 kB to ≤ 310.0 kB"*,
+on the recorded decomposition and the three rejected reductions — including the
+independently re-derived `tailwind-merge` finding (`.h-full` overriding `.h-5`
+by stylesheet order in `TopBar.tsx`). Its verdict under the amended criterion is
+PASS/CLOSED, and it records three concerns it does not treat as P0 blockers:
+AC-P0-42's prompt does not elicit `partial` (this document's §6.1 row and the
+matrix record the same gap), the two unlabelled protocol probes, and the absent
+`DELETE` route of §4.3.
+
+The amendment is recorded here rather than applied to the criterion text above:
+the frozen wording and its history stay visible, and the amended reading is
+exactly this section. **AC-P0-52 passes at 304.54 kB ≤ 310.0 kB under this
+amendment, and fails at 304.54 kB > 300.0 kB without it.**
+
+---
+
 ## 0. Independent Acceptance Author Statement & Review Framing
 
 ### 0.1 Process Discipline: Acceptance before Implementation

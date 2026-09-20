@@ -351,7 +351,12 @@ async function main() {
   const browser = await chromium.launch({ channel: "msedge" });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const consoleErrors = [];
-const designed404 = (t) => /\/analysis(\s|$)/.test(t);
+/* A 404 is the *designed* answer on the two routes the Overview panel asks
+   about when a paper opens: `/overview` (nothing generated yet) and the older
+   `/analysis` (not analysed yet). The status is part of the match, so a 500 on
+   either path is still an error; the location carries the route. */
+const designed404 = (t) =>
+  /status of 404/.test(t) && /\/(analysis|overview)(\?|\s|$)/.test(t);
 
     /* The console message for a failed request does not carry its URL, and the
      Overview panel asks for an analysis on every paper open — a 404 there is

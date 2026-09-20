@@ -17,6 +17,7 @@ defect reintroduced at the API.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -24,7 +25,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.errors import error_response
 from app.overview.cache import read_overview, write_overview
-from app.overview.models import ReaderOverview
+from app.overview.models import EvidenceRef, ReaderOverview
 from app.overview.pipeline import generate_overview
 
 router = APIRouter(tags=["overview"])
@@ -41,13 +42,26 @@ class GenerateOverview(BaseModel):
     force: bool = False
 
 
-def _payload(overview: ReaderOverview, *, cached: bool) -> dict[str, Any]:
-    """Everything the panel renders, and nothing that is not the reader's.
+def _evidence_payload(evidence: Sequence[EvidenceRef]) -> list[dict[str, Any]]:
+    """Where an item came from, in the two forms the page can use.
 
-    No paragraph text is sent for the evidence — only the page, which is what a
-    jump needs and what belongs to the immutable PDF. The text is already in the
-    document the reader is looking at.
+    The **page** is what a jump needs and what belongs to the immutable PDF. The
+    **paragraph id** is the key into the document the reader is already looking
+    at — the client resolves that paragraph's rectangle from its own IR, which is
+    the only geometry anyone has: the model was never shown a coordinate, so a
+    rectangle in an artifact would be a rectangle nobody measured.
+
+    No paragraph text travels here. It is already in the client, and sending it
+    again would put paper prose in a second place that has to be kept true.
     """
+    return [
+        {"paragraph_id": ref.paragraph_id, "page_number": ref.page_number}
+        for ref in evidence
+    ]
+
+
+def _payload(overview: ReaderOverview, *, cached: bool) -> dict[str, Any]:
+    """Everything the panel renders, and nothing that is not the reader's."""
     return {
         "status": overview.status,
         "cached": cached,
@@ -55,6 +69,10 @@ def _payload(overview: ReaderOverview, *, cached: bool) -> dict[str, Any]:
         "target_language": overview.target_language,
         "provider_model": overview.provider_model,
         "created_at": overview.created_at,
+        # Provider-reported, or `None`. The panel renders the second as
+        # "Token 统计不可用"; it never renders an estimate.
+        "input_tokens": overview.input_tokens,
+        "output_tokens": overview.output_tokens,
         "source_sections": list(overview.source_sections),
         "notes": list(overview.notes),
         "items": [
@@ -63,9 +81,7 @@ def _payload(overview: ReaderOverview, *, cached: bool) -> dict[str, Any]:
                 "text": item.text,
                 "inferred": item.inferred,
                 "partial": item.partial,
-                "evidence": [
-                    {"page_number": ref.page_number} for ref in item.evidence
-                ],
+                "evidence": _evidence_payload(item.evidence),
             }
             for item in overview.items
         ],
@@ -73,7 +89,7 @@ def _payload(overview: ReaderOverview, *, cached: bool) -> dict[str, Any]:
             {
                 "term": term.term,
                 "definition": term.definition,
-                "evidence": [{"page_number": ref.page_number} for ref in term.evidence],
+                "evidence": _evidence_payload(term.evidence),
             }
             for term in overview.key_terms
         ],

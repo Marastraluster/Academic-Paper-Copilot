@@ -904,3 +904,74 @@ describe("DS-QA-003 · stale results", () => {
     expect(useWorkspaceStore.getState().turns).toHaveLength(0);
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * DS-QA-015 — the overview beside this panel
+ * ------------------------------------------------------------------ */
+
+describe("DS-QA-015 · the overview does not disturb this panel", () => {
+  it("leaves the conversation exactly as it was across a generation (AC-P0-48)", async () => {
+    /* The overview and Paper QA share one store, and a generation writes to it
+       from a different tab. The reader's conversation is the thing that must not
+       move: they asked questions, and pressing a button on another panel is not
+       an answer to any of them. */
+    await setupScene();
+    const user = userEvent.setup();
+
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const path = String(url);
+      if (path.includes("/overview")) {
+        return init?.method === "POST"
+          ? jsonResponse(overviewBody())
+          : jsonResponse({ error: { code: "OVERVIEW_NOT_FOUND" } }, 404);
+      }
+      return jsonResponse(answered());
+    });
+
+    await ask(user, "什么是退化问题？");
+    await waitFor(() => expect(screen.getByTestId("qa-answer-body")).toBeInTheDocument());
+
+    const before = useWorkspaceStore.getState().turns;
+    expect(before).toHaveLength(1);
+    const turnId = before[0].id;
+
+    // The reader leaves for 概览 and spends a model call there.
+    useWorkspaceStore.setState({ outlinePanel: "overview" });
+    await waitFor(() => expect(screen.getByTestId("overview-generate")).toBeInTheDocument());
+    await user.click(screen.getByTestId("overview-generate"));
+    await waitFor(() => expect(useWorkspaceStore.getState().overview).not.toBeNull());
+
+    // And comes back.
+    useWorkspaceStore.setState({ outlinePanel: "qa" });
+
+    const after = useWorkspaceStore.getState().turns;
+    expect(after).toEqual(before);
+    await waitFor(() => expect(screen.getByTestId(`qa-turn-${turnId}`)).toBeInTheDocument());
+    expect(screen.getByTestId("qa-answer-body")).toHaveTextContent("Residual learning");
+    expect(screen.getAllByTestId(/^qa-turn-/)).toHaveLength(1);
+
+    // The scope the question was asked in is the reader's, not the overview's.
+    expect(useWorkspaceStore.getState().scope).not.toBe("selection");
+  });
+});
+
+function overviewBody() {
+  return {
+    status: "READY",
+    cached: false,
+    content_hash: "hash",
+    target_language: "zh-CN",
+    provider_model: "deepseek-flash",
+    created_at: "2026-09-19T00:00:00+00:00",
+    input_tokens: 10,
+    output_tokens: 5,
+    source_sections: ["1. Introduction"],
+    notes: [],
+    items: [{
+      category: "core_idea", text: "残差学习。",
+      inferred: false, partial: false,
+      evidence: [{ paragraph_id: "p_0001", page_number: 1 }],
+    }],
+    key_terms: [],
+  };
+}

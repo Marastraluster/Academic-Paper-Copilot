@@ -32,6 +32,13 @@ OVERVIEW_ARTIFACT_KIND = "reader_overview"
 #: point at.
 OVERVIEW_SCHEMA_VERSION = "1"
 
+#: The generation pipeline's own version. A third axis, and it earns its place:
+#: the prompt can be unchanged while the code around it changes what the answer
+#: becomes — a different repair rule, a different validation, a different packet.
+#: An overview made by an older pipeline is not reused, because the reader would
+#: be shown a run this code no longer produces.
+OVERVIEW_PIPELINE_VERSION = "1.0.0"
+
 #: How the reader synthesis is asked. Bumped when the prompt changes materially;
 #: a stored overview under an older version is not reused.
 READER_OVERVIEW_PROMPT_VERSION = "1.0.0"
@@ -106,7 +113,13 @@ class ReaderOverview:
     ir_pipeline_version: str = ""
     artifact_kind: str = OVERVIEW_ARTIFACT_KIND
     schema_version: str = OVERVIEW_SCHEMA_VERSION
+    pipeline_version: str = OVERVIEW_PIPELINE_VERSION
     prompt_version: str = READER_OVERVIEW_PROMPT_VERSION
+    #: Provider-reported, or `None`. Never estimated from character counts: a
+    #: number nobody measured, presented beside one that was, is worse than no
+    #: number — and `None` travels all the way to the reader as "unavailable".
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     #: Recorded for the reader to see, **not** part of the invalidation key: a
     #: different model produces a different overview, but the one already made is
     #: still a true description of a paper that has not changed.

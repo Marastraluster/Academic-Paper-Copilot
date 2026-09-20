@@ -31,13 +31,16 @@ export type OverviewCategory =
   | "limitations";
 
 export interface OverviewEvidence {
-  /** 1-based, and the only provenance the client is given.
-   *
-   * No rectangle and no paragraph id: the page belongs to the immutable PDF and
-   * is enough to jump to, and the geometry is resolved from the document the
-   * reader is already looking at rather than from a generated artifact. A model
-   * that could name a rectangle could name a wrong one. */
+  /** 1-based, and the half of the provenance that belongs to the immutable PDF. */
   page_number: number;
+  /** The paragraph this evidence is, looked up in the IR the client already has.
+   *
+   * The rectangle is resolved from that IR rather than taken from the artifact.
+   * The difference matters: the model was shown excerpts and never a coordinate,
+   * so geometry travelling in an overview would be geometry nobody measured. The
+   * id is backend-validated against the packet, so it names a paragraph that
+   * exists — and when it does not resolve the jump still goes to the page. */
+  paragraph_id: string;
 }
 
 export interface OverviewItemView {
@@ -66,6 +69,10 @@ export interface OverviewView {
    *  the current one's. */
   provider_model: string;
   created_at: string;
+  /** Provider-reported, or `null` when the endpoint did not report them. The
+   *  panel says so rather than showing a number nobody measured. */
+  input_tokens: number | null;
+  output_tokens: number | null;
   source_sections: string[];
   /** Why a PARTIAL or FAILED run is not complete. Never empty for those. */
   notes: string[];

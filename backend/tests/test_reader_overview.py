@@ -23,9 +23,13 @@ from app.document.models import (
     SectionIR,
 )
 from app.llm.base import LLMProvider
-from app.llm.models import LLMRequest, LLMResult
+from app.llm.models import LLMRequest, LLMResult, LLMUsage
 from app.overview.evidence import build_evidence_packet, classify_section
-from app.overview.pipeline import build_overview, generate_overview
+from app.overview.pipeline import (
+    META_CLAIM_VOCABULARY,
+    build_overview,
+    generate_overview,
+)
 from app.overview.prompt import MAX_ITEMS, MAX_KEY_TERMS, build_messages
 
 
@@ -201,6 +205,18 @@ class TestThePromptSpeaksToAReader:
         assert MAX_ITEMS["contributions"] <= 5
         assert MAX_KEY_TERMS <= 15
 
+    def test_the_meta_claim_vocabulary_is_pinned(self) -> None:
+        """ACR 3 in `docs/acceptance/DS-QA-015.md`: the detector is a named list,
+        so adding a phrase is a reviewable change and the check cannot drift.
+        Widening it is a deliberate edit to this assertion rather than a quiet
+        tweak to a filter nobody is looking at."""
+        assert META_CLAIM_VOCABULARY == (
+            "translation", "translator", "translating", "translate",
+            "preserve spelling", "spelling consistency",
+            "terminology consistency", "term consistency",
+            "rendered in chinese", "render in chinese",
+        )
+
 
 class TestValidation:
     def _packet(self):
@@ -287,6 +303,18 @@ class TestValidation:
         overview, _ = self._build(payload)
         assert len(overview.key_terms) == MAX_KEY_TERMS
 
+    def test_a_partial_claim_is_carried_through(self) -> None:
+        """The synthesis said its evidence supports part of the claim. That is
+        what the reader is shown, and it has to survive validation to get there."""
+        payload = self._full_payload()
+        payload["items"][0]["partial"] = True
+        overview, _ = self._build(payload)
+        assert overview.items_in("research_question")[0].partial is True
+
+    def test_a_claim_is_not_partial_unless_it_says_so(self) -> None:
+        overview, _ = self._build(self._full_payload())
+        assert all(item.partial is False for item in overview.items)
+
     def test_a_missing_category_makes_it_partial_rather_than_ready(self) -> None:
         payload = self._full_payload()
         payload["items"] = [i for i in payload["items"] if i["category"] != "findings"]
@@ -306,14 +334,17 @@ class TestValidation:
 class ScriptedProvider(LLMProvider):
     protocol = "scripted"
 
-    def __init__(self, *answers: str) -> None:
+    def __init__(self, *answers: str, usage: LLMUsage | None = None) -> None:
         self._answers = list(answers)
+        self._usage = usage
         self.requests: list[LLMRequest] = []
 
     async def generate(self, request: LLMRequest) -> LLMResult:
         self.requests.append(request)
         text = self._answers.pop(0) if self._answers else ""
-        return LLMResult(text=text, model="scripted", protocol=self.protocol)
+        return LLMResult(
+            text=text, model="scripted", protocol=self.protocol, usage=self._usage,
+        )
 
     async def test_connection(self):
         raise NotImplementedError
@@ -372,3 +403,34 @@ class TestGeneration:
         assert outcome.provider_calls == 2
         assert outcome.overview.status == "FAILED"
         assert len(provider.requests) == 2, "the third answer was never asked for"
+
+    @pytest.mark.asyncio
+    async def test_reported_usage_is_recorded_on_the_artifact(self) -> None:
+        """The reader is shown what the run they are looking at cost. The ledger
+        knows it too, but the ledger is process-wide and does not travel with the
+        artifact the way this does."""
+        provider = ScriptedProvider(
+            self._answer(),
+            usage=LLMUsage(prompt_tokens=1200, completion_tokens=340, total_tokens=1540),
+        )
+        outcome = await generate_overview(self._ir(), provider, target_language="zh-CN")
+        assert (outcome.overview.input_tokens, outcome.overview.output_tokens) == (1200, 340)
+
+    @pytest.mark.asyncio
+    async def test_a_repair_is_counted_in_the_usage(self) -> None:
+        provider = ScriptedProvider(
+            "not json", self._answer(),
+            usage=LLMUsage(prompt_tokens=100, completion_tokens=10, total_tokens=110),
+        )
+        outcome = await generate_overview(self._ir(), provider, target_language="zh-CN")
+        assert outcome.provider_calls == 2
+        assert outcome.overview.input_tokens == 200
+
+    @pytest.mark.asyncio
+    async def test_unreported_usage_is_recorded_as_absent(self) -> None:
+        """Never estimated. An endpoint that reports nothing leaves nothing —
+        the panel says so, and a character count is not a token count."""
+        provider = ScriptedProvider(self._answer())
+        outcome = await generate_overview(self._ir(), provider, target_language="zh-CN")
+        assert outcome.overview.input_tokens is None
+        assert outcome.overview.output_tokens is None

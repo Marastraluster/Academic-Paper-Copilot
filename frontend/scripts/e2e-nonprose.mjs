@@ -219,7 +219,18 @@ async function main() {
   const browser = await chromium.launch({ channel: "msedge" });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const consoleErrors = [];
-  page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
+  /* A 404 is the *designed* answer on the two routes the Overview panel asks
+     about when a paper opens: `/overview` (nothing generated yet) and the older
+     `/analysis` (not analysed yet). The status is part of the match, so a 500 on
+     either path is still an error. */
+  const designed404 = (t) =>
+    /status of 404/.test(t) && /\/(analysis|overview)(\?|\s|$)/.test(t);
+  /* A failed request's console text does not carry its URL; the location does,
+     which is what lets the filter above name the route. */
+  page.on("console", (m) => {
+    if (m.type() !== "error") return;
+    consoleErrors.push(`${m.text()} :: ${m.location()?.url ?? ""}`);
+  });
   page.on("pageerror", (e) => consoleErrors.push(String(e)));
   page.on("request", (r) => {
     if (/deepseek|openai|anthropic|chat\/completions/.test(r.url())) providerCalls.push(r.url());
@@ -391,7 +402,8 @@ async function main() {
 
     check("no provider call was made", providerCalls.length === 0, providerCalls.join(", "));
     check("no uncaught console errors during the run",
-      consoleErrors.filter((t) => !/ERR_CONNECTION_(RESET|REFUSED)/.test(t)).length === 0,
+      consoleErrors.filter(
+        (t) => !/ERR_CONNECTION_(RESET|REFUSED)/.test(t) && !designed404(t)).length === 0,
       consoleErrors.slice(0, 2).join(" | "));
   } finally {
     await browser.close();

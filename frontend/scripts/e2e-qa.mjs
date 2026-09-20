@@ -328,7 +328,12 @@ async function main() {
   // The console message for a failed request carries no URL; the Overview panel
   // asks for an analysis on every paper open, and a 404 there is the route's
   // designed answer rather than a fault. The location does carry the URL.
-  const designed404 = (t) => /\/analysis(\s|$)/.test(t);
+  /* A 404 is the *designed* answer on the two routes the Overview panel asks
+   about when a paper opens: `/overview` (nothing generated yet) and the older
+   `/analysis` (not analysed yet). The status is part of the match, so a 500 on
+   either path is still an error; the location carries the route. */
+const designed404 = (t) =>
+  /status of 404/.test(t) && /\/(analysis|overview)(\?|\s|$)/.test(t);
   page.on("console", (message) => {
     if (message.type() !== "error") return;
     consoleErrors.push(`${message.text()} :: ${message.location()?.url ?? ""}`);

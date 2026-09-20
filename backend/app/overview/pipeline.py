@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 
 from app.document.models import DocumentIR
 from app.llm.base import LLMProvider
-from app.llm.models import LLMRequest
+from app.llm.models import LLMRequest, LLMUsage
 from app.overview.evidence import EvidencePacket, EvidenceUnit, build_evidence_packet
 from app.overview.models import (
     READER_OVERVIEW_PROMPT_VERSION,
@@ -77,6 +77,20 @@ class GenerationOutcome:
 def _meta_claim(text: str) -> bool:
     lowered = text.lower()
     return any(phrase in lowered for phrase in META_CLAIM_VOCABULARY)
+
+
+def _with_usage(overview: ReaderOverview, usages: list[LLMUsage | None]) -> ReaderOverview:
+    """Record what the provider said the run cost — or record nothing.
+
+    Nothing is the honest answer when any call left usage unreported: summing the
+    calls that did report would understate the run and be presented to the reader
+    as though it were the whole of it. The panel says "unavailable" instead, and
+    a character count dressed up as token usage never appears.
+    """
+    if usages and all(usage is not None for usage in usages):
+        overview.input_tokens = sum(usage.prompt_tokens for usage in usages if usage)
+        overview.output_tokens = sum(usage.completion_tokens for usage in usages if usage)
+    return overview
 
 
 def _parse(raw: str) -> dict | None:
@@ -180,6 +194,12 @@ def build_overview(
         items.append(OverviewItem(
             category=category, text=text, evidence=evidence,
             inferred=bool(raw.get("inferred", False)),
+            # Said by the synthesis when its evidence supports part of the claim
+            # rather than all of it. Carried through rather than inferred here:
+            # only the model has seen what the excerpts say, and a rule that
+            # guessed at support from the shape of the evidence would be marking
+            # claims on a criterion nobody applied.
+            partial=bool(raw.get("partial", False)),
         ))
 
     terms: list[KeyTerm] = []
@@ -257,6 +277,7 @@ async def generate_overview(
 
     result = await provider.generate(LLMRequest(messages=messages))
     calls = 1
+    usage = [result.usage]
     payload = _parse(result.text)
     repaired = False
 
@@ -274,17 +295,18 @@ async def generate_overview(
         ]
         result = await provider.generate(LLMRequest(messages=retry))
         calls += 1
+        usage.append(result.usage)
         payload = _parse(result.text)
 
     if payload is None:
         return GenerationOutcome(
-            overview=ReaderOverview(
+            overview=_with_usage(ReaderOverview(
                 content_hash=ir.content_hash, target_language=target_language,
                 status="FAILED", ir_pipeline_version=ir.pipeline_version,
                 provider_model=result.model or "", provider_base_url=provider_base_url,
                 created_at=created_at, source_sections=list(packet.sections),
                 notes=["the model did not return a usable JSON object"],
-            ),
+            ), usage),
             provider_calls=calls,
             repaired=repaired,
             dropped=["the whole response"],
@@ -300,5 +322,6 @@ async def generate_overview(
         created_at=created_at,
     )
     return GenerationOutcome(
-        overview=overview, provider_calls=calls, repaired=repaired, dropped=dropped,
+        overview=_with_usage(overview, usage),
+        provider_calls=calls, repaired=repaired, dropped=dropped,
     )

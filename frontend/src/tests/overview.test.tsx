@@ -68,19 +68,28 @@ function overview(over: Partial<OverviewView> = {}): OverviewView {
     target_language: "zh-CN",
     provider_model: "deepseek-flash",
     created_at: "2026-09-19T00:00:00+00:00",
+    input_tokens: 1520,
+    output_tokens: 640,
     source_sections: ["Abstract", "1. Introduction"],
     notes: [],
     items: [
       { category: "research_question", text: "论文解决深度网络的退化问题。",
-        inferred: false, partial: false, evidence: [{ page_number: 1 }] },
+        inferred: false, partial: false,
+        evidence: [{ paragraph_id: "p_1", page_number: 1 }] },
       { category: "core_idea", text: "让堆叠层拟合残差映射 F(x) = H(x) − x。",
-        inferred: false, partial: false, evidence: [{ page_number: 2 }] },
+        inferred: false, partial: false,
+        evidence: [{ paragraph_id: "p_2", page_number: 3 }] },
       { category: "contributions", text: "提出 residual learning framework。",
-        inferred: true, partial: false, evidence: [{ page_number: 1 }] },
+        inferred: true, partial: false,
+        evidence: [{ paragraph_id: "p_1", page_number: 1 }] },
     ],
     key_terms: [
-      { term: "ResNet-50", definition: "一种深层残差网络。", evidence: [{ page_number: 3 }] },
-      { term: "CIFAR-10", definition: "一个图像分类数据集。", evidence: [{ page_number: 7 }] },
+      { term: "ResNet-50", definition: "一种深层残差网络。",
+        evidence: [{ paragraph_id: "p_1", page_number: 1 }] },
+      // An id this extraction does not contain: the badge still goes to the
+      // page, which is the half of the provenance that cannot go stale.
+      { term: "CIFAR-10", definition: "一个图像分类数据集。",
+        evidence: [{ paragraph_id: "p_gone", page_number: 7 }] },
     ],
     ...over,
   };
@@ -161,6 +170,25 @@ describe("DS-QA-015 · the instant entry", () => {
     // No `await` on purpose: the entry must be there on the first paint.
     expect(screen.getByTestId("overview-title")).toBeInTheDocument();
     expect(screen.queryByTestId("overview-progress")).toBeNull();
+  });
+
+  it("holds up when the backend cannot be reached at all", async () => {
+    /* The one thing that must never wait on anything. Layer A renders from the
+       IR in memory, so a provider being unreachable, a backend that is down and
+       a request that simply never answers all leave the same thing on screen:
+       the paper's own title, abstract, structure and where to start. */
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    }));
+    openOverview();
+
+    await screen.findByTestId("overview-error");
+    expect(screen.getByTestId("overview-title")).toHaveTextContent(
+      "Deep Residual Learning for Image Recognition",
+    );
+    expect(screen.getByTestId("overview-abstract")).toHaveTextContent(ABSTRACT);
+    expect(screen.getByTestId("overview-metrics")).toHaveTextContent("12 页");
+    expect(screen.getByTestId("overview-start-reading")).toBeInTheDocument();
   });
 
   it("says the paper is still being read rather than claiming it has no abstract", async () => {
@@ -257,6 +285,100 @@ describe("DS-QA-015 · reading the cache", () => {
     expect(screen.getByTestId("overview-provenance")).toHaveTextContent("deepseek-flash");
   });
 
+  it("marks a claim only part of whose evidence supports it", async () => {
+    /* A claim the reader should not take at full strength. Distinct from the
+       PARTIAL badge below, which says the *overview* is incomplete rather than
+       that this particular sentence is. */
+    backend({ overview: overview({ items: [
+      { category: "findings", text: "作者推测这种退化来自优化困难。",
+        inferred: false, partial: true,
+        evidence: [{ paragraph_id: "p_1", page_number: 1 }] },
+      { category: "findings", text: "作者测得的 top-1 error 为 3.57%。",
+        inferred: false, partial: false,
+        evidence: [{ paragraph_id: "p_1", page_number: 1 }] },
+    ] }) });
+    openOverview();
+    await screen.findByTestId("overview-body");
+
+    expect(screen.getByTestId("claim-caveat-pill")).toHaveTextContent("部分证据支持");
+    // Exactly the one claim: a pill on every claim is the same as a pill on none.
+    expect(screen.getAllByTestId("claim-caveat-pill")).toHaveLength(1);
+  });
+
+  it("reports what the run cost, in the provider's own numbers", async () => {
+    backend({ overview: overview({ input_tokens: 1520, output_tokens: 640 }) });
+    openOverview();
+    await screen.findByTestId("overview-body");
+
+    expect(screen.getByTestId("overview-usage")).toHaveTextContent("1520");
+    expect(screen.getByTestId("overview-usage")).toHaveTextContent("640");
+  });
+
+  it("says the token count is unavailable rather than estimating one", async () => {
+    // A store written before usage was recorded, or an endpoint that reported
+    // none. Either way the honest answer is that there is no number.
+    backend({ overview: overview({ input_tokens: null, output_tokens: null }) });
+    openOverview();
+    await screen.findByTestId("overview-body");
+
+    expect(screen.getByTestId("overview-usage")).toHaveTextContent("Token 统计不可用");
+  });
+
+  it("says the paper states no limitations rather than dropping them quietly", async () => {
+    /* AC-P0-31. An absent category reads exactly like a category the panel
+       forgot, and a reader deciding whether to trust the paper is owed the
+       difference. */
+    backend({ overview: overview() });
+    openOverview();
+    await screen.findByTestId("overview-body");
+
+    expect(screen.getByTestId("overview-no-limitations")).toHaveTextContent(
+      "原论文未设独立局限性章节",
+    );
+  });
+
+  it("does not tell a paper with a limitations section that it has none", async () => {
+    /* The claim is about the paper. When the extraction found a section for
+       limitations and the overview is silent about it, that is the overview's
+       omission — asserting the paper has none would be inventing a fact. */
+    backend({ overview: overview({ source_sections: ["Abstract", "5. Limitations"] }) });
+    openOverview();
+    await screen.findByTestId("overview-body");
+
+    expect(screen.queryByTestId("overview-no-limitations")).toBeNull();
+  });
+
+  it("does not make that claim about an incomplete overview", async () => {
+    backend({ overview: overview({ status: "PARTIAL" }) });
+    openOverview();
+    await screen.findByTestId("overview-body");
+
+    expect(screen.queryByTestId("overview-no-limitations")).toBeNull();
+  });
+
+  it("shows twelve terms, and the rest behind an expansion", async () => {
+    // AC-P0-32. A curated list, not a glossary flood: the measured baseline
+    // produced 197 terms, which is a document rather than an orientation.
+    const terms = Array.from({ length: 15 }, (_, index) => ({
+      term: `Term-${index}`,
+      definition: "一个术语。",
+      evidence: [{ paragraph_id: "p_1", page_number: 1 }],
+    }));
+    backend({ overview: overview({ key_terms: terms }) });
+    openOverview();
+    await screen.findByTestId("overview-body");
+
+    expect(screen.getAllByTestId(/^overview-term-/)).toHaveLength(12);
+    const expand = screen.getByTestId("overview-terms-expand");
+    expect(expand).toHaveTextContent("15");
+
+    const user = userEvent.setup();
+    await user.click(expand);
+
+    expect(screen.getAllByTestId(/^overview-term-/)).toHaveLength(15);
+    expect(screen.queryByTestId("overview-terms-expand")).toBeNull();
+  });
+
   it("badges a partial overview", async () => {
     backend({ overview: overview({ status: "PARTIAL", notes: ["no findings"] }) });
     openOverview();
@@ -338,6 +460,49 @@ describe("DS-QA-015 · generating", () => {
     expect(screen.getByTestId("overview-error")).toHaveTextContent("请求过于频繁");
   });
 
+  it("tells a paper that cannot be structured apart from a provider that is down", async () => {
+    /* Three failures, three next actions: fix a key, try again later, or try a
+       different paper. One message for all of them teaches the reader none of
+       them — and the paper being unreadable is the one they cannot retry their
+       way out of. */
+    openOverview();
+    useWorkspaceStore.setState({ profileId: "prof_1" });
+    await screen.findByTestId("overview-not-generated");
+
+    backend({
+      overview: null,
+      onPost: () => new Response(JSON.stringify({ error: { code: "EXTRACTION_ERROR" } }), {
+        status: 422, headers: { "Content-Type": "application/json" },
+      }),
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("overview-generate"));
+
+    await screen.findByTestId("overview-error");
+    expect(screen.getByTestId("overview-error")).toHaveTextContent("结构无法解析");
+  });
+
+  it("calls a cancelled run cancelled rather than failed", async () => {
+    openOverview();
+    useWorkspaceStore.setState({ profileId: "prof_1" });
+    await screen.findByTestId("overview-not-generated");
+
+    backend({
+      overview: null,
+      onPost: () => {
+        throw Object.assign(new Error("aborted"), { name: "AbortError" });
+      },
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("overview-generate"));
+
+    await screen.findByTestId("overview-error");
+    expect(screen.getByTestId("overview-error")).toHaveTextContent("已取消");
+    // And the panel is not left saying a run is in progress.
+    expect(screen.queryByTestId("overview-progress")).toBeNull();
+    expect(screen.getByTestId("overview-generate")).toBeInTheDocument();
+  });
+
   it("promises no configured provider rather than failing obscurely", async () => {
     backend({ overview: null });
     openOverview();
@@ -353,6 +518,44 @@ describe("DS-QA-015 · generating", () => {
   });
 });
 
+describe("DS-QA-015 · leaving mid-generation", () => {
+  it("aborts the request when the reader opens another paper", async () => {
+    /* AC-P0-44. Discarding the answer is not enough on its own: a generation for
+       a paper the reader has left is work nobody is waiting for, and it should
+       stop rather than run to completion and be thrown away. The backend has
+       already cached it under the paper's own content hash, so cancelling costs
+       nothing that was not already paid for. */
+    openOverview();
+    useWorkspaceStore.setState({ profileId: "prof_1" });
+    await screen.findByTestId("overview-not-generated");
+
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        if (init.signal) signals.push(init.signal);
+        // A generation takes tens of seconds; this one never answers.
+        return new Promise<Response>(() => {});
+      }
+      return new Response("", { status: 404 });
+    }));
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("overview-generate"));
+    await waitFor(() => expect(signals).toHaveLength(1));
+    expect(signals[0].aborted).toBe(false);
+
+    const { openDocument } = await import("@/translation/session");
+    openDocument(new File([new Uint8Array([1])], "b.pdf", { type: "application/pdf" }));
+
+    expect(signals[0].aborted).toBe(true);
+    // And nothing of A's is left behind for B to inherit.
+    const state = useWorkspaceStore.getState();
+    expect(state.overview).toBeNull();
+    expect(state.overviewFor).toBeNull();
+    expect(state.overviewStatus).toBe("idle");
+  });
+});
+
 describe("DS-QA-015 · evidence", () => {
   it("offers the page an item came from, and jumps there", async () => {
     backend({ overview: overview() });
@@ -360,12 +563,42 @@ describe("DS-QA-015 · evidence", () => {
     await screen.findByTestId("overview-body");
 
     const user = userEvent.setup();
-    await user.click(screen.getByTestId("overview-evidence-p2"));
+    await user.click(screen.getByTestId("overview-evidence-p3"));
 
-    // The same jump the citation and section paths use; no second engine, and
-    // no rectangle — the provider was never given one.
+    // The same jump the citation and section paths use, so there is no second
+    // navigation engine to keep in step with the first.
     const jump = useWorkspaceStore.getState().jumpRequest;
-    expect(jump?.pageNumber).toBe(2);
+    expect(jump?.pageNumber).toBe(3);
+  });
+
+  it("draws the source paragraph's rectangle, from the reader's own extraction", async () => {
+    /* The artifact carries a paragraph id and never a coordinate — the model was
+       shown excerpts, not geometry — so the rectangle comes from the IR the
+       client is already holding. That is the only rectangle anyone measured. */
+    backend({ overview: overview() });
+    openOverview();
+    await screen.findByTestId("overview-body");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("overview-evidence-p3"));
+
+    const jump = useWorkspaceStore.getState().jumpRequest;
+    expect(jump?.bboxes).toEqual([[50, 100, 545, 140]]);
+    // Lifted off the top edge, or the box the reader asked for lands under the
+    // fold of the page they were sent to.
+    expect(jump?.offsetPt).toBe(100);
+  });
+
+  it("degrades to the page when the paragraph is not in this extraction", async () => {
+    backend({ overview: overview() });
+    openOverview();
+    await screen.findByTestId("overview-body");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("overview-evidence-p7"));
+
+    const jump = useWorkspaceStore.getState().jumpRequest;
+    expect(jump?.pageNumber).toBe(7);
     expect(jump?.bboxes).toEqual([]);
   });
 });

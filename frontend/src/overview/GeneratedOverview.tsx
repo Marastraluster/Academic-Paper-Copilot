@@ -1,5 +1,6 @@
 import type {
   OverviewCategory,
+  OverviewEvidence,
   OverviewItemView,
   OverviewTermView,
   OverviewView,
@@ -20,24 +21,48 @@ import { cn } from "@/lib/utils";
  * The one cost is a brief gap between the cache answering and this rendering.
  * That is acceptable where a spinner in front of the *entry* would not be.
  */
-/** Jump the reader to the page an item's evidence came from. */
-function jumpToPage(pageNumber: number): void {
-  // The same jump the citation and section paths use. An item's evidence is a
-  // page the backend resolved, not a rectangle a model supplied — and drawing a
-  // box would mean trusting provenance the provider was never given.
-  useWorkspaceStore.getState().requestJump(pageNumber, [], undefined);
+/**
+ * Jump the reader to the paragraphs an item's evidence came from.
+ *
+ * The same jump the citation and section paths use, and deliberately the same
+ * shape: the page comes from the artifact, the rectangles come from the IR the
+ * client already holds, and the offset lifts the box off the top edge so an
+ * evidence link does not land with its source just under the fold.
+ *
+ * The geometry is resolved **here** rather than carried in the artifact. The
+ * model was shown numbered excerpts and never a coordinate, so a rectangle in an
+ * overview would be a rectangle nobody measured; this one is the reader's own
+ * extraction of the paragraph the backend validated the citation against. When
+ * the id does not resolve — an overview whose IR has moved on — the jump still
+ * goes to the page rather than nowhere.
+ */
+function jumpToEvidence(paragraphIds: string[], pageNumber: number): void {
+  const ir = useWorkspaceStore.getState().ir;
+  const boxes = paragraphIds.flatMap(
+    (id) => ir?.paragraphs.find((paragraph) => paragraph.id === id)?.bboxes ?? [],
+  );
+  useWorkspaceStore.getState().requestJump(pageNumber, boxes, boxes[0]?.[1]);
 }
 
-function EvidencePages({ pages }: { pages: number[] }) {
-  const unique = [...new Set(pages)];
+function EvidencePages({ evidence }: { evidence: OverviewEvidence[] }) {
+  // One badge per page: two excerpts from the same page are one place to go, and
+  // the box is drawn for whichever of them the reader already has.
+  const pages = [...new Set(evidence.map((ref) => ref.page_number))];
   return (
     <span className="ml-1 inline-flex shrink-0 gap-0.5">
-      {unique.map((page) => (
+      {pages.map((page) => (
         <button
           key={page}
           type="button"
           data-testid={`overview-evidence-p${page}`}
-          onClick={() => jumpToPage(page)}
+          onClick={() =>
+            jumpToEvidence(
+              evidence
+                .filter((ref) => ref.page_number === page)
+                .map((ref) => ref.paragraph_id),
+              page,
+            )
+          }
           className="rounded-sm px-1 text-2xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         >
           p.{page}
@@ -65,6 +90,23 @@ const CATEGORY_ORDER: OverviewCategory[] = [
 
 const INITIAL_TERMS = 12;
 
+/** A heading that says the paper set its limitations apart. */
+const LIMITATIONS_HEADING = /limitation|局限|限制|不足/i;
+
+/**
+ * What the run cost, in the provider's own numbers.
+ *
+ * Reported or unavailable, and never a third thing: a character count presented
+ * beside a real measurement reads exactly like one, and the reader has no way to
+ * tell which they are looking at.
+ */
+function usageLabel(overview: OverviewView): string {
+  if (overview.input_tokens === null || overview.output_tokens === null) {
+    return "Token 统计不可用";
+  }
+  return `Token 输入 ${overview.input_tokens} · 输出 ${overview.output_tokens}`;
+}
+
 function GeneratedOverviewBody({
   overview,
   expanded,
@@ -77,6 +119,17 @@ function GeneratedOverviewBody({
   const terms = overview.key_terms;
   const shownTerms = expanded ? terms : terms.slice(0, INITIAL_TERMS);
 
+  /* Whether the paper states limitations at all, and whether anyone can claim
+     it. A paper that states none has none to report, and saying so is the
+     difference between an honest omission and a panel that looks like it forgot.
+     But the claim is about the *paper*, so it is only made when the extraction
+     found no limitations-like section — and only for a complete run, because a
+     category can also go missing by being dropped, which says nothing about the
+     paper. */
+  const statesLimitations =
+    overview.items.some((item) => item.category === "limitations") ||
+    overview.source_sections.some((title) => LIMITATIONS_HEADING.test(title));
+
   return (
     <div className="mt-2" data-testid="overview-body">
       {overview.status === "PARTIAL" && (
@@ -84,7 +137,7 @@ function GeneratedOverviewBody({
           data-testid="overview-partial"
           className="mb-2 rounded-sm bg-amber-100 px-2 py-1 text-2xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
         >
-          部分章节已就绪。
+          部分概览已生成。
         </p>
       )}
 
@@ -104,6 +157,15 @@ function GeneratedOverviewBody({
           </div>
         );
       })}
+
+      {overview.status === "READY" && !statesLimitations && (
+        <p
+          data-testid="overview-no-limitations"
+          className="mb-2.5 text-2xs text-muted-foreground"
+        >
+          原论文未设独立局限性章节。
+        </p>
+      )}
 
       {terms.length > 0 && (
         <div data-testid="overview-key-terms">
@@ -137,6 +199,8 @@ function GeneratedOverviewBody({
         <p className="mt-2 text-2xs text-muted-foreground/70" data-testid="overview-provenance">
           由 {overview.provider_model} 生成
           {overview.cached ? "（已缓存）" : ""}
+          {" · "}
+          <span data-testid="overview-usage">{usageLabel(overview)}</span>
         </p>
       )}
     </div>
@@ -166,7 +230,18 @@ function ItemRow({
           （归纳）
         </span>
       )}
-      <EvidencePages pages={item.evidence.map((ref) => ref.page_number)} />
+      {/* AC-P0-42: a claim only part of whose evidence supports it. Distinct from
+          the annotation-level PARTIAL badge, which says the *overview* is
+          incomplete rather than that this particular sentence is. */}
+      {item.partial && (
+        <span
+          data-testid="claim-caveat-pill"
+          className="ml-1 rounded-sm bg-amber-100 px-1 text-2xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+        >
+          部分证据支持
+        </span>
+      )}
+      <EvidencePages evidence={item.evidence} />
     </li>
   );
 }
@@ -179,7 +254,7 @@ function TermRow({ term }: { term: OverviewTermView }) {
           them is the one thing that would make the list useless. */}
       <span className="font-medium">{term.term}</span>
       <span className="text-muted-foreground"> — {term.definition}</span>
-      <EvidencePages pages={term.evidence.map((ref) => ref.page_number)} />
+      <EvidencePages evidence={term.evidence} />
     </li>
   );
 }

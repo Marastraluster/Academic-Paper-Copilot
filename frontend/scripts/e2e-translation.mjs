@@ -265,6 +265,18 @@ async function runSuccessScenario(page, pdfPath) {
   await page.click('[data-testid="ai-translate"]');
   await page.waitForSelector('[data-testid="translate-dialog"]', { timeout: 10000 });
 
+  /* The dialog fetches the profiles when it opens, so the list is not there the
+     instant the element is. Counting immediately measured the fetch's latency
+     rather than whether the profiles arrive — and the run that exposed it
+     carried on to translate successfully, which is what a missing profile list
+     would not have allowed. Bounded, so a dialog that never fills still fails. */
+  await page
+    .waitForFunction(
+      () => document.querySelectorAll('[data-testid="translate-profile"] option').length > 0,
+      null,
+      { timeout: 10000 },
+    )
+    .catch(() => undefined);
   const providerOptions = await page.locator('[data-testid="translate-profile"] option').count();
   check("provider profiles populate the dialog", providerOptions >= 1, `${providerOptions} option(s)`);
 
@@ -480,8 +492,16 @@ async function main() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
   const consoleErrors = [];
+  /* A 404 is the *designed* answer on the two routes the Overview panel asks
+     about when a paper opens: `/overview` (nothing generated yet) and the older
+     `/analysis` (not analysed yet). The status is part of the match, so a 500 on
+     either path is still an error. A failed request's console text does not
+     carry its URL; the location does. */
+  const designed404 = (t) =>
+    /status of 404/.test(t) && /\/(analysis|overview)(\?|\s|$)/.test(t);
   page.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
+    if (message.type() !== "error") return;
+    consoleErrors.push(`${message.text()} :: ${message.location()?.url ?? ""}`);
   });
 
   try {
@@ -496,7 +516,7 @@ async function main() {
 
     check(
       "no console errors during the whole run",
-      consoleErrors.length === 0,
+      consoleErrors.filter((t) => !designed404(t)).length === 0,
       consoleErrors.slice(0, 3).join(" | "),
     );
   } finally {

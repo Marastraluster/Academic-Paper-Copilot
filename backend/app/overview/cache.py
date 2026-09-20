@@ -27,8 +27,8 @@ and so a reader looking at the folder can see it is not a document.
 The distinction is the whole design:
 
     source identity     content_hash, ir_pipeline_version     — the paper changed
-    generation config   prompt_version, schema_version,
-                        target_language                       — the answer changed
+    generation config   prompt_version, pipeline_version,
+                        schema_version, target_language       — the answer changed
 
 `provider_model` is deliberately **not** in the key. A different model produces a
 different overview, but the one already made still describes a paper that has not
@@ -43,11 +43,14 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from dataclasses import asdict
+import time
 from pathlib import Path
+
+from app.logging import get_logger
 
 from app.overview.models import (
     OVERVIEW_ARTIFACT_KIND,
+    OVERVIEW_PIPELINE_VERSION,
     OVERVIEW_SCHEMA_VERSION,
     READER_OVERVIEW_PROMPT_VERSION,
     EvidenceRef,
@@ -59,6 +62,17 @@ from app.overview.models import (
 #: Prefixed so it sorts away from the `doc_…` directories and reads as what it is.
 CACHE_DIRNAME = "_cache"
 OVERVIEW_DIRNAME = "overview"
+
+#: The temporary files an atomic write goes through. Dotted so a reader looking
+#: at the folder sees they are not artifacts, and swept on every write.
+TEMP_PREFIX = ".overview-"
+
+#: How old a temporary file must be before a sweep will remove it. A killed
+#: process leaves one behind forever; an in-flight write is never this old, so
+#: the sweep cannot remove a file another writer is still using.
+STALE_TEMP_SECONDS = 3600.0
+
+logger = get_logger(__name__)
 
 
 def overview_dir(documents_dir: Path) -> Path:
@@ -97,6 +111,8 @@ def cache_is_compatible(
         return False
     if overview.schema_version != OVERVIEW_SCHEMA_VERSION:
         return False
+    if overview.pipeline_version != OVERVIEW_PIPELINE_VERSION:
+        return False
     if overview.prompt_version != READER_OVERVIEW_PROMPT_VERSION:
         return False
     if overview.content_hash != content_hash:
@@ -127,12 +143,24 @@ def read_overview(
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as error:
+        # Said out loud, because a cache that silently answers "nothing here" for
+        # a file that exists is indistinguishable from one with a real defect in
+        # it. The path and the reason, never the content: the file holds paper
+        # prose.
+        logger.warning(
+            "overview cache unreadable; treating as absent",
+            extra={"path": str(path), "reason": type(error).__name__},
+        )
         return None
 
     try:
         overview = _from_payload(payload)
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError) as error:
+        logger.warning(
+            "overview cache is not in the expected shape; treating as absent",
+            extra={"path": str(path), "reason": type(error).__name__},
+        )
         return None
 
     if not cache_is_compatible(
@@ -158,11 +186,12 @@ def write_overview(documents_dir: Path, overview: ReaderOverview) -> Path:
     """
     directory = overview_dir(documents_dir)
     directory.mkdir(parents=True, exist_ok=True)
+    remove_temp_files(documents_dir)
     path = overview_path(documents_dir, overview.content_hash, overview.target_language)
 
     payload = _to_payload(overview)
     handle, temporary = tempfile.mkstemp(
-        prefix=".reader-overview-", suffix=".tmp", dir=directory
+        prefix=TEMP_PREFIX, suffix=".tmp", dir=directory
     )
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as file:
@@ -182,6 +211,34 @@ def delete_overview(documents_dir: Path, content_hash: str, target_language: str
     overview_path(documents_dir, content_hash, target_language).unlink(missing_ok=True)
 
 
+def remove_temp_files(documents_dir: Path, *, now: float | None = None) -> list[str]:
+    """Delete temporary files a killed process left behind, and return their names.
+
+    Only files older than an hour. A write that is *in flight* has a temporary
+    file too, and a sweep that removed it would corrupt a write that had done
+    nothing wrong — the reader would find out when the artifact they just paid
+    for turned out to be half a file. An hour is longer than any write takes and
+    shorter than a reader's patience for litter.
+
+    Never raises: this is housekeeping on a directory the caller is about to
+    write to, and failing the write because cleanup failed would be backwards.
+    """
+    moment = time.time() if now is None else now
+    removed: list[str] = []
+    for candidate in overview_dir(documents_dir).glob(f"{TEMP_PREFIX}*.tmp"):
+        try:
+            if moment - candidate.stat().st_mtime < STALE_TEMP_SECONDS:
+                continue
+            candidate.unlink()
+            removed.append(candidate.name)
+        except OSError as error:
+            logger.warning(
+                "a stale overview temporary file could not be removed",
+                extra={"path": str(candidate), "reason": type(error).__name__},
+            )
+    return removed
+
+
 # --- serialisation ------------------------------------------------------------
 #
 # Hand-written rather than `asdict`, so the file's shape is a decision rather
@@ -194,7 +251,10 @@ def _to_payload(overview: ReaderOverview) -> dict:
     return {
         "artifact_kind": overview.artifact_kind,
         "schema_version": overview.schema_version,
+        "pipeline_version": overview.pipeline_version,
         "prompt_version": overview.prompt_version,
+        "input_tokens": overview.input_tokens,
+        "output_tokens": overview.output_tokens,
         "content_hash": overview.content_hash,
         "ir_pipeline_version": overview.ir_pipeline_version,
         "target_language": overview.target_language,
@@ -263,7 +323,16 @@ def _from_payload(payload: dict) -> ReaderOverview:
         ir_pipeline_version=payload.get("ir_pipeline_version", ""),
         artifact_kind=payload.get("artifact_kind", ""),
         schema_version=payload.get("schema_version", ""),
+        # A file written before this dimension existed was written by the only
+        # pipeline version there has ever been, so it is read as the current one
+        # rather than as empty. Empty would invalidate every overview already
+        # paid for, and charge the reader for a rename.
+        pipeline_version=payload.get("pipeline_version", OVERVIEW_PIPELINE_VERSION),
         prompt_version=payload.get("prompt_version", ""),
+        # Absent is the honest answer for a run whose usage was never recorded:
+        # the panel says "unavailable" rather than guessing one.
+        input_tokens=payload.get("input_tokens"),
+        output_tokens=payload.get("output_tokens"),
         provider_model=payload.get("provider_model", ""),
         provider_base_url=payload.get("provider_base_url", ""),
         created_at=payload.get("created_at", ""),
