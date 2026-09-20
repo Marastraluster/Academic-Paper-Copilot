@@ -85,6 +85,12 @@ const ANSWER = {
 };
 
 beforeEach(() => {
+  // The sidebar opens on 概览 now (DS-QA-014). This suite is about the QA panel,
+  // so it says so rather than depending on which tab happens to be the default —
+  // a dependency that would silently retarget every assertion here the next time
+  // the default moves.
+  useWorkspaceStore.setState({ outlinePanel: "qa", sidebarOpen: true });
+
   getDocument.mockReset();
   getDocument.mockReturnValue({
     promise: Promise.resolve({

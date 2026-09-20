@@ -228,6 +228,15 @@ async function loadIr(page, backendUrl) {
 
 async function waitForComposer(page, timeout = 60000) {
   try {
+    /* Make sure the QA panel is showing first.
+     *
+     * The sidebar opens on 概览 (DS-QA-014) and resets to it on every reload, so
+     * a suite that only selected the tab once would pass its first check and
+     * hang on the next one after a reload — which is exactly what happened.
+     * Selecting here covers every call site, including the ones that arrive
+     * after navigation. */
+    const tab = page.locator('[data-testid="assistant-tab-qa"]');
+    if (await tab.count() > 0) await tab.click().catch(() => {});
     await page.waitForSelector(`${composer}:not([disabled])`, { timeout });
   } catch (cause) {
     // The reason registration did not finish is the whole diagnosis, and it is
@@ -316,13 +325,24 @@ async function main() {
   const browser = await chromium.launch({ channel: "msedge" });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const consoleErrors = [];
+  // The console message for a failed request carries no URL; the Overview panel
+  // asks for an analysis on every paper open, and a 404 there is the route's
+  // designed answer rather than a fault. The location does carry the URL.
+  const designed404 = (t) => /\/analysis(\s|$)/.test(t);
   page.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
+    if (message.type() !== "error") return;
+    consoleErrors.push(`${message.text()} :: ${message.location()?.url ?? ""}`);
   });
   page.on("pageerror", (error) => consoleErrors.push(String(error)));
 
   try {
     await page.goto(PREVIEW_URL, { waitUntil: "domcontentloaded" });
+    /* Select the panel before the first assertion, not merely before the first
+       composer wait: the sidebar opens on 概览, so with no document open the
+       composer does not exist in the DOM at all — and a suite that assumed it
+       would be there fails on its first check rather than its last. */
+    await page.waitForSelector('[data-testid="assistant-tab-qa"]', { timeout: 60000 });
+    await page.click('[data-testid="assistant-tab-qa"]');
 
     check(
       "no document: the question box is disabled (AC-P0-01)",
@@ -336,6 +356,11 @@ async function main() {
     // --- open the real paper ------------------------------------------------
     await page.setInputFiles('[data-testid="pdf-file-input"]', paper);
     await page.waitForSelector('[data-testid="pdf-page-container"]', { timeout: 60000 });
+    await page.waitForSelector('[data-testid="assistant-tab-qa"]', { timeout: 60000 });
+    /* The sidebar opens on 概览 (DS-QA-014), so this suite states which panel it
+       is about instead of depending on which tab happens to be the default — a
+       dependency that would silently retarget every assertion below. */
+    await page.click('[data-testid="assistant-tab-qa"]');
     await waitForComposer(page);
     check("reader opens the paper and QA unlocks (AC-P0-03)", true);
 
@@ -654,7 +679,9 @@ async function main() {
     check("the sidebar collapses without disturbing the reader", (await page.locator('[data-testid="pdf-viewer"]').count()) > 0);
     await page.click('[data-testid="sidebar-toggle"]');
 
-    check("no uncaught console errors during the run", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" / "));
+    check("no uncaught console errors during the run",
+      consoleErrors.filter((t) => !designed404(t)).length === 0,
+      consoleErrors.slice(0, 2).join(" / "));
   } finally {
     await browser.close();
     preview.kill();

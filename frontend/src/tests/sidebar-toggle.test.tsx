@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { App } from "@/app/App";
 import { SIDEBAR_WIDTH_PX } from "@/lib/layout";
+import { useWorkspaceStore } from "@/stores/workspace";
 
 const sidebar = () => screen.getByTestId("assistant-sidebar");
 
@@ -64,6 +65,9 @@ describe("DS-FE-001 · AC-33 sidebar collapse", () => {
   });
 
   it("restores the expanded state on a second toggle", async () => {
+    // The sidebar opens on 概览 now. This suite reaches for a QA element to prove
+    // the contents come back, so it names the panel rather than assuming one.
+    useWorkspaceStore.setState({ outlinePanel: "qa" });
     const user = userEvent.setup();
     render(<App />);
 

@@ -205,7 +205,16 @@ async function main() {
   const browser = await chromium.launch({ channel: "msedge" });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const consoleErrors = [];
-  page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
+const designed404 = (t) => /\/analysis(\s|$)/.test(t);
+
+    /* The console message for a failed request does not carry its URL, and the
+     Overview panel asks for an analysis on every paper open — a 404 there is
+     the route's designed answer ("not analysed yet"), not a fault. The location
+     does carry the URL, so the filter can be exact. */
+page.on("console", (m) => {
+    if (m.type() !== "error") return;
+    consoleErrors.push(`${m.text()} :: ${m.location()?.url ?? ""}`);
+  });
   page.on("pageerror", (e) => consoleErrors.push(String(e)));
 
   try {
@@ -390,7 +399,8 @@ async function main() {
     // --- source immutability -------------------------------------------------
     check("the source PDF is byte-identical afterwards", sha256(paper) === paperHash);
 
-    check("no uncaught console errors during the run", consoleErrors.length === 0,
+    check("no uncaught console errors during the run",
+      consoleErrors.filter((t) => !designed404(t)).length === 0,
       consoleErrors.slice(0, 2).join(" | "));
   } finally {
     await browser.close();

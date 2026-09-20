@@ -24,6 +24,7 @@ import {
   type TaskOutcome,
 } from "@/api/translation";
 import { loadIr, loadProfiles, loadSections, teardownQa } from "@/qa/session";
+import { loadAnalysis, teardownOverview } from "@/overview/session";
 import { loadAnnotations } from "@/notes/session";
 import {
   nextSessionToken,
@@ -134,6 +135,10 @@ export function openDocument(file: File): void {
   // A new document invalidates everything the previous one was doing.
   teardownTranslation();
   teardownQa();
+  // The overview belongs to the document that produced it, and so does an
+  // in-flight generation for it. Clearing here means a late answer has nothing
+  // to attach to even before the request guard sees it.
+  teardownOverview();
   activeUpload?.abort();
 
   const sessionToken = nextSessionToken();
@@ -189,6 +194,12 @@ export function openDocument(file: File): void {
       // loading them here means the panel has them whenever the reader opens it
       // rather than depending on when the panel happened to mount.
       void loadAnnotations();
+      // A **read**, not a generation: the same reason the notes list is fetched
+      // here. A reader who has already analysed this paper should see the
+      // overview the moment the panel appears, and one who has not should see
+      // the instant entry — neither should wait for the panel to mount to find
+      // out which they are. This route never reaches a provider.
+      void loadAnalysis();
       // The canonical IR, for selection mapping. Fetched here so a selection made
       // moments after a paper opens can be resolved without a round trip.
       void loadIr();
@@ -216,6 +227,10 @@ export function openDocument(file: File): void {
 export function closeDocument(): void {
   teardownTranslation();
   teardownQa();
+  // The overview belongs to the document that produced it, and so does an
+  // in-flight generation for it. Clearing here means a late answer has nothing
+  // to attach to even before the request guard sees it.
+  teardownOverview();
   activeUpload?.abort();
   activeUpload = null;
   useWorkspaceStore.setState({

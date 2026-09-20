@@ -34,6 +34,14 @@ export interface IrParagraph {
    */
   source_anchor_id: string;
   section_id: string | null;
+  /**
+   * True for the paragraphs the extractor identified as the paper's abstract.
+   *
+   * The Overview reads them for its instant layer, and reads *only* them: an
+   * abstract is the one summary the authors wrote, and the honest alternative to
+   * showing it is saying there is none.
+   */
+  is_abstract?: boolean;
   text: string;
   /** 1-based. */
   page_number: number;
@@ -75,6 +83,29 @@ export interface DocumentIr {
   page_count: number;
   paragraphs: IrParagraph[];
   pages: IrPage[];
+  /**
+   * Which extraction algorithm produced this.
+   *
+   * Read by the Overview to decide whether a stored analysis still describes the
+   * document on screen: the analysis's section and term references point at
+   * paragraph ids, and paragraph ids are reading positions — DS-DOC-002 measured
+   * one layout constant renumbering 145 of 160 paragraphs of a paper whose bytes
+   * had not changed.
+   *
+   * Defaulted because an IR stored before this field existed is still a valid
+   * extraction; it simply cannot vouch for an analysis, and the comparison fails
+   * closed.
+   */
+  pipeline_version?: string;
+  /**
+   * What the PDF itself claims, **nested**, because that is where the extractor
+   * puts it.
+   *
+   * `title` is frequently absent and is sometimes a tool's name rather than the
+   * paper's — the model documents that honestly as `None` rather than guessing.
+   * The panel falls back to the filename, which is always true.
+   */
+  metadata?: { title?: string | null };
 }
 
 export async function fetchIr(

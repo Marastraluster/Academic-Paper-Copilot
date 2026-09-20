@@ -3,6 +3,7 @@ import { ConversationArea } from "@/assistant/ConversationArea";
 import { QuickActions } from "@/assistant/QuickActions";
 import { ScopeSelector } from "@/assistant/ScopeSelector";
 import { OutlineHeader, OutlinePanel } from "@/outline/OutlinePanel";
+import { OverviewPanel } from "@/overview/OverviewPanel";
 import { NotesPanel } from "@/notes/NotesPanel";
 import { SIDEBAR_WIDTH_PX } from "@/lib/layout";
 import { cn } from "@/lib/utils";
@@ -32,7 +33,11 @@ export function AssistantSidebar() {
   const panel = useWorkspaceStore((s) => s.outlinePanel);
   const setPanel = useWorkspaceStore((s) => s.setOutlinePanel);
 
+  /* 概览 first, and it is where a paper opens. The order is the reading
+     order: what this paper is, where its parts are, what it says when asked,
+     what I thought of it. */
   const tabs = [
+    { id: "overview" as const, label: "概览" },
     { id: "outline" as const, label: "目录" },
     { id: "qa" as const, label: "问答" },
     { id: "notes" as const, label: "笔记" },
@@ -86,7 +91,17 @@ export function AssistantSidebar() {
             ))}
           </div>
 
-          {panel === "notes" ? (
+          {panel === "overview" ? (
+            <div
+              id="assistant-tabpanel-overview"
+              role="tabpanel"
+              aria-labelledby="assistant-tab-overview"
+              data-testid="assistant-tabpanel-overview"
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <OverviewPanel />
+            </div>
+          ) : panel === "notes" ? (
             <div
               id="assistant-tabpanel-notes"
               role="tabpanel"

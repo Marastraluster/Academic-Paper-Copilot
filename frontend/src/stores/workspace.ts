@@ -4,6 +4,7 @@ import type { Bbox, DocumentIr } from "@/api/ir";
 import type { ProviderProfile } from "@/api/profiles";
 import type { AnnotationView } from "@/api/annotations";
 import type { AnswerDiagnostics } from "@/api/qa";
+import type { AnalysisView } from "@/api/analysis";
 import type { Citation } from "@/qa/parse";
 import type { MappingStatus, SelectionMapping } from "@/qa/selection";
 import type { UserFacingError } from "@/translation/errors";
@@ -12,7 +13,7 @@ import type { UserFacingError } from "@/translation/errors";
 export type ReaderMode = "original" | "bilingual" | "translation";
 
 /** The tabs the reader-side panel can show. */
-export type SidebarPanel = "outline" | "qa" | "notes";
+export type SidebarPanel = "overview" | "outline" | "qa" | "notes";
 
 /* ------------------------------------------------------------------ *
  * Paper QA (DS-QA-003)
@@ -381,6 +382,22 @@ interface WorkspaceState {
   selectionGeometry: SelectionGeometry | null;
   setSelectionGeometry: (geometry: SelectionGeometry | null) => void;
 
+  // ---- Paper overview (DS-QA-014) ----
+  /**
+   * The stored analysis, or `null`.
+   *
+   * Null means *nothing has been loaded or generated*, which the panel reports
+   * as "not generated yet" — never as "this paper has no summary", which would
+   * be a claim about the paper rather than about what we have done.
+   */
+  analysis: AnalysisView | null;
+  /** Which document `analysis` describes, so a stale one is never rendered. */
+  analysisFor: string | null;
+  analysisStatus: "idle" | "loading" | "generating" | "ready" | "failed";
+  analysisError: string | null;
+  /** When generation started, so elapsed time is real rather than simulated. */
+  analysisStartedAt: number | null;
+
   // ---- Sidebar (AC-05) ----
   sidebarOpen: boolean;
   toggleSidebar: () => void;
@@ -487,7 +504,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   // which tab opens first, and defaulting to the outline would silently move every
   // existing QA affordance behind a click — a product change dressed as a layout
   // change. Revisit if product testing says otherwise.
-  outlinePanel: "qa",
+  // Opening a paper lands on the overview: it is the answer to "what is this",
+  // and it renders from data already held, so the first paint is never a spinner.
+  outlinePanel: "overview",
   setOutlinePanel: (panel) => set({ outlinePanel: panel }),
 
   annotations: null,
@@ -566,6 +585,12 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   setSelectionReason: (selectionReason) => set({ selectionReason }),
   selectionGeometry: null,
   setSelectionGeometry: (selectionGeometry) => set({ selectionGeometry }),
+
+  analysis: null,
+  analysisFor: null,
+  analysisStatus: "idle",
+  analysisError: null,
+  analysisStartedAt: null,
 
   // AC-05: expanded by default.
   sidebarOpen: true,
