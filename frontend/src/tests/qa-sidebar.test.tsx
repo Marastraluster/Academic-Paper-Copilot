@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -31,19 +31,14 @@ vi.mock("@/pdf/pdfjs", () => {
   };
 });
 
-import { App } from "@/app/App";
 import {
   useWorkspaceStore,
   type QaScopeType,
   type QaSection,
 } from "@/stores/workspace";
 import type { MappingStatus } from "@/qa/selection";
-import {
-  seedDocument,
-  seedQaProvider,
-  seedQaSections,
-  seedSelection,
-} from "@/tests/fixtures";
+import {seedDocument, seedQaProvider, seedQaSections, seedSelection} from "@/tests/fixtures";
+import { renderApp } from "@/tests/renderApp";
 
 /* ------------------------------------------------------------------ *
  * Backend doubles
@@ -119,7 +114,7 @@ const answered = (overrides: Record<string, unknown> = {}) => ({
  * warning and a real difference from how the app is used — a reader is on a page
  * before they ask about it, not after.
  */
-function setupScene(
+async function setupScene(
   options: {
     page?: number;
     /** `undefined` seeds a normal outline; `[]` is a paper with none. */
@@ -145,7 +140,7 @@ function setupScene(
       selectionReason: options.selectionReason ?? "",
     });
   }
-  render(<App />);
+  await renderApp();
   return document;
 }
 
@@ -180,8 +175,8 @@ beforeEach(() => {
  * ------------------------------------------------------------------ */
 
 describe("DS-QA-003 · sidebar lifecycle", () => {
-  it("disables everything and explains itself when no paper is open (AC-P0-01)", () => {
-    render(<App />);
+  it("disables everything and explains itself when no paper is open (AC-P0-01)", async () => {
+    await renderApp();
 
     expect(screen.getByTestId("qa-composer")).toBeDisabled();
     expect(screen.getByTestId("scope-selector")).toBeDisabled();
@@ -192,7 +187,7 @@ describe("DS-QA-003 · sidebar lifecycle", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("waits for backend registration before enabling a question (AC-P0-02)", () => {
+  it("waits for backend registration before enabling a question (AC-P0-02)", async () => {
     seedQaProvider();
     useWorkspaceStore.setState({
       document: {
@@ -205,14 +200,14 @@ describe("DS-QA-003 · sidebar lifecycle", () => {
         backendPageCount: null,
       },
     });
-    render(<App />);
+    await renderApp();
 
     expect(screen.getByTestId("qa-composer")).toBeDisabled();
     // Honest about what is happening: it is an upload, not an index build.
     expect(screen.getByText("正在把文档注册到后端…")).toBeInTheDocument();
   });
 
-  it("says the registration failed rather than blaming the question (AC-P0-02)", () => {
+  it("says the registration failed rather than blaming the question (AC-P0-02)", async () => {
     useWorkspaceStore.setState({
       document: {
         sessionToken: "open-1",
@@ -224,7 +219,7 @@ describe("DS-QA-003 · sidebar lifecycle", () => {
         backendPageCount: null,
       },
     });
-    render(<App />);
+    await renderApp();
 
     expect(screen.getByText("文档注册失败")).toBeInTheDocument();
     expect(screen.getByTestId("qa-composer")).toBeDisabled();
@@ -232,7 +227,7 @@ describe("DS-QA-003 · sidebar lifecycle", () => {
 
   it("names the command that configures a provider when none exists (AC-P0-08)", async () => {
     seedDocument();
-    render(<App />);
+    await renderApp();
 
     expect(screen.getByTestId("qa-no-profiles")).toBeInTheDocument();
     expect(screen.getByTestId("composer-send")).toBeDisabled();
@@ -245,7 +240,7 @@ describe("DS-QA-003 · sidebar lifecycle", () => {
  * ------------------------------------------------------------------ */
 
 describe("DS-QA-003 · scopes", () => {
-  it("offers the four scopes and disables the ones without an identity (AC-P0-04)", () => {
+  it("offers the four scopes and disables the ones without an identity (AC-P0-04)", async () => {
     setupScene();
     const select = screen.getByTestId("scope-selector");
 
@@ -266,7 +261,7 @@ describe("DS-QA-003 · scopes", () => {
     ).toBeDisabled();
   });
 
-  it("labels an outline-less paper honestly instead of claiming a section (AC-P0-04)", () => {
+  it("labels an outline-less paper honestly instead of claiming a section (AC-P0-04)", async () => {
     setupScene({ outline: [] });
 
     expect(screen.getByText("当前章节（无目录结构）")).toBeInTheDocument();
@@ -646,7 +641,7 @@ describe("DS-QA-003 · citation jumping", () => {
 
   it("switches out of translation mode, and says why it moved (AC-P0-18)", async () => {
     const user = userEvent.setup();
-    const document = setupScene();
+    const document = await setupScene();
     useWorkspaceStore.setState({
       readerMode: "translation",
       translation: {
@@ -682,7 +677,7 @@ describe("DS-QA-003 · citation jumping", () => {
 
   it("moves only the original pane in bilingual mode (AC-P0-17)", async () => {
     const user = userEvent.setup();
-    const document = setupScene();
+    const document = await setupScene();
     useWorkspaceStore.setState({
       readerMode: "bilingual",
       translation: {
@@ -718,7 +713,7 @@ describe("DS-QA-003 · citation jumping", () => {
  * ------------------------------------------------------------------ */
 
 describe("DS-QA-005 · selection scope", () => {
-  it("keeps Selection disabled while nothing is selected (AC-11)", () => {
+  it("keeps Selection disabled while nothing is selected (AC-11)", async () => {
     setupScene();
 
     expect(
@@ -728,7 +723,7 @@ describe("DS-QA-005 · selection scope", () => {
     ).toBeDisabled();
   });
 
-  it("enables Selection once a drag resolves, and previews it (AC-11)", () => {
+  it("enables Selection once a drag resolves, and previews it (AC-11)", async () => {
     setupScene({ selection: ["p_0001", "p_0002"] });
 
     expect(
@@ -739,7 +734,7 @@ describe("DS-QA-005 · selection scope", () => {
     expect(preview).toHaveTextContent("Deeper neural networks");
   });
 
-  it("enables it without silently changing the chosen scope (AC_CHANGE_REQUEST 2)", () => {
+  it("enables it without silently changing the chosen scope (AC_CHANGE_REQUEST 2)", async () => {
     // A reader highlighting a sentence to copy it must not have their scope
     // replaced. The mapping makes Selection available; choosing it is a user act.
     setupScene({ scope: "whole_paper", selection: ["p_0001"] });
@@ -747,7 +742,7 @@ describe("DS-QA-005 · selection scope", () => {
     expect(useWorkspaceStore.getState().scope).toBe("whole_paper");
   });
 
-  it("says which refusal it was, not just that it failed (AC-05, AC-06)", () => {
+  it("says which refusal it was, not just that it failed (AC-05, AC-06)", async () => {
     // The mapper's own sentence is shown when it produced one: the status names
     // a category, and a cross-page refusal covers four situations with four
     // different fixes.
@@ -812,7 +807,7 @@ describe("DS-QA-005 · selection scope", () => {
 
   it("disables Selection in translation mode and offers the switch (AC-07)", async () => {
     const user = userEvent.setup();
-    const document = setupScene({ selection: ["p_0001"] });
+    const document = await setupScene({ selection: ["p_0001"] });
     useWorkspaceStore.setState({
       readerMode: "translation",
       translation: {

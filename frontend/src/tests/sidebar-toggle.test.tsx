@@ -1,8 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
-import { App } from "@/app/App";
+import { renderApp } from "@/tests/renderApp";
 import { SIDEBAR_WIDTH_PX } from "@/lib/layout";
 import { useWorkspaceStore } from "@/stores/workspace";
 
@@ -12,8 +12,8 @@ const sidebar = () => screen.getByTestId("assistant-sidebar");
  * AC-33 / AC-05 — collapse and expand, with the workspace reclaiming width.
  */
 describe("DS-FE-001 · AC-33 sidebar collapse", () => {
-  it("starts expanded at a width within the 320–380px band (AC-05)", () => {
-    render(<App />);
+  it("starts expanded at a width within the 320–380px band (AC-05)", async () => {
+    await renderApp();
 
     expect(sidebar()).toHaveAttribute("data-state", "expanded");
     expect(sidebar()).toHaveStyle({ width: `${SIDEBAR_WIDTH_PX}px` });
@@ -23,7 +23,7 @@ describe("DS-FE-001 · AC-33 sidebar collapse", () => {
 
   it("collapses to zero width and unmounts its contents", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
 
     await user.click(screen.getByTestId("sidebar-toggle"));
 
@@ -37,7 +37,7 @@ describe("DS-FE-001 · AC-33 sidebar collapse", () => {
 
   it("keeps the workspace mounted so it absorbs the reclaimed width", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
 
     const workspace = screen.getByTestId("reader-workspace");
     expect(workspace).toBeInTheDocument();
@@ -51,7 +51,7 @@ describe("DS-FE-001 · AC-33 sidebar collapse", () => {
 
   it("exposes a reachable expand trigger while collapsed (AC-05)", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
 
     const toggle = screen.getByTestId("sidebar-toggle");
     expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -69,7 +69,7 @@ describe("DS-FE-001 · AC-33 sidebar collapse", () => {
     // the contents come back, so it names the panel rather than assuming one.
     useWorkspaceStore.setState({ outlinePanel: "qa" });
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
 
     await user.click(screen.getByTestId("sidebar-toggle"));
     expect(sidebar()).toHaveAttribute("data-state", "collapsed");
@@ -77,6 +77,7 @@ describe("DS-FE-001 · AC-33 sidebar collapse", () => {
     await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
 
     expect(sidebar()).toHaveAttribute("data-state", "expanded");
-    expect(screen.getByTestId("conversation-area")).toBeInTheDocument();
+    // The panel is lazily loaded now, so its contents arrive asynchronously.
+    expect(await screen.findByTestId("conversation-area")).toBeInTheDocument();
   });
 });

@@ -1,26 +1,23 @@
 /**
- * Loading and generating the paper's overview.
+ * Reading and generating the paper's overview.
  *
  * Mirrors `notes/session.ts` and `translation/session.ts`, including their one
  * rule: **every asynchronous continuation re-checks the document after the
  * await, not before it.** A guard that runs when the work starts proves only
- * that it made sense to start. Here the stakes are higher than elsewhere in the
- * application, because this is the only path that spends the reader's money —
- * and the failure it guards against is the worst one available: an analysis of
- * paper A arriving while paper B is open, rendered as though it were B's.
+ * that it made sense to start, and the failure it guards here is the worst one
+ * available — an overview of paper A rendered as though it were B's.
  *
  * ## Two operations, and only one of them can cost anything
  *
- * `loadAnalysis` reads. It runs when a paper is opened and when the panel is
- * shown, it answers 404 when nothing has been generated, and it can never reach
- * a provider. `generateOverview` spends, and **nothing calls it except a button
- * the reader pressed**.
+ * `loadOverview` reads. It runs when a paper opens and answers 404 when nothing
+ * has been generated; it cannot reach a provider. `generateOverview` spends, and
+ * **nothing calls it except a button the reader pressed**.
  */
 import {
-  fetchAnalysis,
-  requestAnalysis,
-  type AnalysisView,
-} from "@/api/analysis";
+  fetchOverview,
+  requestOverview,
+  type OverviewView,
+} from "@/api/overview";
 import { isAbortError } from "@/api/client";
 import { useWorkspaceStore } from "@/stores/workspace";
 
@@ -28,43 +25,34 @@ let activeRead: AbortController | null = null;
 let activeReadDocument: string | null = null;
 let activeGeneration: AbortController | null = null;
 
+/** The language the overview is asked for. The interface is Chinese. */
+export const OVERVIEW_LANGUAGE = "zh-CN";
+
 /**
- * Is this analysis still about the document in front of the reader?
+ * Is this overview still about the document in front of the reader?
  *
- * Checked on the fields that decide whether the *content* describes this paper.
- * `content_hash` is the file, and `ir_pipeline_version` is the extraction whose
- * paragraph ids the section and term references point into — DS-DOC-002 measured
- * a single layout constant renumbering 145 of 160 paragraphs, so an analysis
- * from a previous extraction describes text that has moved.
- *
- * The provider fields in the provenance are deliberately **not** checked here.
- * Whether a *different model* would be worth asking is a question about
- * generating, and the backend's own `is_cache_valid` already answers it on the
- * POST path; it has no bearing on whether the summaries on screen describe the
- * paper on screen.
+ * The backend already refuses an overview from a previous extraction when it
+ * answers, so this is the belt to that pair of braces: the check is made again
+ * against the IR the reader is actually looking at, because the artifact and the
+ * document are fetched by two different requests and nothing guarantees they
+ * arrived together.
  */
-export function analysisIsCurrent(
-  analysis: AnalysisView | null,
+export function overviewIsCurrent(
+  overview: OverviewView | null,
   contentHash: string,
-  irPipelineVersion: string,
 ): boolean {
-  if (!analysis) return false;
-  if (analysis.status !== "READY" && analysis.status !== "PARTIAL") return false;
-  return (
-    analysis.provenance.content_hash === contentHash &&
-    analysis.provenance.ir_pipeline_version === irPipelineVersion
-  );
+  if (!overview) return false;
+  if (overview.status !== "READY" && overview.status !== "PARTIAL") return false;
+  return overview.content_hash === contentHash;
 }
 
-/** Read the stored analysis, if there is one. Never generates. */
-export async function loadAnalysis(): Promise<void> {
+/** Read the stored overview, if there is one. Never generates. */
+export async function loadOverview(): Promise<void> {
   const state = useWorkspaceStore.getState();
   const document = state.document;
   if (!document || document.documentId === null) return;
 
   const { documentId } = document;
-  // A read for the document already being read is the one that matters; a second
-  // one would be the same answer at twice the cost.
   if (activeRead !== null && activeReadDocument === documentId) return;
 
   activeRead?.abort();
@@ -73,32 +61,34 @@ export async function loadAnalysis(): Promise<void> {
   activeReadDocument = documentId;
 
   // What the store held when this read started. A read that began before a
-  // generation and lands after it must not replace the generated analysis with
+  // generation and lands after it must not replace the generated overview with
   // the `null` it was always going to find — the reader would watch their
   // overview disappear at the moment it arrived.
-  const before = useWorkspaceStore.getState().analysis;
+  const before = useWorkspaceStore.getState().overview;
 
-  useWorkspaceStore.setState({ analysisStatus: "loading", analysisError: null });
+  useWorkspaceStore.setState({ overviewStatus: "loading", overviewError: null });
   try {
-    const analysis = await fetchAnalysis(documentId, { signal: controller.signal });
-    // Guarded on the **document**, not on the session token: an analysis belongs
+    const overview = await fetchOverview(documentId, OVERVIEW_LANGUAGE, {
+      signal: controller.signal,
+    });
+    // Guarded on the **document**, not on the session token: an overview belongs
     // to the paper's content, and reopening the same file mints a new token.
     if (useWorkspaceStore.getState().document?.documentId !== documentId) return;
-    if (useWorkspaceStore.getState().analysis !== before) return;
+    if (useWorkspaceStore.getState().overview !== before) return;
     useWorkspaceStore.setState({
-      analysis,
-      analysisFor: documentId,
-      analysisStatus: "ready",
+      overview,
+      overviewFor: documentId,
+      overviewStatus: "ready",
     });
   } catch (error) {
     if (isAbortError(error)) return;
     if (useWorkspaceStore.getState().document?.documentId !== documentId) return;
-    if (useWorkspaceStore.getState().analysis !== before) return;
+    if (useWorkspaceStore.getState().overview !== before) return;
     useWorkspaceStore.setState({
-      analysis: null,
-      analysisFor: documentId,
-      analysisStatus: "ready",
-      analysisError: "未能读取已有分析。",
+      overview: null,
+      overviewFor: documentId,
+      overviewStatus: "ready",
+      overviewError: "未能读取已有概览。",
     });
   } finally {
     if (activeRead === controller) {
@@ -108,17 +98,15 @@ export async function loadAnalysis(): Promise<void> {
   }
 }
 
-export type GenerateOutcome =
-  | { ok: true }
-  | { ok: false; reason: string };
+export type GenerateOutcome = { ok: true } | { ok: false; reason: string };
 
 /**
- * Generate the analysis. **Only a reader action may call this.**
+ * Generate the overview. **Only a reader action may call this.**
  *
- * Returns a reason rather than throwing, because the three ways this fails mean
- * three different things to the reader — the provider was unreachable, the paper
- * could not be structured, or they left before it finished — and one message for
- * all three teaches them nothing about what to do.
+ * Returns a reason rather than throwing: the three ways this fails mean three
+ * different things to the reader — the provider was unreachable, the paper could
+ * not be structured, or they left before it finished — and one message for all
+ * three teaches them nothing about what to do.
  */
 export async function generateOverview(): Promise<GenerateOutcome> {
   const state = useWorkspaceStore.getState();
@@ -126,8 +114,7 @@ export async function generateOverview(): Promise<GenerateOutcome> {
   if (!document || document.documentId === null) {
     return { ok: false, reason: "请先打开一篇论文。" };
   }
-  const profileId = state.profileId;
-  if (!profileId) {
+  if (!state.profileId) {
     return { ok: false, reason: "请先配置可用的模型服务。" };
   }
 
@@ -136,45 +123,49 @@ export async function generateOverview(): Promise<GenerateOutcome> {
   const controller = new AbortController();
   activeGeneration = controller;
   useWorkspaceStore.setState({
-    analysisStatus: "generating",
-    analysisError: null,
-    analysisStartedAt: Date.now(),
+    overviewStatus: "generating",
+    overviewError: null,
+    overviewStartedAt: Date.now(),
   });
 
   try {
-    const analysis = await requestAnalysis(documentId, profileId, {
-      signal: controller.signal,
-    });
+    const overview = await requestOverview(
+      documentId, state.profileId, OVERVIEW_LANGUAGE,
+      { signal: controller.signal, force: true },
+    );
     if (
       useWorkspaceStore.getState().document?.documentId !== documentId ||
       useWorkspaceStore.getState().document?.sessionToken !== sessionToken
     ) {
-      // The reader moved on. The answer is not theirs to see and, importantly,
-      // is **not written into the store** — a late analysis attached to a new
-      // document is the one failure this whole module exists to prevent.
-      return { ok: false, reason: "已切换到其他文档，本次分析结果未采用。" };
+      // The reader moved on. The answer is not theirs to see and is **not written
+      // into the store** — a late overview attached to a new document is the one
+      // failure this module exists to prevent. The backend has already cached it
+      // under the paper's own content hash, so nothing was wasted: it will be
+      // found the next time that paper is opened.
+      return { ok: false, reason: "已切换到其他文档，本次概览结果未显示。" };
     }
     useWorkspaceStore.setState({
-      analysis,
-      analysisFor: documentId,
-      analysisStatus: "ready",
-      analysisStartedAt: null,
+      overview,
+      overviewFor: documentId,
+      overviewStatus: "ready",
+      overviewStartedAt: null,
     });
     return { ok: true };
   } catch (error) {
     if (isAbortError(error)) {
-      useWorkspaceStore.setState({ analysisStatus: "ready", analysisStartedAt: null });
-      return { ok: false, reason: "分析已取消。" };
+      useWorkspaceStore.setState({ overviewStatus: "ready", overviewStartedAt: null });
+      return { ok: false, reason: "已取消。" };
     }
     if (useWorkspaceStore.getState().document?.documentId !== documentId) {
-      return { ok: false, reason: "已切换到其他文档，本次分析结果未采用。" };
+      return { ok: false, reason: "已切换到其他文档，本次概览结果未显示。" };
     }
+    const reason = describeGenerationFailure(error);
     useWorkspaceStore.setState({
-      analysisStatus: "failed",
-      analysisStartedAt: null,
-      analysisError: describeGenerationFailure(error),
+      overviewStatus: "failed",
+      overviewStartedAt: null,
+      overviewError: reason,
     });
-    return { ok: false, reason: describeGenerationFailure(error) };
+    return { ok: false, reason };
   } finally {
     if (activeGeneration === controller) activeGeneration = null;
   }
@@ -183,16 +174,22 @@ export async function generateOverview(): Promise<GenerateOutcome> {
 /**
  * The provider's failure, in the reader's terms.
  *
- * The three kinds are kept distinct because the reader's next action differs for
- * each: fix a key or wait out a network, try a different paper, or do nothing
- * because they already left.
+ * The kinds are kept distinct because the reader's next action differs for each:
+ * fix a key or wait out a network, try a different paper, or do nothing because
+ * they already left.
  */
 function describeGenerationFailure(error: unknown): string {
   const status = (error as { status?: number })?.status;
+  if (status === 401 || status === 403) {
+    return "模型服务拒绝了这次请求，请检查 API 密钥配置。";
+  }
+  if (status === 429) {
+    return "模型服务请求过于频繁，请稍后重试。";
+  }
   if (status === 502 || status === 503 || status === 504) {
     return "AI 服务暂时不可用，请检查网络或模型配置后重试。";
   }
-  if (status === 422 || status === 400) {
+  if (status === 400 || status === 422) {
     return "这篇论文的结构无法解析，暂时无法生成概览。";
   }
   return "概览生成失败，请稍后重试。";
@@ -206,10 +203,10 @@ export function teardownOverview(): void {
   activeGeneration?.abort();
   activeGeneration = null;
   useWorkspaceStore.setState({
-    analysis: null,
-    analysisFor: null,
-    analysisStatus: "idle",
-    analysisError: null,
-    analysisStartedAt: null,
+    overview: null,
+    overviewFor: null,
+    overviewStatus: "idle",
+    overviewError: null,
+    overviewStartedAt: null,
   });
 }

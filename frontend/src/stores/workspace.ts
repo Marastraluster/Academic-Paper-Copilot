@@ -4,7 +4,7 @@ import type { Bbox, DocumentIr } from "@/api/ir";
 import type { ProviderProfile } from "@/api/profiles";
 import type { AnnotationView } from "@/api/annotations";
 import type { AnswerDiagnostics } from "@/api/qa";
-import type { AnalysisView } from "@/api/analysis";
+import type { OverviewView } from "@/api/overview";
 import type { Citation } from "@/qa/parse";
 import type { MappingStatus, SelectionMapping } from "@/qa/selection";
 import type { UserFacingError } from "@/translation/errors";
@@ -382,21 +382,22 @@ interface WorkspaceState {
   selectionGeometry: SelectionGeometry | null;
   setSelectionGeometry: (geometry: SelectionGeometry | null) => void;
 
-  // ---- Paper overview (DS-QA-014) ----
+  // ---- Paper overview (DS-QA-015) ----
   /**
-   * The stored analysis, or `null`.
+   * The reader overview, or `null`.
    *
-   * Null means *nothing has been loaded or generated*, which the panel reports
-   * as "not generated yet" — never as "this paper has no summary", which would
-   * be a claim about the paper rather than about what we have done.
+   * Null means *nothing has been loaded or generated* — never "this paper has no
+   * summary", which would be a claim about the paper rather than about what we
+   * have done. The deterministic Reading Entry renders from the IR either way,
+   * so an absent overview costs the reader nothing they had before.
    */
-  analysis: AnalysisView | null;
-  /** Which document `analysis` describes, so a stale one is never rendered. */
-  analysisFor: string | null;
-  analysisStatus: "idle" | "loading" | "generating" | "ready" | "failed";
-  analysisError: string | null;
+  overview: OverviewView | null;
+  /** Which document `overview` describes, so a stale one is never rendered. */
+  overviewFor: string | null;
+  overviewStatus: "idle" | "loading" | "generating" | "ready" | "failed";
+  overviewError: string | null;
   /** When generation started, so elapsed time is real rather than simulated. */
-  analysisStartedAt: number | null;
+  overviewStartedAt: number | null;
 
   // ---- Sidebar (AC-05) ----
   sidebarOpen: boolean;
@@ -586,11 +587,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   selectionGeometry: null,
   setSelectionGeometry: (selectionGeometry) => set({ selectionGeometry }),
 
-  analysis: null,
-  analysisFor: null,
-  analysisStatus: "idle",
-  analysisError: null,
-  analysisStartedAt: null,
+  overview: null,
+  overviewFor: null,
+  overviewStatus: "idle",
+  overviewError: null,
+  overviewStartedAt: null,
 
   // AC-05: expanded by default.
   sidebarOpen: true,

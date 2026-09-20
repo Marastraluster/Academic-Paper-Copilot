@@ -1,10 +1,10 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { App } from "@/app/App";
 import { useWorkspaceStore } from "@/stores/workspace";
-import { seedTranslatedDocument } from "@/tests/fixtures";
+import {seedTranslatedDocument} from "@/tests/fixtures";
+import { renderApp } from "@/tests/renderApp";
 
 /**
  * PDF.js is stubbed. These tests are about the translation flow — what request
@@ -261,7 +261,7 @@ afterEach(() => {
 
 describe("DS-FE-003 · opening a document", () => {
   it("keeps 翻译 disabled until a document has a backend identity (AC-P0-03)", async () => {
-    render(<App />);
+    await renderApp();
     expect(screen.getByTestId("ai-translate")).toBeDisabled();
 
     // Hold the upload open so the in-flight state is observable.
@@ -282,7 +282,7 @@ describe("DS-FE-003 · opening a document", () => {
   });
 
   it("registers the file as a multipart upload (AC-P0-02)", async () => {
-    render(<App />);
+    await renderApp();
     await openPdf();
 
     const upload = calls.find(
@@ -304,7 +304,7 @@ describe("DS-FE-003 · opening a document", () => {
 
   it("renders the PDF before the backend has answered (AC-P0-01)", async () => {
     uploadGate = deferred().promise; // never resolves
-    render(<App />);
+    await renderApp();
 
     fireEvent.change(screen.getByTestId("pdf-file-input"), {
       target: { files: [new File([new Uint8Array([1])], "paper.pdf", { type: "application/pdf" })] },
@@ -323,7 +323,7 @@ describe("DS-FE-003 · opening a document", () => {
       }),
     );
 
-    render(<App />);
+    await renderApp();
     fireEvent.change(screen.getByTestId("pdf-file-input"), {
       target: { files: [new File([new Uint8Array([1])], "paper.pdf", { type: "application/pdf" })] },
     });
@@ -346,7 +346,7 @@ describe("DS-FE-003 · opening a document", () => {
 describe("DS-FE-003 · translate dialog", () => {
   it("lists providers and preselects the first (AC-P0-04)", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
 
     await user.click(screen.getByTestId("ai-translate"));
@@ -358,7 +358,7 @@ describe("DS-FE-003 · translate dialog", () => {
 
   it("accepts a keyless provider without demanding a key (AC-P0-04)", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
 
@@ -371,7 +371,7 @@ describe("DS-FE-003 · translate dialog", () => {
 
   it("sends exactly the fields the request model allows (AC-P0-05)", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
     await screen.findByTestId("translate-profile");
@@ -407,7 +407,7 @@ describe("DS-FE-003 · translate dialog", () => {
     const user = userEvent.setup();
     installFetch((url) => (url === `${BASE}/api/profiles` ? json([]) : null));
 
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
 
@@ -423,7 +423,7 @@ describe("DS-FE-003 · translate dialog", () => {
         : null,
     );
 
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
 
@@ -437,7 +437,7 @@ describe("DS-FE-003 · translate dialog", () => {
 describe("DS-FE-003 · progress", () => {
   it("shows an indeterminate bar before any page has been reported (AC-P0-07)", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
     await screen.findByTestId("translate-profile");
@@ -457,7 +457,7 @@ describe("DS-FE-003 · progress", () => {
 
   it("reports the page the backend actually reached (AC-P0-07)", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
     await screen.findByTestId("translate-profile");
@@ -483,7 +483,7 @@ describe("DS-FE-003 · progress", () => {
 
   it("never invents a phase or a block count (AC-P0-07)", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
     await screen.findByTestId("translate-profile");
@@ -507,7 +507,7 @@ describe("DS-FE-003 · progress", () => {
 describe("DS-FE-003 · success", () => {
   it("fetches the mono artifact and unlocks both translated modes (AC-P0-08, AC-P0-09)", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
 
     // Before translation, neither translated mode is available.
@@ -540,7 +540,7 @@ describe("DS-FE-003 · success", () => {
   it("renders the translated document in the 译文 pane (AC-P0-10)", async () => {
     const user = userEvent.setup();
     seedTranslatedDocument();
-    render(<App />);
+    await renderApp();
 
     await user.click(screen.getByTestId("reader-mode-translation"));
 
@@ -556,7 +556,7 @@ describe("DS-FE-003 · success", () => {
 describe("DS-FE-003 · failure", () => {
   async function translateThenFail(code: string, message: string) {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
     await screen.findByTestId("translate-profile");
@@ -600,7 +600,7 @@ describe("DS-FE-003 · failure", () => {
 
   it("reports an unreachable backend with its address (AC-P0-13)", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
     await screen.findByTestId("translate-profile");
@@ -624,7 +624,7 @@ describe("DS-FE-003 · failure", () => {
 describe("DS-FE-003 · document identity", () => {
   it("drops a result for a document the user has left (AC-P0-11)", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf("first.pdf");
 
     await user.click(screen.getByTestId("ai-translate"));
@@ -660,7 +660,7 @@ describe("DS-FE-003 · document identity", () => {
   it("clears the previous translation and revokes its URL on switch (AC-P0-15)", async () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL");
     seedTranslatedDocument();
-    const { unmount } = render(<App />);
+    const { unmount } = await renderApp();
 
     await waitFor(() =>
       expect(useWorkspaceStore.getState().translation?.monoUrl).toBeTruthy(),
@@ -673,7 +673,7 @@ describe("DS-FE-003 · document identity", () => {
 
   it("revokes the previous artifact when retranslating (AC-P0-12)", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
 
     await user.click(screen.getByTestId("ai-translate"));
@@ -707,14 +707,14 @@ describe("DS-FE-003 · document identity", () => {
 
 describe("DS-FE-003 · export", () => {
   it("stays disabled until a translation exists", async () => {
-    render(<App />);
+    await renderApp();
     expect(screen.getByTestId("export-menu-trigger")).toBeDisabled();
   });
 
   it("offers the mono and the dual artifact once translated (AC-P2-01, AC-P2-02)", async () => {
     const user = userEvent.setup();
     seedTranslatedDocument();
-    render(<App />);
+    await renderApp();
 
     const trigger = screen.getByTestId("export-menu-trigger");
     expect(trigger).toBeEnabled();
@@ -735,7 +735,7 @@ describe("DS-FE-003 · export", () => {
   it("closes the menu on Escape", async () => {
     const user = userEvent.setup();
     seedTranslatedDocument();
-    render(<App />);
+    await renderApp();
 
     await user.click(screen.getByTestId("export-menu-trigger"));
     expect(screen.getByTestId("export-menu")).toBeInTheDocument();
@@ -753,7 +753,7 @@ describe("DS-FE-003 · credentials", () => {
   it("never sends or renders a stored API key (AC-P0-16)", async () => {
     const user = userEvent.setup();
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
 
@@ -785,7 +785,7 @@ describe("DS-FE-003 · credentials", () => {
 describe("DS-CTX-004 · translation mode selection", () => {
   it("offers the three modes and defaults to Basic", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
     await screen.findByTestId("translate-profile");
@@ -797,7 +797,7 @@ describe("DS-CTX-004 · translation mode selection", () => {
 
   it("sends the chosen mode, mapping the UI's name to the API's", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
     await screen.findByTestId("translate-profile");
@@ -815,7 +815,7 @@ describe("DS-CTX-004 · translation mode selection", () => {
 
   it("discloses the cost of the contextual mode rather than calling it better", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await renderApp();
     await openPdf();
     await user.click(screen.getByTestId("ai-translate"));
     await screen.findByTestId("translate-profile");

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,10 +30,10 @@ vi.mock("@/pdf/pdfjs", () => {
   };
 });
 
-import { App } from "@/app/App";
 import { QUICK_ACTIONS } from "@/stores/workspace";
 import { useWorkspaceStore } from "@/stores/workspace";
-import { seedDocument, seedQaProvider, seedQaSections } from "@/tests/fixtures";
+import {seedDocument, seedQaProvider, seedQaSections} from "@/tests/fixtures";
+import { renderApp } from "@/tests/renderApp";
 
 /**
  * AC-35 / AC-06, rewritten for DS-QA-003.
@@ -112,8 +112,8 @@ beforeEach(() => {
 });
 
 describe("DS-FE-001 · AC-35 quick actions", () => {
-  it("renders all six required quick actions (AC-06)", () => {
-    render(<App />);
+  it("renders all six required quick actions (AC-06)", async () => {
+    await renderApp();
 
     expect(QUICK_ACTIONS).toHaveLength(6);
     for (const action of QUICK_ACTIONS) {
@@ -121,8 +121,8 @@ describe("DS-FE-001 · AC-35 quick actions", () => {
     }
   });
 
-  it("disables every quick action until a paper is registered (AC-01)", () => {
-    render(<App />);
+  it("disables every quick action until a paper is registered (AC-01)", async () => {
+    await renderApp();
 
     for (const action of QUICK_ACTIONS) {
       expect(screen.getByTestId(`quick-action-${action.label}`)).toBeDisabled();
@@ -135,7 +135,7 @@ describe("DS-FE-001 · AC-35 quick actions", () => {
     seedQaProvider();
     seedQaSections();
     replyWith(ANSWER);
-    render(<App />);
+    await renderApp();
 
     await user.click(screen.getByTestId("quick-action-总结方法"));
 
@@ -149,16 +149,16 @@ describe("DS-FE-001 · AC-35 quick actions", () => {
     expect(screen.getByTestId(/qa-turn-/)).toHaveTextContent("整篇论文");
   });
 
-  it("keeps the selection action disabled while it has no implementation (AC-P1-04)", () => {
+  it("keeps the selection action disabled while it has no implementation (AC-P1-04)", async () => {
     seedDocument();
     seedQaProvider();
-    render(<App />);
+    await renderApp();
 
     expect(screen.getByTestId("quick-action-解释选中内容")).toBeDisabled();
   });
 
-  it("renders the scope selector, conversation area and composer (AC-06)", () => {
-    render(<App />);
+  it("renders the scope selector, conversation area and composer (AC-06)", async () => {
+    await renderApp();
 
     expect(screen.getByTestId("scope-selector")).toBeInTheDocument();
     expect(screen.getByTestId("conversation-area")).toBeInTheDocument();
@@ -171,7 +171,7 @@ describe("DS-FE-001 · AC-35 quick actions", () => {
     seedDocument();
     seedQaProvider();
     seedQaSections();
-    render(<App />);
+    await renderApp();
 
     const select = screen.getByTestId("scope-selector");
     await user.selectOptions(select, "page");
@@ -183,8 +183,8 @@ describe("DS-FE-001 · AC-35 quick actions", () => {
 });
 
 describe("DS-FE-001 · AC-18 composer validation", () => {
-  it("disables send for an empty composer", () => {
-    render(<App />);
+  it("disables send for an empty composer", async () => {
+    await renderApp();
 
     expect(screen.getByTestId("composer-send")).toBeDisabled();
   });
@@ -193,7 +193,7 @@ describe("DS-FE-001 · AC-18 composer validation", () => {
     const user = userEvent.setup();
     seedDocument();
     seedQaProvider();
-    render(<App />);
+    await renderApp();
 
     const input = screen.getByLabelText("向论文提问");
     await user.type(input, "   ");
@@ -210,7 +210,7 @@ describe("DS-FE-001 · AC-18 composer validation", () => {
     seedDocument();
     seedQaProvider();
     replyWith(ANSWER);
-    render(<App />);
+    await renderApp();
 
     const input = screen.getByLabelText("向论文提问");
     await user.type(input, "什么是退化问题？");

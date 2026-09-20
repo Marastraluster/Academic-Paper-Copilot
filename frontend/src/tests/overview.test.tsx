@@ -1,24 +1,25 @@
 /**
- * DS-QA-014 — the reading entry, and the one control that costs money.
+ * DS-QA-015 — the reading entry, and the one control that costs money.
  *
- * Two properties carry this whole feature and both are asserted here rather than
- * described:
+ * The panel was rewired in DS-QA-015-FIX-001. It used to read `DocumentAnalysis`
+ * — the artifact the *translation* pipeline produces — which, measured, summed up
+ * the bibliography and said things like *"It is useful for preserving author
+ * names and affiliation spelling during translation"* to a person deciding
+ * whether to read a paper. These tests are about the reader artifact instead, and
+ * about the two properties that carry the whole feature:
  *
- * **Opening a paper reaches no provider.** The instant layer is a render of the
- * `DocumentIR` the application already holds, and the analysis layer is a
- * `GET`. Between them there is no path to a model until a reader presses a
- * button — which matters more in this panel than anywhere else, because 概览 is
- * the tab a paper opens on.
+ * **Opening a paper reaches no provider.** The instant layer renders from the IR
+ * the application already holds and the overview layer is a GET. Between them
+ * there is no path to a model until a reader presses a button — which matters
+ * most in this panel, because 概览 is the tab a paper opens on.
  *
- * **An analysis of one paper is never rendered under another.** The Overview is
- * the only thing in the application that can spend the reader's money, and the
- * worst failure available to it is a confident summary of a different document.
+ * **An overview of one paper is never rendered under another.**
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AnalysisView } from "@/api/analysis";
+import type { OverviewView } from "@/api/overview";
 import { App } from "@/app/App";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { seedDocument, seedQaSections } from "@/tests/fixtures";
@@ -30,17 +31,16 @@ declare global {
 
 const ABSTRACT =
   "Deeper neural networks are more difficult to train. We present a residual learning framework.";
+const CONTENT_HASH = "hash_current";
 
-function seedIr(overrides: Record<string, unknown> = {}) {
+function seedIr() {
   const document = seedDocument();
   useWorkspaceStore.setState({
     ir: {
       document_id: document.documentId ?? "doc_test",
-      content_hash: "hash_current",
+      content_hash: CONTENT_HASH,
       page_count: 12,
       pipeline_version: "5",
-      // Nested, because that is where the extractor puts it — the panel reads
-      // `metadata.title` and falls back to the filename.
       metadata: { title: "Deep Residual Learning for Image Recognition" },
       pages: [{ page_number: 1, width_pt: 612, height_pt: 792, rotation: 0, blocks: [] }],
       paragraphs: [
@@ -55,59 +55,82 @@ function seedIr(overrides: Record<string, unknown> = {}) {
           block_ids: [], bboxes: [[50, 100, 545, 140]],
         },
       ],
-      ...overrides,
     } as never,
   });
   return document;
 }
 
-function analysis(over: Partial<AnalysisView> = {}): AnalysisView {
+function overview(over: Partial<OverviewView> = {}): OverviewView {
   return {
-    document_id: "doc_test",
     status: "READY",
-    summary: "The paper introduces a residual learning framework.",
-    sections: [{
-      section_id: "sec_b", title: "3. Deep Residual Learning",
-      summary: "It reformulates layers as learning residual functions.",
-      page_range: [3, 5], synthetic: false,
-    }],
-    glossary: [
-      { source_term: "ResNet-50", suggested_translation: null, definition: "A model.",
-        is_translatable: false, paragraph_ids: ["p_2"] },
-      { source_term: "residual", suggested_translation: "残差", definition: null,
-        is_translatable: true, paragraph_ids: ["p_2"] },
+    cached: true,
+    content_hash: CONTENT_HASH,
+    target_language: "zh-CN",
+    provider_model: "deepseek-flash",
+    created_at: "2026-09-19T00:00:00+00:00",
+    source_sections: ["Abstract", "1. Introduction"],
+    notes: [],
+    items: [
+      { category: "research_question", text: "论文解决深度网络的退化问题。",
+        inferred: false, partial: false, evidence: [{ page_number: 1 }] },
+      { category: "core_idea", text: "让堆叠层拟合残差映射 F(x) = H(x) − x。",
+        inferred: false, partial: false, evidence: [{ page_number: 2 }] },
+      { category: "contributions", text: "提出 residual learning framework。",
+        inferred: true, partial: false, evidence: [{ page_number: 1 }] },
     ],
-    acronyms: [],
-    provenance: {
-      content_hash: "hash_current", pipeline_version: "1.0.0", prompt_version: "1.0.0",
-      ir_pipeline_version: "5", provider_model: "deepseek-flash",
-      target_language: "zh-CN", created_at: "2026-09-19T00:00:00+00:00",
-    },
+    key_terms: [
+      { term: "ResNet-50", definition: "一种深层残差网络。", evidence: [{ page_number: 3 }] },
+      { term: "CIFAR-10", definition: "一个图像分类数据集。", evidence: [{ page_number: 7 }] },
+    ],
     ...over,
   };
 }
 
-/** Open the app on the overview panel with a document and an IR in place. */
 function openOverview() {
-  // Sections first: `seedQaSections` installs its own IR, and installing ours
-  // before it would be silently overwritten — a fixture bug that showed up as
-  // the panel rendering the filename as the title.
+  // Sections first: `seedQaSections` installs its own IR, and ours would be
+  // silently overwritten — a fixture bug that showed up as the panel rendering
+  // the filename as the title.
   seedQaSections();
   const document = seedIr();
   useWorkspaceStore.setState({
     outlinePanel: "overview", sidebarOpen: true,
-    analysis: null, analysisFor: null, analysisStatus: "idle",
-    analysisError: null, analysisStartedAt: null,
+    overview: null, overviewFor: null, overviewStatus: "idle",
+    overviewError: null, overviewStartedAt: null,
   });
   render(<App />);
   return document;
 }
 
+/** Answer every request the way the real routes do. */
+function backend(options: { overview?: OverviewView | null; onPost?: () => Response } = {}) {
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    calls.push(`${init?.method ?? "GET"} ${String(url)}`);
+    if (init?.method === "POST") {
+      return options.onPost ? options.onPost() : jsonResponse(overview({ cached: false }));
+    }
+    if (String(url).includes("/overview")) {
+      return options.overview
+        ? jsonResponse(options.overview)
+        : new Response("", { status: 404 });
+    }
+    return new Response("", { status: 404 });
+  }));
+  return calls;
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200, headers: { "Content-Type": "application/json" },
+  });
+}
+
 beforeEach(() => {
   HTMLCanvasElement.prototype.getContext = (() => null) as never;
   useWorkspaceStore.setState({
-    readerMode: "original", translation: null, analysis: null, analysisFor: null,
-    analysisStatus: "idle", analysisError: null, analysisStartedAt: null,
+    readerMode: "original", translation: null,
+    overview: null, overviewFor: null, overviewStatus: "idle",
+    overviewError: null, overviewStartedAt: null,
   });
 });
 
@@ -116,10 +139,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("DS-QA-014 · the instant entry", () => {
+describe("DS-QA-015 · the instant entry", () => {
   it("shows the title, the abstract verbatim and the structure", async () => {
+    backend();
     openOverview();
-    const panel = await screen.findByTestId("overview-panel");
+    await screen.findByTestId("overview-panel");
 
     expect(screen.getByTestId("overview-title")).toHaveTextContent(
       "Deep Residual Learning for Image Recognition",
@@ -129,35 +153,33 @@ describe("DS-QA-014 · the instant entry", () => {
     // unnecessary one.
     expect(screen.getByTestId("overview-abstract")).toHaveTextContent(ABSTRACT);
     expect(screen.getByTestId("overview-metrics")).toHaveTextContent("12 页");
-    expect(panel).toBeInTheDocument();
   });
 
-  it("renders without a loading state, and spends nothing", async () => {
-    const calls: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      calls.push(`${init?.method ?? "GET"} ${String(url)}`);
-      return new Response(JSON.stringify({ error: { code: "ANALYSIS_NOT_FOUND" } }), {
-        status: 404, headers: { "Content-Type": "application/json" },
-      });
-    }));
+  it("renders synchronously, without a spinner, before the cache read returns", async () => {
+    backend();
     openOverview();
-    await screen.findByTestId("overview-panel");
-    await waitFor(() => expect(calls.length).toBeGreaterThan(0));
-
-    // No spinner: the instant layer is data the application already holds.
+    // No `await` on purpose: the entry must be there on the first paint.
+    expect(screen.getByTestId("overview-title")).toBeInTheDocument();
     expect(screen.queryByTestId("overview-progress")).toBeNull();
-    /* And no **generation**. The panel does read the stored analysis — that is
-       the cached experience, it costs nothing, and refusing to read it would
-       make a reader who already paid wait to find out. What must never happen
-       without a button press is a POST, which is the only request that reaches
-       a model. */
-    expect(calls.filter((call) => call.startsWith("POST"))).toEqual([]);
-    expect(calls.every((call) => call.includes("/analysis"))).toBe(true);
+  });
+
+  it("says the paper is still being read rather than claiming it has no abstract", async () => {
+    /* Two different statements, and the panel can only make the second one after
+       it has looked. Found by a browser harness that waited for exactly this
+       notice and got it before the extraction had finished. */
+    seedQaSections();
+    seedDocument();
+    useWorkspaceStore.setState({ ir: null, outlinePanel: "overview", sidebarOpen: true });
+    backend();
+    render(<App />);
+
+    await screen.findByTestId("overview-no-ir");
+    expect(screen.queryByTestId("overview-no-abstract")).toBeNull();
   });
 
   it("says there is no abstract rather than substituting the introduction", async () => {
-    const document = seedDocument();
     seedQaSections();
+    const document = seedDocument();
     useWorkspaceStore.setState({
       ir: {
         document_id: document.documentId ?? "doc_test", content_hash: "h",
@@ -171,162 +193,108 @@ describe("DS-QA-014 · the instant entry", () => {
       } as never,
       outlinePanel: "overview", sidebarOpen: true,
     });
+    backend();
     render(<App />);
 
     await screen.findByTestId("overview-no-abstract");
     expect(screen.queryByTestId("overview-abstract")).toBeNull();
     expect(screen.getByTestId("overview-entry")).not.toHaveTextContent("This is the introduction");
   });
-
-  it("opens the paper's own first body section, by its own title", async () => {
-    /* The real ResNet outline: no section called "Method" or "Experiments", so a
-       recommendation that matched expected titles would name nothing here. */
-    openOverview();
-    useWorkspaceStore.setState({
-      sections: [
-        { id: "s1", title: "Abstract", level: 1, parentId: null, pageNumber: 1,
-          pageRange: [1, 1], bbox: null, anchor: "heading", isReferences: false },
-        { id: "s2", title: "1. Introduction", level: 1, parentId: null, pageNumber: 1,
-          pageRange: [1, 1], bbox: null, anchor: "heading", isReferences: false },
-        { id: "s3", title: "3. Deep Residual Learning", level: 1, parentId: null,
-          pageNumber: 3, pageRange: [3, 5], bbox: null, anchor: "heading",
-          isReferences: false },
-      ] as never,
-    });
-
-    await screen.findByTestId("overview-start-reading");
-    expect(screen.getByTestId("overview-start-reading")).toHaveTextContent("3. Deep Residual");
-  });
 });
 
-describe("DS-QA-014 · the analysis layer", () => {
-  it("offers generation when there is none, and does not start one itself", async () => {
+describe("DS-QA-015 · reading the cache", () => {
+  it("asks once, spends nothing, and renders the stored overview", async () => {
+    const calls = backend({ overview: overview() });
     openOverview();
-    await screen.findByTestId("overview-not-generated");
-
-    expect(screen.getByTestId("overview-generate")).toBeInTheDocument();
-    // Nothing has been asked of a provider, and nothing will be until the button
-    // is pressed. This is the acceptance's central promise.
-    expect(screen.queryByTestId("overview-progress")).toBeNull();
-  });
-
-  it("renders a cached analysis without generating anything", async () => {
-    openOverview();
-    useWorkspaceStore.setState({ analysis: analysis(), analysisFor: "doc_test" });
 
     await screen.findByTestId("overview-body");
-    expect(screen.getByTestId("overview-summary")).toHaveTextContent("residual learning framework");
-    expect(screen.getByTestId("overview-sections")).toHaveTextContent("3. Deep Residual Learning");
-    expect(screen.getByTestId("overview-term-ResNet-50")).toBeInTheDocument();
-    expect(screen.queryByTestId("overview-generate")).toBeNull();
+    await waitFor(() => expect(calls.length).toBeGreaterThan(0));
+
+    // No POST: the only request that reaches a provider must never happen
+    // because the panel appeared.
+    expect(calls.filter((call) => call.startsWith("POST"))).toEqual([]);
+    expect(calls.every((call) => call.includes("/overview"))).toBe(true);
   });
 
-  it("keeps the source spelling of a term it cannot translate", async () => {
+  it("renders the categories the schema defines", async () => {
+    backend({ overview: overview() });
     openOverview();
-    useWorkspaceStore.setState({ analysis: analysis(), analysisFor: "doc_test" });
     await screen.findByTestId("overview-body");
 
-    // `ResNet-50` is an identifier. Case-folding it is the one thing that would
-    // make a glossary useless.
+    expect(screen.getByTestId("overview-research_question")).toHaveTextContent("退化问题");
+    expect(screen.getByTestId("overview-core_idea")).toHaveTextContent("残差映射");
+    expect(screen.getByTestId("overview-contributions")).toHaveTextContent("residual learning");
+  });
+
+  it("marks a claim the model organised rather than the authors stated", async () => {
+    backend({ overview: overview() });
+    openOverview();
+    await screen.findByTestId("overview-body");
+
+    // Said, not implied: a reader checking the paper should know which kind of
+    // claim they are reading.
+    expect(screen.getByTestId("overview-inferred-contributions-0")).toHaveTextContent("归纳");
+    expect(screen.queryByTestId("overview-inferred-research_question-0")).toBeNull();
+  });
+
+  it("keeps the paper's own spelling of a term", async () => {
+    backend({ overview: overview() });
+    openOverview();
+    await screen.findByTestId("overview-body");
+
+    // `ResNet-50` is an identifier; case-folding it is the one thing that would
+    // make a key-terms list useless.
     expect(screen.getByTestId("overview-term-ResNet-50")).toHaveTextContent("ResNet-50");
+    expect(screen.getByTestId("overview-term-CIFAR-10")).toHaveTextContent("CIFAR-10");
   });
 
-  it("bounds what it renders and offers the rest", async () => {
-    /* Measured: the real ResNet analysis holds 207 glossary entries. Rendering
-       them all into a 340 px column is a scroll the reader has to traverse
-       before reaching anything — the opposite of what an entry point is for. */
-    const many = analysis({
-      glossary: Array.from({ length: 30 }, (_, index) => ({
-        source_term: `term${index}`, suggested_translation: null,
-        definition: null, is_translatable: true, paragraph_ids: [],
-      })),
-    });
+  it("says which model produced it", async () => {
+    backend({ overview: overview() });
     openOverview();
-    useWorkspaceStore.setState({ analysis: many, analysisFor: "doc_test" });
     await screen.findByTestId("overview-body");
-
-    expect(screen.getByTestId("overview-term-term0")).toBeInTheDocument();
-    expect(screen.queryByTestId("overview-term-term29")).toBeNull();
-
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId("overview-terms-expand"));
-    expect(screen.getByTestId("overview-term-term29")).toBeInTheDocument();
+    // A stored overview survives a model change, so the reader is told whose
+    // reading it is rather than left to assume it is the configured one.
+    expect(screen.getByTestId("overview-provenance")).toHaveTextContent("deepseek-flash");
   });
 
-  it("badges a partial analysis and a synthetic section", async () => {
+  it("badges a partial overview", async () => {
+    backend({ overview: overview({ status: "PARTIAL", notes: ["no findings"] }) });
     openOverview();
-    useWorkspaceStore.setState({
-      analysis: analysis({
-        status: "PARTIAL",
-        sections: [{
-          section_id: "sec_x", title: "Auto partition", summary: "…",
-          page_range: [7, 8], synthetic: true,
-        }],
-      }),
-      analysisFor: "doc_test",
-    });
-
     await screen.findByTestId("overview-body");
-    expect(screen.getByTestId("overview-partial")).toHaveTextContent("部分章节分析已就绪");
-    // A title the reader would take for the authors' own, when it is not.
-    expect(screen.getByTestId("overview-synthetic-sec_x")).toHaveTextContent("自动分块");
+    expect(screen.getByTestId("overview-partial")).toBeInTheDocument();
   });
 
-  it("hides an analysis that describes a different extraction", async () => {
-    /* The analysis's section and term references point at paragraph ids, and
-       paragraph ids are reading positions. DS-DOC-002 measured one constant
-       renumbering 145 of 160 paragraphs of a paper whose bytes had not changed,
-       so an analysis from a previous extraction describes text that has moved. */
+  it("hides an overview that describes a different file", async () => {
+    backend({ overview: overview({ content_hash: "hash_of_another_paper" }) });
     openOverview();
-    useWorkspaceStore.setState({ analysis: analysis(), analysisFor: "doc_test" });
-    await screen.findByTestId("overview-body");
-
-    const stale = analysis();
-    stale.provenance.ir_pipeline_version = "4";
-    useWorkspaceStore.setState({ analysis: stale });
-
     await screen.findByTestId("overview-not-generated");
     expect(screen.queryByTestId("overview-body")).toBeNull();
   });
 
-  it("hides an analysis that describes a different file", async () => {
+  it("shows the entry when there is no overview, and does not fetch one", async () => {
+    const calls = backend({ overview: null });
     openOverview();
-    const other = analysis();
-    other.provenance.content_hash = "hash_of_another_paper";
-    useWorkspaceStore.setState({ analysis: other, analysisFor: "doc_test" });
-
     await screen.findByTestId("overview-not-generated");
-    expect(screen.queryByTestId("overview-body")).toBeNull();
+
+    expect(screen.getByTestId("overview-abstract")).toHaveTextContent(ABSTRACT);
+    expect(calls.filter((call) => call.startsWith("POST"))).toEqual([]);
   });
 });
 
-describe("DS-QA-014 · generation", () => {
-  it("asks once, shows real elapsed time, and renders what comes back", async () => {
-    const document = openOverview();
+describe("DS-QA-015 · generating", () => {
+  it("asks once, on the button, and renders what comes back", async () => {
+    openOverview();
     useWorkspaceStore.setState({ profileId: "prof_1" });
     await screen.findByTestId("overview-not-generated");
 
-    const calls: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      calls.push(`${init?.method ?? "GET"} ${String(url)}`);
-      if (init?.method === "POST") {
-        return new Response(JSON.stringify(analysis()), {
-          status: 200, headers: { "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({ error: { code: "ANALYSIS_NOT_FOUND" } }), {
-        status: 404, headers: { "Content-Type": "application/json" },
-      });
-    }));
-
+    const calls = backend({ overview: null });
     const user = userEvent.setup();
     await user.click(screen.getByTestId("overview-generate"));
 
     await screen.findByTestId("overview-body");
     const posts = calls.filter((call) => call.startsWith("POST"));
     expect(posts).toHaveLength(1);
-    expect(posts[0]).toContain(`/documents/${document.documentId}/analysis`);
-    expect(screen.getByTestId("overview-summary")).toBeInTheDocument();
+    expect(posts[0]).toContain("/overview");
   });
 
   it("keeps the instant entry usable when generation fails", async () => {
@@ -336,29 +304,42 @@ describe("DS-QA-014 · generation", () => {
     useWorkspaceStore.setState({ profileId: "prof_1" });
     await screen.findByTestId("overview-not-generated");
 
-    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
-      if (init?.method === "POST") {
-        return new Response(JSON.stringify({ error: { code: "PROVIDER_ERROR" } }), {
-          status: 502, headers: { "Content-Type": "application/json" },
-        });
-      }
-      return new Response("", { status: 404 });
-    }));
-
+    backend({
+      overview: null,
+      onPost: () => new Response(JSON.stringify({ error: { code: "PROVIDER_ERROR" } }), {
+        status: 502, headers: { "Content-Type": "application/json" },
+      }),
+    });
     const user = userEvent.setup();
     await user.click(screen.getByTestId("overview-generate"));
 
     await screen.findByTestId("overview-error");
     expect(screen.getByTestId("overview-error")).toHaveTextContent("AI 服务暂时不可用");
-    // The abstract is still there — it never depended on a provider.
+    // The abstract never depended on a provider.
     expect(screen.getByTestId("overview-abstract")).toHaveTextContent(ABSTRACT);
     expect(screen.getByTestId("overview-generate")).toBeInTheDocument();
   });
 
+  it("says which failure it was, not just that it failed", async () => {
+    openOverview();
+    useWorkspaceStore.setState({ profileId: "prof_1" });
+    await screen.findByTestId("overview-not-generated");
+
+    backend({
+      overview: null,
+      onPost: () => new Response(JSON.stringify({ error: { code: "RATE_LIMIT" } }), {
+        status: 429, headers: { "Content-Type": "application/json" },
+      }),
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("overview-generate"));
+
+    await screen.findByTestId("overview-error");
+    expect(screen.getByTestId("overview-error")).toHaveTextContent("请求过于频繁");
+  });
+
   it("promises no configured provider rather than failing obscurely", async () => {
-    // The read answers 404 the way the real route does, so the only message on
-    // screen is the one the button press produced.
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 404 })));
+    backend({ overview: null });
     openOverview();
     useWorkspaceStore.setState({ profileId: "" });
     await screen.findByTestId("overview-not-generated");
@@ -372,8 +353,26 @@ describe("DS-QA-014 · generation", () => {
   });
 });
 
-describe("DS-QA-014 · the no-document state", () => {
+describe("DS-QA-015 · evidence", () => {
+  it("offers the page an item came from, and jumps there", async () => {
+    backend({ overview: overview() });
+    openOverview();
+    await screen.findByTestId("overview-body");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("overview-evidence-p2"));
+
+    // The same jump the citation and section paths use; no second engine, and
+    // no rectangle — the provider was never given one.
+    const jump = useWorkspaceStore.getState().jumpRequest;
+    expect(jump?.pageNumber).toBe(2);
+    expect(jump?.bboxes).toEqual([]);
+  });
+});
+
+describe("DS-QA-015 · the no-document state", () => {
   it("says to open a paper, and offers nothing to generate", async () => {
+    backend({ overview: null });
     useWorkspaceStore.setState({ document: null, outlinePanel: "overview", sidebarOpen: true });
     render(<App />);
 

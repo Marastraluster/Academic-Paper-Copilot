@@ -1,11 +1,49 @@
+import { Suspense, lazy } from "react";
+
 import { OutlineHeader } from "@/outline/OutlineHeader";
-import { OutlinePanel } from "@/outline/OutlinePanel";
 import { OverviewPanel } from "@/overview/OverviewPanel";
-import { NotesPanel } from "@/notes/NotesPanel";
-import { QaPanel } from "@/assistant/QaPanel";
 import { SIDEBAR_WIDTH_PX } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/stores/workspace";
+
+/**
+ * The three panels behind a paper's overview, loaded when they are opened.
+ *
+ * Measured: every panel was in the initial chunk, which had **0.86 kB** of legal
+ * headroom under the 350 kB ceiling before the reader overview was added at all.
+ * Splitting them is what recovers room to keep building.
+ *
+ * The one panel that must **not** be split is the overview: its reading entry
+ * renders synchronously from data the application already holds, and a lazy
+ * boundary would put a suspension in front of the first paint of the tab a paper
+ * opens on. React's `lazy` and dynamic `import()` are already present, so this
+ * costs no dependency.
+ */
+const OutlinePanel = lazy(() =>
+  import("@/outline/OutlinePanel").then((module) => ({ default: module.OutlinePanel })),
+);
+const NotesPanel = lazy(() =>
+  import("@/notes/NotesPanel").then((module) => ({ default: module.NotesPanel })),
+);
+const QaPanel = lazy(() =>
+  import("@/assistant/QaPanel").then((module) => ({ default: module.QaPanel })),
+);
+
+/**
+ * What is on screen while a panel's code arrives.
+ *
+ * A real element with a test id rather than `null`, and that is not a testing
+ * convenience: a blank frame is what a slow connection looks like, and a reader
+ * cannot tell it from a panel that failed to open. The id is also how the suites
+ * that render the whole shell know the panel they are about to query exists.
+ */
+function PanelLoading() {
+  return (
+    <p data-testid="assistant-panel-loading" className="px-3 py-6 text-xs text-muted-foreground">
+      正在载入…
+    </p>
+  );
+}
 
 /**
  * AC-05 — collapsible Paper QA sidebar, and since DS-QA-008 the document
@@ -107,7 +145,9 @@ export function AssistantSidebar() {
               data-testid="assistant-tabpanel-notes"
               className="flex min-h-0 flex-1 flex-col"
             >
-              <NotesPanel />
+              <Suspense fallback={<PanelLoading />}>
+                <NotesPanel />
+              </Suspense>
             </div>
           ) : panel === "outline" ? (
             <div
@@ -118,7 +158,9 @@ export function AssistantSidebar() {
               className="flex min-h-0 flex-1 flex-col"
             >
               <OutlineHeader />
-              <OutlinePanel />
+              <Suspense fallback={<PanelLoading />}>
+                <OutlinePanel />
+              </Suspense>
             </div>
           ) : (
             <div
@@ -128,7 +170,9 @@ export function AssistantSidebar() {
               data-testid="assistant-tabpanel-qa"
               className="flex min-h-0 flex-1 flex-col"
             >
-              <QaPanel />
+              <Suspense fallback={<PanelLoading />}>
+                <QaPanel />
+              </Suspense>
             </div>
           )}
         </div>

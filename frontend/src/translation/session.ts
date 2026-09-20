@@ -24,7 +24,7 @@ import {
   type TaskOutcome,
 } from "@/api/translation";
 import { loadIr, loadProfiles, loadSections, teardownQa } from "@/qa/session";
-import { loadAnalysis, teardownOverview } from "@/overview/session";
+import { loadOverview, teardownOverview } from "@/overview/session";
 import { loadAnnotations } from "@/notes/session";
 import {
   nextSessionToken,
@@ -199,7 +199,7 @@ export function openDocument(file: File): void {
       // overview the moment the panel appears, and one who has not should see
       // the instant entry — neither should wait for the panel to mount to find
       // out which they are. This route never reaches a provider.
-      void loadAnalysis();
+      void loadOverview();
       // The canonical IR, for selection mapping. Fetched here so a selection made
       // moments after a paper opens can be resolved without a round trip.
       void loadIr();
