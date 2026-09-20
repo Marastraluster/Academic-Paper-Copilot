@@ -21,6 +21,7 @@ import hashlib
 from typing import Any
 
 from app.llm.base import LLMProvider
+from app.llm.accounting import CountingProvider
 from app.llm.chat_completions import OpenAIChatCompletionsProvider
 from app.llm.client import PROBE_MAX_TOKENS, PROBE_PROMPT
 from app.llm.errors import (
@@ -79,11 +80,20 @@ def cache_key(config: ProviderConfig) -> tuple[str, str, str]:
 
 
 def _build_provider(config: ProviderConfig, protocol: str) -> LLMProvider:
+    """The single construction point, and therefore the only place counting is needed.
+
+    Every provider in the application is built here, so wrapping here covers
+    translation, context analysis, Paper QA and the reader overview without any
+    of them knowing they are measured — which is what makes the count trustworthy
+    rather than a thing each caller remembers to do.
+    """
     if protocol == RESPONSES:
-        return OpenAIResponsesProvider(config)
-    if protocol == CHAT_COMPLETIONS:
-        return OpenAIChatCompletionsProvider(config)
-    raise ValueError(f"Unsupported protocol {protocol!r}; expected one of {_VALID_PROTOCOLS}")
+        inner: LLMProvider = OpenAIResponsesProvider(config)
+    elif protocol == CHAT_COMPLETIONS:
+        inner = OpenAIChatCompletionsProvider(config)
+    else:
+        raise ValueError(f"Unsupported protocol {protocol!r}; expected one of {_VALID_PROTOCOLS}")
+    return CountingProvider(inner)
 
 
 async def _probe(config: ProviderConfig, protocol: str) -> bool:

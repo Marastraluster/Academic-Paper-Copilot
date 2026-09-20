@@ -158,7 +158,7 @@ async def test_explicit_chat_completions_bypasses_probe(probe: ProbeRecorder) ->
     """AC-04 / AC-27.04 — no network, and the cache is untouched."""
     provider = await resolve_provider(config(), protocol="chat_completions")
 
-    assert isinstance(provider, OpenAIChatCompletionsProvider)
+    assert isinstance(provider.unwrap(), OpenAIChatCompletionsProvider)
     assert provider.protocol == "chat_completions"
     assert probe.calls == []
     assert get_detection_cache_stats()["entries"] == 0
@@ -168,7 +168,7 @@ async def test_explicit_responses_bypasses_probe(probe: ProbeRecorder) -> None:
     """AC-04 / AC-27.05."""
     provider = await resolve_provider(config(), protocol="responses")
 
-    assert isinstance(provider, OpenAIResponsesProvider)
+    assert isinstance(provider.unwrap(), OpenAIResponsesProvider)
     assert provider.protocol == "responses"
     assert probe.calls == []
     assert get_detection_cache_stats()["entries"] == 0
@@ -181,7 +181,7 @@ async def test_auto_detection_prefers_responses(probe: ProbeRecorder) -> None:
     """AC-05 / AC-27.06 — Chat Completions must not be probed at all."""
     provider = await resolve_provider(config())
 
-    assert isinstance(provider, OpenAIResponsesProvider)
+    assert isinstance(provider.unwrap(), OpenAIResponsesProvider)
     assert provider.protocol == "responses"
     assert probe.calls == ["responses"]
 
@@ -207,7 +207,7 @@ async def test_falls_through_when_responses_is_absent(
 
     provider = await resolve_provider(config())
 
-    assert isinstance(provider, OpenAIChatCompletionsProvider)
+    assert isinstance(provider.unwrap(), OpenAIChatCompletionsProvider)
     assert provider.protocol == "chat_completions"
     assert probe.calls == ["responses", "chat_completions"]
 
@@ -533,13 +533,19 @@ async def test_protocol_argument_is_case_insensitive(probe: ProbeRecorder, value
 @pytest.mark.parametrize("value", ["RESPONSES", "Responses", " responses "])
 async def test_explicit_protocol_is_case_insensitive(probe: ProbeRecorder, value: str) -> None:
     """AC-21."""
-    assert isinstance(await resolve_provider(config(), protocol=value), OpenAIResponsesProvider)
+    assert isinstance(
+        (await resolve_provider(config(), protocol=value)).unwrap(),
+        OpenAIResponsesProvider,
+    )
 
 
 @pytest.mark.parametrize("value", ["CHAT_COMPLETIONS", "Chat_Completions"])
 async def test_explicit_chat_protocol_is_case_insensitive(probe: ProbeRecorder, value: str) -> None:
     """AC-21."""
-    assert isinstance(await resolve_provider(config(), protocol=value), OpenAIChatCompletionsProvider)
+    assert isinstance(
+        (await resolve_provider(config(), protocol=value)).unwrap(),
+        OpenAIChatCompletionsProvider,
+    )
 
 
 async def test_invalid_protocol_raises_value_error(probe: ProbeRecorder) -> None:
