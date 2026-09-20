@@ -22,7 +22,7 @@ import {
   type NewTarget,
 } from "@/api/annotations";
 import { isAbortError } from "@/api/client";
-import { buildAnnotationTargets, type TargetSource } from "@/notes/targets";
+import type { TargetSource } from "@/notes/targets";
 import { isCurrent } from "@/qa/session";
 import { activeSectionFor, useWorkspaceStore } from "@/stores/workspace";
 
@@ -149,6 +149,14 @@ export async function createFromSelection({
     return { ok: false, reason: "Select text in the paper first." };
   }
 
+  /* Loaded when a note is actually made, not when the application starts.
+   *
+   * The target builder and the selection mapper it needs are the two largest
+   * modules in `src/`, measured, and they were in the initial download because
+   * this file is reachable from the QA session's teardown — which does nothing
+   * but clear some state. A reader pays that in bundle size on every open, for
+   * code that runs when they highlight something. */
+  const { buildAnnotationTargets } = await import("@/notes/targets");
   const sources: TargetSource[] = buildAnnotationTargets(state.ir, {
     rects: geometry.rects,
     text: geometry.text,

@@ -1,10 +1,8 @@
-import { Composer } from "@/assistant/Composer";
-import { ConversationArea } from "@/assistant/ConversationArea";
-import { QuickActions } from "@/assistant/QuickActions";
-import { ScopeSelector } from "@/assistant/ScopeSelector";
-import { OutlineHeader, OutlinePanel } from "@/outline/OutlinePanel";
+import { OutlineHeader } from "@/outline/OutlineHeader";
+import { OutlinePanel } from "@/outline/OutlinePanel";
 import { OverviewPanel } from "@/overview/OverviewPanel";
 import { NotesPanel } from "@/notes/NotesPanel";
+import { QaPanel } from "@/assistant/QaPanel";
 import { SIDEBAR_WIDTH_PX } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -130,10 +128,7 @@ export function AssistantSidebar() {
               data-testid="assistant-tabpanel-qa"
               className="flex min-h-0 flex-1 flex-col"
             >
-              <ScopeSelector />
-              <QuickActions />
-              <ConversationArea />
-              <Composer />
+              <QaPanel />
             </div>
           )}
         </div>

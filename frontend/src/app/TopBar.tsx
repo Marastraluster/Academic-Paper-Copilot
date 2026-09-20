@@ -11,7 +11,22 @@ import {
 import { ReaderModeSwitch } from "@/reader/ReaderModeSwitch";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { ExportMenu } from "@/translation/ExportMenu";
-import { TranslateDialog } from "@/translation/TranslateDialog";
+import { Suspense, lazy } from "react";
+
+/**
+ * The translation dialog loads when it is opened.
+ *
+ * It is roughly 13 kB of source — a form, its validation and its options — and
+ * it is rendered closed on every page. A reader who never translates should not
+ * download it, which is also true of everyone looking at the overview the
+ * application now opens on. It renders nothing until `open`, so deferring it
+ * changes no visible behaviour and no test's timing.
+ */
+const TranslateDialog = lazy(() =>
+  import("@/translation/TranslateDialog").then((module) => ({
+    default: module.TranslateDialog,
+  })),
+);
 import { useTranslationSession } from "@/translation/useTranslationSession";
 import type { TranslateOptions } from "@/translation/session";
 
@@ -150,11 +165,15 @@ export function TopBar() {
         <TooltipContent>设置</TooltipContent>
       </Tooltip>
 
-      <TranslateDialog
-        open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        onSubmit={submit}
-      />
+      {dialogOpen && (
+        <Suspense fallback={null}>
+          <TranslateDialog
+            open={dialogOpen}
+            onClose={() => setDialogOpen(false)}
+            onSubmit={submit}
+          />
+        </Suspense>
+      )}
     </header>
   );
 }

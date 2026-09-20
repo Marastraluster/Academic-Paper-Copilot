@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import annotations, documents, health, profiles
+from app.api import annotations, documents, health, overview, profiles
 from app.api.documents import register_document_error_handlers
 from app.api.profiles import register_profile_error_handlers
 from app.config import Settings
@@ -152,6 +152,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(profiles.router, prefix="/api")
     app.include_router(documents.router, prefix="/api")
     app.include_router(annotations.router, prefix="/api")
+    app.include_router(overview.router, prefix="/api")
     return app
 
 
