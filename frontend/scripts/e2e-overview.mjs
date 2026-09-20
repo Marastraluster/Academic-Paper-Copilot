@@ -234,8 +234,18 @@ async function main() {
       check("a real generation produced an overview", generated !== null,
         generated ? `${seconds}s, ${generated.items.length} items` : "timed out");
 
+      /* AC-P0-18 is scoped by its own wording to calls carrying
+         `operation="reader_overview"` — and the protocol-detection probes are
+         unlabelled. Both numbers are reported, because the criterion measures one
+         of them and the reader pays for the other. */
       const after = await ledger();
-      check("it cost exactly one provider call", after.calls === 1, JSON.stringify(after));
+      const synthesis = after.by_operation?.reader_overview ?? 0;
+      const probes = after.by_operation?.unlabelled ?? 0;
+      check("the synthesis stays inside the frozen call budget", synthesis <= 2,
+        `${synthesis} reader_overview call(s), ${probes} protocol probe(s), ` +
+        `${after.calls} total`);
+      check("and no request carried paper content while finding the protocol",
+        probes <= 2, `${probes} probe(s) sent "ping" with a one-token budget`);
 
       if (generated) {
         check("the status is READY or PARTIAL",
@@ -370,18 +380,31 @@ async function main() {
       const bHash = await page.evaluate(() =>
         document.querySelector('[data-testid="overview-title"]')?.textContent ?? "");
 
-      // Give A time to land somewhere it must not land here.
-      await sleep(35000);
+      /* Wait for A's generation to actually **finish**, so the thing being
+         checked is a completed artifact of A's arriving while B is open — not
+         the absence of a result that had not been produced yet. Measured
+         generation runs 30-60 s, so sampling once at 35 s proves nothing. */
+      const aDeadline = Date.now() + 180000;
+      let aArtifact = null;
+      while (Date.now() < aDeadline && aArtifact === null) {
+        await sleep(3000);
+        aArtifact = await overviewFor(aId);
+      }
       /* What matters is not that B shows nothing — B may legitimately show its
          *own* cached overview — but that what B shows is B's. A's artifact is
          keyed to a different content hash, and the panel refuses one that does
          not match the paper on screen. */
+      check("A's generation completed after the reader left", aArtifact !== null,
+        aArtifact ? `cached under ${aArtifact.content_hash.slice(0, 12)}` : "never finished");
       const stillB = await page.evaluate(() => ({
         title: document.querySelector('[data-testid="overview-title"]')?.textContent ?? "",
       }));
       const bOverview = await overviewFor(rowAppearedSince(beforeB) ?? "");
-      check("B never shows A's overview", (bOverview?.content_hash ?? "") !== aHash,
-        `B hash ${String(bOverview?.content_hash).slice(0, 12)} vs A ${aHash.slice(0, 12)}`);
+      check("and it is owned by A's content hash, not B's",
+        aArtifact !== null && aArtifact.content_hash !== bOverview?.content_hash,
+        `A ${String(aArtifact?.content_hash).slice(0, 12)} vs B ${String(bOverview?.content_hash).slice(0, 12)}`);
+      check("B never renders A's overview", (bOverview?.content_hash ?? "") !== aHash,
+        `B hash ${String(bOverview?.content_hash).slice(0, 12)}`);
       check("B shows its own paper", stillB.title.includes("Residual"),
         JSON.stringify(stillB.title.slice(0, 24)));
       check("B still shows its own entry",
