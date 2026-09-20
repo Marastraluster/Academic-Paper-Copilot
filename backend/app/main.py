@@ -153,6 +153,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(documents.router, prefix="/api")
     app.include_router(annotations.router, prefix="/api")
     app.include_router(overview.router, prefix="/api")
+
+    # Provider-call accounting, for a harness that has to prove a reader action
+    # cost nothing. Registered only when the environment asks for it: a default
+    # run has no such route, because reporting what the application has spent is
+    # instrumentation rather than a product surface.
+    from app.api import instrumentation
+
+    if instrumentation.enabled():
+        app.include_router(instrumentation.router, prefix="/api")
     return app
 
 
