@@ -577,7 +577,13 @@ describe("DS-DOC-004 · the shell", () => {
     expect(stored()).toBeNull();
   });
 
-  it("does not touch the settings button or the URL (AC-P0-18)", async () => {
+  it("does not touch the URL (AC-P0-18)", async () => {
+    /* This test used to assert that clicking 设置 opened nothing, because that
+       was true when DS-DOC-004 froze. DS-FE-004 was chartered to give that
+       button its screen, so the claim it still protects is the other half of
+       AC-P0-18: no router, no URL mutation, no navigation. Restoring a session
+       must not put a document id in the address bar — and neither may opening
+       the settings screen. */
     const before = window.location.href;
     seedSession();
     backend();
@@ -587,10 +593,10 @@ describe("DS-DOC-004 · the shell", () => {
       expect(useWorkspaceStore.getState().document?.registration).toBe("ready"),
     );
     expect(window.location.href).toBe(before);
+
     const user = userEvent.setup();
     await user.click(screen.getByLabelText("设置"));
-    // No settings dialog exists, and this task is not the one that adds it.
-    expect(screen.queryByRole("dialog")).toBeNull();
     expect(window.location.href).toBe(before);
+    expect(window.location.hash).toBe("");
   });
 });

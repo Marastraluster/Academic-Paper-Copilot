@@ -27,6 +27,17 @@ const TranslateDialog = lazy(() =>
     default: module.TranslateDialog,
   })),
 );
+
+/**
+ * The settings dialog loads when it is opened, for a harder reason than taste.
+ *
+ * The initial chunk sits inside 1.11 kB of a frozen ceiling, so anything a
+ * reader has not asked for cannot be in it — and a settings screen nobody has
+ * opened is exactly that. The eager half is the button's handler and this
+ * import: the screen itself, its forms and its API client all arrive with the
+ * first click.
+ */
+const SettingsDialog = lazy(() => import("@/settings/SettingsDialog"));
 import { useTranslationSession } from "@/translation/useTranslationSession";
 import type { TranslateOptions } from "@/translation/session";
 
@@ -45,6 +56,7 @@ export function TopBar() {
   const { start, busy } = useTranslationSession();
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // A translation needs somewhere to run: no document, or one whose backend
   // identity is still being established, cannot be translated yet.
@@ -157,7 +169,9 @@ export function TopBar() {
             variant="ghost"
             size="icon-sm"
             aria-label="设置"
+            data-testid="settings-open"
             className="shrink-0"
+            onClick={() => setSettingsOpen(true)}
           >
             <Settings />
           </Button>
@@ -172,6 +186,12 @@ export function TopBar() {
             onClose={() => setDialogOpen(false)}
             onSubmit={submit}
           />
+        </Suspense>
+      )}
+
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         </Suspense>
       )}
     </header>
