@@ -26,6 +26,8 @@ import {
 import { loadIr, loadProfiles, loadSections, teardownQa } from "@/qa/session";
 import { loadOverview, teardownOverview } from "@/overview/session";
 import { loadAnnotations } from "@/notes/session";
+import { abortRestore } from "@/session/restore";
+import { clearStoredSession } from "@/session/types";
 import {
   nextSessionToken,
   useWorkspaceStore,
@@ -132,6 +134,11 @@ export function teardownTranslation(): void {
  * translated. Reading must never depend on the backend being up.
  */
 export function openDocument(file: File): void {
+  // A reader who picks a file has decided what they want to read, and a restore
+  // still in flight is a guess about it. It is stopped before it can write
+  // anything else: the guess that is right most of the time is not worth the one
+  // time it lands on top of the file in their hand.
+  abortRestore();
   // A new document invalidates everything the previous one was doing.
   teardownTranslation();
   teardownQa();
@@ -225,6 +232,10 @@ export function openDocument(file: File): void {
 
 /** Close the open document. */
 export function closeDocument(): void {
+  // Closing is the reader saying they are done with this paper. A reload that
+  // ignored that and put it back would make the empty workspace impossible to
+  // reach on purpose.
+  clearStoredSession();
   teardownTranslation();
   teardownQa();
   // The overview belongs to the document that produced it, and so does an

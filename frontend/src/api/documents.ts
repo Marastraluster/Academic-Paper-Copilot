@@ -53,6 +53,23 @@ export async function getDocument(
   );
 }
 
+/**
+ * The original PDF, as the backend kept it.
+ *
+ * The browser has the `File` it was given, except after a reload — where the
+ * only copy left is this one. Fetched as a blob for the same two reasons as the
+ * translated artifact: one owner, one revocation, and a request that can carry
+ * `no-store`.
+ */
+export async function fetchOriginalPdf(
+  documentId: string,
+  { signal }: UploadOptions = {},
+): Promise<Blob> {
+  return apiBlob(`/api/documents/${encodeURIComponent(documentId)}/file`, {
+    signal,
+  });
+}
+
 /** The translated (mono) artifact — N pages, one per source page. */
 export async function fetchTranslatedPdf(
   documentId: string,
