@@ -26,7 +26,7 @@ import {
 import { loadIr, loadProfiles, loadSections, teardownQa } from "@/qa/session";
 import { loadOverview, teardownOverview } from "@/overview/session";
 import { loadAnnotations } from "@/notes/session";
-import { abortRestore } from "@/session/restore";
+import { abortRestore, openFromLibrary, type RestoreOutcome } from "@/session/restore";
 import { clearStoredSession } from "@/session/types";
 import {
   nextSessionToken,
@@ -228,6 +228,30 @@ export function openDocument(file: File): void {
       if (activeUpload === controller) activeUpload = null;
     }
   })();
+}
+
+/**
+ * Open a paper the backend already has, chosen from the library.
+ *
+ * The teardowns below are the same four `openDocument` performs, in the same
+ * order, and they are the reason this function exists rather than the library
+ * calling the adoption path directly: paper B must not inherit paper A's
+ * translation — whose object URL has to be **revoked**, not merely forgotten —
+ * nor its conversation, nor its overview. Leaving that to a caller means one
+ * caller eventually forgets.
+ */
+export async function openRegisteredDocument(
+  documentId: string,
+  name: string,
+): Promise<RestoreOutcome> {
+  // A reader who picked a paper has decided; whatever was in flight is a guess.
+  abortRestore();
+  activeUpload?.abort();
+  activeUpload = null;
+  teardownTranslation();
+  teardownQa();
+  teardownOverview();
+  return await openFromLibrary(documentId, name);
 }
 
 /** Close the open document. */

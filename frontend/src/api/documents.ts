@@ -11,15 +11,59 @@
  * exactly one module that can revoke it (AC-P0-15), and the request can carry
  * `no-store`, without which a retranslation renders the previous result.
  */
-import { apiBlob, apiJson } from "@/api/client";
+import { apiBlob, apiFetch, apiJson } from "@/api/client";
+
+/**
+ * What the last successful translation of this paper was.
+ *
+ * There is deliberately no `model` and no token count: neither is recorded. The
+ * profile that ran it is named by id, and a profile can be edited or deleted
+ * afterwards — so a screen may show which profile was used, never claim its
+ * current model produced this artifact.
+ */
+export interface TranslationRecordSummary {
+  lang_in: string;
+  lang_out: string;
+  engine: string;
+  translated_at: string;
+  profile_id: string | null;
+}
 
 export interface DocumentSummary {
   document_id: string;
   name: string;
   page_count: number;
   source: "upload" | "path";
+  /** Whether the translated artifact is on disk — a different fact from the
+   *  record below, and the one that decides whether a translation exists. */
   has_translation: boolean;
   created_at: string;
+  translation_record?: TranslationRecordSummary | null;
+}
+
+/** Every paper this application has registered, newest first. A read. */
+export async function listDocuments(
+  { signal }: UploadOptions = {},
+): Promise<DocumentSummary[]> {
+  return apiJson<DocumentSummary[]>("/api/documents", { signal });
+}
+
+/**
+ * Remove a paper's row and its derived artifacts.
+ *
+ * **Not** its notes, and not its cached overview: those are keyed to the PDF's
+ * content hash, so re-importing the same file brings them back
+ * (DS-QA-015 AC-P0-54). The reader is told exactly that before confirming.
+ */
+export async function deleteDocument(
+  documentId: string,
+  { signal }: UploadOptions = {},
+): Promise<void> {
+  // `apiFetch`, not `apiJson`: the route answers 204 with no body.
+  await apiFetch(`/api/documents/${encodeURIComponent(documentId)}`, {
+    method: "DELETE",
+    signal,
+  });
 }
 
 export interface UploadOptions {

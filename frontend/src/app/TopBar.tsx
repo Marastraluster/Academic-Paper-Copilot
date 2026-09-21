@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BookOpen, PanelLeft, Search, Settings, Sparkles } from "lucide-react";
+import { BookOpen, Library, PanelLeft, Search, Settings, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -38,6 +38,15 @@ const TranslateDialog = lazy(() =>
  * first click.
  */
 const SettingsDialog = lazy(() => import("@/settings/SettingsDialog"));
+
+/**
+ * The library loads when it is opened, for the same reason and one more.
+ *
+ * 40 bytes of headroom is the first reason. The second is that the reader asked
+ * for it: *"还有一个翻译记录和换论文的方法?"* — a way to switch papers — and a
+ * list they have not opened yet does not belong in the download.
+ */
+const LibraryDialog = lazy(() => import("@/library/LibraryDialog"));
 import { useTranslationSession } from "@/translation/useTranslationSession";
 import type { TranslateOptions } from "@/translation/session";
 
@@ -57,6 +66,12 @@ export function TopBar() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /* The library lives in the store: the reader's empty workspace has a door to
+     it too, and that door is in another subtree. */
+  const libraryOpen = useWorkspaceStore((s) => s.libraryOpen);
+  const libraryQuery = useWorkspaceStore((s) => s.libraryQuery);
+  const openLibrary = useWorkspaceStore((s) => s.openLibrary);
+  const closeLibrary = useWorkspaceStore((s) => s.closeLibrary);
 
   // A translation needs somewhere to run: no document, or one whose backend
   // identity is still being established, cannot be translated yet.
@@ -113,7 +128,10 @@ export function TopBar() {
 
       <Separator orientation="vertical" className="h-5" />
 
-      {/* Search */}
+      {/* Search — the library's other door. It was an inert field for four
+          tasks; a reader who wants a different paper will reach for the control
+          that says it searches papers, so it now opens the list and carries
+          whatever has been typed into it. */}
       <div className="relative hidden items-center md:flex">
         <Search
           className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-muted-foreground"
@@ -121,8 +139,12 @@ export function TopBar() {
         />
         <input
           type="search"
+          data-testid="paper-search"
           placeholder="搜索论文…"
           aria-label="搜索论文"
+          value={libraryQuery}
+          onChange={(event) => openLibrary(event.target.value)}
+          onClick={() => openLibrary()}
           className="h-7 w-40 rounded-md border bg-background pl-7 pr-2 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background lg:w-52"
         />
       </div>
@@ -162,6 +184,25 @@ export function TopBar() {
       {/* Export — the only place the 2N dual artifact is offered (§13). */}
       <ExportMenu />
 
+      {/* The library — the papers this application already has. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="论文库"
+            data-testid="library-open"
+            className="shrink-0"
+            onClick={() => openLibrary()}
+          >
+            {/* Not `BookOpen`: that is already the product mark three controls
+                to the left, and two identical icons in one bar say nothing. */}
+            <Library />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>论文库</TooltipContent>
+      </Tooltip>
+
       {/* Settings */}
       <Tooltip>
         <TooltipTrigger asChild>
@@ -192,6 +233,16 @@ export function TopBar() {
       {settingsOpen && (
         <Suspense fallback={null}>
           <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+        </Suspense>
+      )}
+
+      {libraryOpen && (
+        <Suspense fallback={null}>
+          <LibraryDialog
+            open={libraryOpen}
+            initialQuery={libraryQuery}
+            onClose={closeLibrary}
+          />
         </Suspense>
       )}
     </header>

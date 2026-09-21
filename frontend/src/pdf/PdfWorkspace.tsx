@@ -15,6 +15,7 @@ import { PdfViewer, type PageSize, type PdfViewerHandle } from "@/pdf/PdfViewer"
 import type { ViewerError, ViewerStatus, ZoomMode } from "@/pdf/types";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist";
 import { cn } from "@/lib/utils";
+import { useWorkspaceStore } from "@/stores/workspace";
 
 /**
  * What a pane is showing.
@@ -278,9 +279,25 @@ export function PdfWorkspace({
     [onCurrentPageChange],
   );
 
+  /* A jump asks to be *applied*, and the pane decides when it can be.
+     `status` is in the dependencies because the viewer exists only once PDF.js
+     has parsed the document: a jump that arrives before that (a restored page, a
+     library open, a citation clicked while the paper is still loading) would find
+     no viewer and be swallowed. Re-running is safe because each request carries a
+     nonce and is applied once — a jump from a paper the reader has left cannot be
+     re-applied to the next one. */
+  const appliedJumpRef = useRef<number | null>(null);
+
   // --- citation and outline jump --------------------------------------------
   useEffect(() => {
     if (!jump) return;
+    if (appliedJumpRef.current === jump.nonce) return;
+    // Not yet. A jump that arrives while the document is still parsing has
+    // nothing to move, and marking it applied here would throw it away — which
+    // is exactly what a restored page did: the store said page 3 and the viewer
+    // stayed on page 1.
+    if (status !== "ready") return;
+    appliedJumpRef.current = jump.nonce;
 
     setCurrentPage(jump.pageNumber);
     viewerRef.current?.scrollToPage(jump.pageNumber, jump.offsetPt ?? undefined);
@@ -297,7 +314,7 @@ export function PdfWorkspace({
     setHighlight({ page: jump.pageNumber, bboxes: jump.bboxes });
     const timer = window.setTimeout(() => setHighlight(null), HIGHLIGHT_FADE_MS);
     return () => window.clearTimeout(timer);
-  }, [jump, allowHighlight, rotation]);
+  }, [jump, allowHighlight, rotation, status]);
 
   const openPicker = () => inputRef.current?.click();
   const showPicker = !controlled || onFileChosen !== undefined;
@@ -440,9 +457,21 @@ function EmptyState({ onOpen, dragging }: { onOpen: () => void; dragging: boolea
           拖入 PDF，或
         </p>
       </div>
-      <Button data-testid="open-pdf-button" size="sm" variant="outline" onClick={onOpen}>
-        打开 PDF
-      </Button>
+      <div className="flex items-center gap-1.5">
+        <Button data-testid="open-pdf-button" size="sm" variant="outline" onClick={onOpen}>
+          打开 PDF
+        </Button>
+        {/* The other door to the same place: a reader who has already opened
+            papers should not have to find the file on disk to get back to one. */}
+        <Button
+          data-testid="open-from-library"
+          size="sm"
+          variant="ghost"
+          onClick={() => useWorkspaceStore.getState().openLibrary()}
+        >
+          从论文库选择
+        </Button>
+      </div>
     </div>
   );
 }

@@ -130,7 +130,36 @@ def task_payload(task: Any) -> dict[str, Any]:
     }
 
 
-def document_payload(store: DocumentStore, record: Any) -> dict[str, Any]:
+def document_payload(
+    store: DocumentStore,
+    record: Any,
+    *,
+    tasks: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One row of the library, and what is honestly known about its translation.
+
+    `translation_record` reports the **last successful translation** — its
+    language pair, its engine and when it ran — because that is what is in the
+    database (`translation_tasks`) and nothing else is. The model that produced
+    the artifact is deliberately *not* reported: a profile can be edited or
+    deleted afterwards, and a row claiming the model a profile uses today would
+    be describing a run that may have used a different one. Tokens and latency
+    are not recorded anywhere and are therefore not shown; see DS-DOC-005 §2.5.
+
+    `tasks` lets a caller rendering many rows hand in one lookup
+    (`latest_succeeded_tasks`); a caller rendering one row may omit it.
+    """
+    task = (tasks.get(record.id) if tasks is not None
+            else store.latest_succeeded_tasks().get(record.id))
+    translation_record = None
+    if task is not None:
+        translation_record = {
+            "lang_in": task.lang_in,
+            "lang_out": task.lang_out,
+            "engine": task.engine,
+            "translated_at": task.updated_at,
+            "profile_id": task.profile_id,
+        }
     return {
         "document_id": record.id,
         "name": record.name,
@@ -138,6 +167,7 @@ def document_payload(store: DocumentStore, record: Any) -> dict[str, Any]:
         "source": "upload" if record.is_upload else "path",
         "has_translation": store.mono_file(record.id).is_file(),
         "created_at": record.created_at,
+        "translation_record": translation_record,
     }
 
 
@@ -243,7 +273,9 @@ async def import_document(
 @router.get("/documents")
 async def list_documents(request: Request) -> list[dict[str, Any]]:
     store = get_document_store(request)
-    return [document_payload(store, record) for record in store.list_documents()]
+    # One lookup for the whole list, not one per row.
+    tasks = store.latest_succeeded_tasks()
+    return [document_payload(store, record, tasks=tasks) for record in store.list_documents()]
 
 
 @router.get("/documents/{document_id}")

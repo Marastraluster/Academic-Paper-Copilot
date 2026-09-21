@@ -233,6 +233,27 @@ class DocumentStore:
         ).fetchone()
         return _task_from_row(row) if row else None
 
+    def latest_succeeded_tasks(self) -> dict[str, TaskRecord]:
+        """The most recent successful translation of **every** document, in one query.
+
+        Read once and keyed by document, because the caller is a list: asking the
+        store per row would make rendering a library of a hundred papers a
+        hundred round trips to SQLite, which is the shape the library exists to
+        avoid.
+
+        The newest by `created_at` is the one worth showing. An older run is not
+        wrong, but it is not what produced the artifact on disk now — and after a
+        re-translation the reader has just watched the newer one happen.
+        """
+        rows = self._connection.execute(
+            "SELECT * FROM translation_tasks AS task WHERE status = ? "
+            "AND created_at = (SELECT MAX(created_at) FROM translation_tasks "
+            "                  WHERE document_id = task.document_id AND status = ?) "
+            "GROUP BY document_id",
+            (STATUS_SUCCEEDED, STATUS_SUCCEEDED),
+        ).fetchall()
+        return {row["document_id"]: _task_from_row(row) for row in rows}
+
     def update_task(
         self,
         task_id: str,

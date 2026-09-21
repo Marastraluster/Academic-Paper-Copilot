@@ -403,6 +403,17 @@ interface WorkspaceState {
   sidebarOpen: boolean;
   toggleSidebar: () => void;
 
+  /* ---- Library (DS-DOC-005) ----
+     State rather than local component state, because the library has two doors:
+     the top bar and the reader's empty workspace, which are in different
+     subtrees. A prop threaded through the reader to reach the second one would
+     make a generic PDF pane know about a document list. */
+  libraryOpen: boolean;
+  /** Whatever the top bar's search field already held, carried into the list. */
+  libraryQuery: string;
+  openLibrary: (query?: string) => void;
+  closeLibrary: () => void;
+
   // ---- Status bar (AC-08) ----
   engine: { state: EngineState; label: string };
 }
@@ -596,6 +607,12 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   // AC-05: expanded by default.
   sidebarOpen: true,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+
+  libraryOpen: false,
+  libraryQuery: "",
+  openLibrary: (query) =>
+    set((s) => ({ libraryOpen: true, libraryQuery: query ?? s.libraryQuery })),
+  closeLibrary: () => set({ libraryOpen: false, libraryQuery: "" }),
 
   // No backend contact has happened yet. Saying "connecting" would imply a
   // request is in flight; saying "ready" would claim a fact we have not checked.
