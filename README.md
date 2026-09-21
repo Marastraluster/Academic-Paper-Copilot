@@ -15,6 +15,10 @@
   <b>Read a paper, understand it, and translate it — on your own machine, with your own model.</b>
 </p>
 
+<p align="center">
+  <b>English</b> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
 ---
 
 Academic Paper Copilot is a local-first reader for academic PDFs. It keeps the paper you are
