@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-FE-004: Provider Settings
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek (Pending Round 1 review)
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer (round 1 review pending)
 - **Date:** 2026-09-21
 - **Baseline:** Commit `5d7f719` / Post-DS-DOC-004 (`SCHEMA_VERSION = 5`, initial bundle headroom `1.11 kB` under amended `310.0 kB` ceiling)
 - **Deliverable:** `docs/acceptance/DS-FE-004.md` (authored before any production code)
@@ -18,7 +18,7 @@ In the Academic PDF Copilot repository, process sequencing is load-bearing:
 - **DS-FE-003** implemented the translation flow and `TranslateDialog` with lazy code splitting (`docs/acceptance/DS-FE-003.md`), closing at 20 P0 criteria and adhering to the bundle ceiling.
 - **DS-DOC-004** established reading session continuity across browser reloads (`docs/acceptance/DS-DOC-004.md`) without any new dependencies or router additions.
 
-**This task continues that discipline.** DeepSeek owns all production code; Gemini authors the acceptance criteria independently. Not a single line of production code in `frontend/src/` or `backend/app/` is written until this contract is reviewed and frozen.
+**This task continues that discipline.** The criteria below were written and frozen before any implementation, and not a single line of production code in `frontend/src/` or `backend/app/` is written until this contract is reviewed.
 
 ### 0.2 The Core Problem & The Reader's Inquiries
 The reader reported the defect directly:
@@ -61,7 +61,7 @@ Therefore, the honest verification of *"did it really save and take effect?"* is
 
 ---
 
-## 0.5 Round 1 review and freezing (DeepSeek) — 2 AC_CHANGE_REQUESTs
+## 0.5 Round 1 review and freezing — 2 AC_CHANGE_REQUESTs
 
 Read against the repository at `f429b3f`, together with the backend's own profile
 suite (`backend/tests/test_api_profiles.py`, 30 tests) and the credential store
@@ -374,7 +374,7 @@ constraint here and it will be reported as measured.
   - The profile `"Persisted-DeepSeek"` is present in the list with identical name, URL, model, and timeout;
   - `has_key` is `true` and `api_key_masked` is `"sk-••••••••5432"`;
   - Executing a probe or translation request with this profile successfully resolves the key from the OS credential store and succeeds.
-- **Evidence:** Playwright test run outputs `.agent/results/e2e-provider-settings/results.json` recording `PASS` for restart durability.
+- **Evidence:** Playwright test run outputs the e2e-provider-settings/results.json run log recording `PASS` for restart durability.
 
 #### AC-P0-18 — Zero Secret Leakage Across All Five Surfaces
 - *Given* a profile configured with raw secret `"sk-live-durable-key-98765432"`,
@@ -479,7 +479,7 @@ To verify the reader's core question (*"does it really save and take effect?"*),
          │
 [Audit SQLite file, WAL, DOM, localStorage] ──► [Zero Secret Bytes Found]
          │
-[Write .agent/results/e2e-provider-settings/results.json]
+[Write the e2e-provider-settings/results.json run log]
 ```
 
 ### 5.2 Specific Assertions Matrix

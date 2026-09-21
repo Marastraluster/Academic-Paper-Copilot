@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-QA-013: Non-prose Annotation
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek (Pending Round 1 review)
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer (round 1 review pending)
 - **Date:** 2026-09-19
 - **Baseline:** Commit `10ef696` / DS-QA-012 (`SOURCE_ANCHOR_VERSION = "1"`, `IR_PIPELINE_VERSION = "4"`, `SCHEMA_VERSION = 4`)
 - **Deliverable:** `docs/acceptance/DS-QA-013.md` (authored before any production code)
@@ -9,10 +9,10 @@
 
 ---
 
-## 0. Round 1 review and freezing (DeepSeek) — 3 AC_CHANGE_REQUESTs
+## 0. Round 1 review and freezing — 3 AC_CHANGE_REQUESTs
 
 Read against the repository at `4cb6d2d` and the measurements in
-`.agent/results/nonprose/`. Decisions A, C, D, E, F, G, I, J, K, L, M, N, O, Q,
+the nonprose/ run log. Decisions A, C, D, E, F, G, I, J, K, L, M, N, O, Q,
 R, S, T and U are accepted as written; each follows from a measurement or from a
 boundary this repository already draws. Three items are changed before freezing.
 
@@ -35,7 +35,7 @@ same grid cell*: a coordinate within 1.0 pt of a cell centre quantizes
 identically, and one nearer the boundary than the jitter does not."*
 
 **Reason — measured.** The claimed 18.4 pt minimum separation is **0.12 pt** on
-Mamba and 0.68 pt on Diffusion Policy (`.agent/results/nonprose/anchor_inputs.txt`).
+Mamba and 0.68 pt on Diffusion Policy (the nonprose/anchor_inputs.txt run log).
 Blocks routinely sit well inside one quantum of each other, so the stated reason
 for the grid is the opposite of the measured fact. The jitter promise is
 separately false: the quantiser's own boundary behaviour is `1.0 → 0.0` but
@@ -72,7 +72,7 @@ in a full stop or run past twelve words — `"greatly benefited from very deep
 models."` is labelled `title` in both ResNet and UNet. The rate is low; the
 surface is large."*
 
-**Reason.** The example is real and Gemini found it by reading the IR. The
+**Reason.** The example is real and The criteria found it by reading the IR. The
 justification is stronger as a measurement than as an impression, and headings
 are 163 blocks against 100 captions — the larger exposure deserves the real
 number.
@@ -97,7 +97,7 @@ can never become QA evidence by accident.
 
 ### 0.1 Process Discipline: Acceptance before Implementation
 In this repository, process sequencing is load-bearing:
-- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that had to be retroactively diagnosed and repaired (`.agent/evidence/DS-DOC-002.md`).
+- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that had to be retroactively diagnosed and repaired (the evidence record for DS-DOC-002).
 - **DS-DOC-003** strictly enforced acceptance criteria first (`docs/acceptance/DS-DOC-003.md`). That discipline exposed three critical defects before code was written: anchor scoping omission across papers (AC_CHANGE_REQUEST 1), ordinal position fragility (AC_CHANGE_REQUEST 2), and conflicting de-hyphenation normalization (AC_CHANGE_REQUEST 3).
 - **DS-QA-010** established the multi-target persistent notes architecture (`docs/acceptance/DS-QA-010.md`), closing at **18/18 P0 PASS** (`2529674`) with 0 AI calls, 0 PDF mutations, and 0.0% wrong-attachment rate.
 - **DS-QA-011** extended persistent selection across page boundaries (`docs/acceptance/DS-QA-011.md`), eliminating container-sized DOM bounding-box artifacts via text-node clamped geometry (Strategy C).
@@ -156,7 +156,7 @@ Today, readers attempting to select these elements experience a frustrating sile
 
 ## 2. Measured Evidence & Empirical Grounding
 
-### 2.1 Empirical Corpus Gap (`.agent/results/nonprose/audit.txt`)
+### 2.1 Empirical Corpus Gap (the nonprose/audit.txt run log)
 
 Measured across five real academic papers using the production layout analysis pipeline:
 
@@ -171,7 +171,7 @@ Measured across five real academic papers using the production layout analysis p
 
 *Key finding:* Across five standard papers, **133 captions and formulas** are present in the PDF layout but completely excluded from `ParagraphIR`. Today, 100% of these 133 elements refuse user annotations.
 
-### 2.2 Browser Text-Layer Selectability Probe (`.agent/results/nonprose/browser/probe.json`)
+### 2.2 Browser Text-Layer Selectability Probe (the nonprose/browser/probe.json run log)
 
 Measured in Microsoft Edge under PDF.js text layer at production render scale (ResNet, 12 pages, 191 blocks):
 

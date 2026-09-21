@@ -8,7 +8,7 @@
 
 Tests are **evidence, not decoration** (brief §104). A task is not done because tests were
 written; it is done because tests ran, passed, and their output is recorded in
-`.agent/evidence/<TASK-ID>.md`.
+the local working directoryevidence/<TASK-ID>.md`.
 
 Two rules that follow from the audit:
 
@@ -27,7 +27,7 @@ Two rules that follow from the audit:
 | Integration | Our modules together, upstream mocked | `pytest`, `respx`/`responses` | Every task touching a boundary |
 | Contract | Real LLM protocols against recorded fixtures | `pytest` + fixtures | Phase 4+ |
 | End-to-end | Real PDF → real translated PDF | `pytest` + PDF corpus | Phase 5+ |
-| Manual/visual | UI surfaces | screenshots in `.agent/screenshots/` | Every frontend task |
+| Manual/visual | UI surfaces | screenshots in the local working directoryscreenshots/` | Every frontend task |
 
 Frontend gates per task: `npm run typecheck && npm run test && npm run build`. `strict: true`
 and no unbounded `any` (brief §87).
@@ -53,7 +53,7 @@ class AutoIncreaseTranslator(BaseTranslator):
   useful smoke inputs for the Phase 5 adapter.
 
 > **Blocker.** Executing the cloned upstream test suite was denied by the permission
-> classifier (`.agent/evidence/DS-ARCH-000.md` Step 4). Upstream's own tests are currently
+> classifier (the evidence record for DS-ARCH-000 Step 4). Upstream's own tests are currently
 > **not runnable** in this environment, so we have **no upstream regression baseline**. This
 > must be resolved before Phase 5 and is tracked in `ROADMAP.md`.
 
@@ -158,7 +158,7 @@ catastrophic layout corruption, Unicode correct.
 ### 3.7 Security (brief §53)
 
 - API key never appears in: SQLite rows, log files, error responses, git, or
-  `.agent/` files. Assert by grepping the artifacts for the literal key.
+  the local working directory files. Assert by grepping the artifacts for the literal key.
 - `GET /api/profiles` returns only a masked key.
 - Deleting a profile deletes the keyring entry.
 - Malformed / hostile provider response bodies cannot inject into error envelopes.
@@ -173,7 +173,7 @@ catastrophic layout corruption, Unicode correct.
 ## 4. Frontend / UI verification
 
 Automated: `typecheck`, unit tests, `build`. Visual: screenshot to
-`.agent/screenshots/<TASK-ID>.png`, evaluated against the Gemini-authored criteria.
+`docs/screenshots/<TASK-ID>.png`, evaluated against theored criteria.
 
 Design surfaces (brief §21, §75): layout, spacing, hierarchy, density, typography, overflow,
 empty/loading/error states, resize, sidebar collapse, workspace width, contrast,

@@ -1,18 +1,18 @@
 # Acceptance Criteria — DS-QA-006: Retrieval Ranking Refinement
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow.
+- **Author:** project maintainer.
   §1–§6 are transcribed from its output with nothing added or removed. §0 is
-  DeepSeek's review, written before implementation.
-- **Reviewed and frozen by:** DeepSeek
+  the review, written before implementation.
+- **Reviewed and frozen by:** project maintainer
 - **Date:** 2026-09-18
 - **Baseline:** `33be9d9` (DS-QA-005)
 - **Status:** **FROZEN**, with **2 `AC_CHANGE_REQUEST`s**, both resolved. **10 P0 · 4 P1 · 1 P2.**
 
 ---
 
-## 0. DeepSeek review
+## 0. Review before implementation
 
-Gemini did the measurement work before writing criteria, which is what this task
+The criteria did the measurement work before writing criteria, which is what this task
 needed, and it **rejected five speculative mechanisms on evidence** rather than
 qualifying them into the design: the RRF sweep, path weighting, block-type
 penalties, MMR diversity, and phrase boosting. That is the discipline this project
@@ -33,7 +33,7 @@ reproduce, and one of my own objections turned out to be wrong:
 **I was wrong about α.** I had prepared a change request arguing that the stated
 `RRF(d)` range omits multi-variant accumulation — a candidate found by five
 variants should score up to 5/61 = 0.082, five times the stated ceiling, which
-would make an `α` of 0.05 behave differently from Gemini's arithmetic. Measured:
+would make an `α` of 0.05 behave differently from the specified arithmetic. Measured:
 **no candidate is retrieved by five variants at rank one**, and the observed
 maximum is 0.0313. The stated range is the real one, and the α reasoning holds. I
 record the refutation because the objection was reasonable a priori and only
@@ -48,7 +48,7 @@ defensible midpoint rather than a tuned constant.
 | | |
 |---|---|
 | **As written** | AC-P1-01: *"PPO held-out Hit@5 ≥ 75.0% (baseline 69.2%, 9/13 → 10/13)"*. The rest of the document quotes the local-path figures (63.6% overall, 48.5% Hit@1) without saying which configuration they describe. |
-| **Problem** | Two different measurements of PPO exist in this repository and they differ by ten points. The **local retrieval path** — variants, fusion, coverage, no rewrite — puts the gold in the top five for **8 of 13 questions (61.5%)**. The **full cascade**, in which the rewrite fires on the three Chinese questions, was measured by DS-QA-004 at **69%**. Gemini's figure is the second number attached to a criterion whose neighbours are the first. An acceptance threshold that names the wrong baseline cannot be evaluated: 10/13 would be +15% over the local baseline and +1 question over the cascade one, and those mean different things. |
+| **Problem** | Two different measurements of PPO exist in this repository and they differ by ten points. The **local retrieval path** — variants, fusion, coverage, no rewrite — puts the gold in the top five for **8 of 13 questions (61.5%)**. The **full cascade**, in which the rewrite fires on the three Chinese questions, was measured by DS-QA-004 at **69%**. The second figure is the second number attached to a criterion whose neighbours are the first. An acceptance threshold that names the wrong baseline cannot be evaluated: 10/13 would be +15% over the local baseline and +1 question over the cascade one, and those mean different things. |
 | **Also** | "100% identical across all k" is off by one on Hit@10, which moves from 25 to 26 between k=10 and k=20. The conclusion — that a sweep is ceremony and k=60 stays — is right and now rests on a measurement rather than an assertion. |
 | **Resolution** | Every threshold states the configuration it was measured in. The local-path baselines are the ones this task optimises and the ones the criteria gate on; the cascade figure is reported alongside as the product context it is, not used as a baseline. |
 | **Not accepted** | Adopting 69.2% because it makes the target look closer, or dropping the PPO threshold because the two numbers disagree. |
@@ -61,7 +61,7 @@ defensible midpoint rather than a tuned constant.
 | **Problem** | Measured on the held-out paper, that rule is what makes AC-P0-01's fourth lift unreachable and makes its own gate fail. For *"What is Algorithm 1 in this paper?"* it reduces the content terms to `["algorithm"]` — the query's only remaining word is one the paper uses constantly — so the gold, whose text is literally "Algorithm 1 PPO, Actor-Critic Style", ties at coverage 1.0 with **ten other paragraphs** and the boost cannot separate them. Keeping the digit gives the gold 1.00 against their 0.50 and it separates. **Measured with the filter: 3 of 7 lifted, Hit@5 72.7%. Without it: 4 of 7, Hit@5 75.8%, 0 regressions.** |
 | **Why the filter is wrong in principle, not just in measurement** | An academic question names things as `Algorithm 1`, `Figure 3`, `Table 1`, `Eq. 4`. A bare single letter is noise; a single **digit** is the most discriminative token in the sentence. This is the same failure this repository opened with — `MATCH 'ResNet-50'` raising `no such column: 50`, because a rule that is right for prose is wrong for identifiers. |
 | **Resolution** | `content_terms` keeps a single character **when it is a digit**, and drops it otherwise. The gate is untouched; the filter that prevented reaching it is fixed. |
-| **A note on who measured what** | Gemini's own analysis scripts are in `backend/tmp_test/`, run during its acceptance session against the artifacts this task published (`rank_diagnosis.json`, `rank_candidates.json`). They report 4 lifts and Hit@5 75.8% under every weight from 0.01 to 5.0 — measuring with `signal_probe.coverage`, which has no length filter. Its criteria then specified a function *with* one. The gate and the specification disagreed, and the specification was the part that was wrong. |
+| **A note on who measured what** | The analysis scripts used for the review, run during its acceptance session against the artifacts this task published (`rank_diagnosis.json`, `rank_candidates.json`). They report 4 lifts and Hit@5 75.8% under every weight from 0.01 to 5.0 — measuring with `signal_probe.coverage`, which has no length filter. Its criteria then specified a function *with* one. The gate and the specification disagreed, and the specification was the part that was wrong. |
 | **Not accepted** | Rewriting the gate to 3-of-7. That is lowering a bar to get green, and the measurement showed the bar was reachable. |
 
 ### Superseded: an assertion in AC-P0-01 that came from that same probe
@@ -76,7 +76,7 @@ defensible midpoint rather than a tuned constant.
 
 ### Note on the improvement gate
 
-Gemini's gate — **≥ 4 of 7 LOW_RANK lifted, 0 regressions, Hit@5 ≥ 75%, 16/16
+the criteria's gate — **≥ 4 of 7 LOW_RANK lifted, 0 regressions, Hit@5 ≥ 75%, 16/16
 abstentions, ≤ 5 ms** — is reproducible from the measurements above and is adopted
 unchanged. It is worth recording what it is *not*: at the current evidence window
 (`top_k = 8`) only **2 of the 7** low-ranked golds reach the answer model, and

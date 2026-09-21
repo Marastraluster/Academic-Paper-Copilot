@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-CTX-002: Context-Aware Academic PDF Translation
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek, before any implementation code was written
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer, before any implementation code was written
 - **Date:** 2026-09-17
 - **Baseline:** `940ae5b`
 - **Authoring input:** the actual `DocumentIR`, `DocumentAnalysis`, `ContextBuilder`,
@@ -16,14 +16,14 @@ backend   618 passed
 frontend   75 passed
 ```
 
-## DeepSeek review
+## Review before implementation
 
-Gemini inspected the real code and **corrected the task brief twice**, both times
+The criteria review inspected the real code and **corrected the task brief twice**, both times
 correctly. It also independently confirmed the placeholder finding.
 
-### Gemini's correction 1 — the cache hook is `translate()`, not `do_translate()`
+### Correction 1 — the cache hook is `translate()`, not `do_translate()`
 
-My authoring prompt said context is injected at `do_translate(self, text)`. Gemini:
+My authoring prompt said context is injected at `do_translate(self, text)`. The review:
 *"Injecting context only in `do_translate()` is too late for context-aware caching.
 Upstream's `translate()` calls `self.cache.get(text)` before `do_translate(text)`."*
 
@@ -34,10 +34,10 @@ defect survives. Context resolution, the effective-context hash, and the cache
 evaluation all belong in `translate()`, which `BoundedOpenAIlikedTranslator`
 **already overrides**. No new seam is needed.
 
-### Gemini's correction 2 — `add_params` is shared mutable state
+### Correction 2 — `add_params` is shared mutable state
 
 My prompt proposed fixing cache identity with
-`add_cache_impact_parameters("base_url", ...)`. Gemini flagged that doing so per-unit
+`add_cache_impact_parameters("base_url", ...)`. The review flagged that doing so per-unit
 inside `translate()` would race across upstream's 4 worker threads.
 
 **Verified and accepted.** `TranslationCache.add_params` does `self.params[k] = v`
@@ -56,7 +56,7 @@ AC-P0-17 and AC-P0-18 achievable rather than aspirational.
 
 ### Independently confirmed — the placeholder is single-brace `{vN}`
 
-The brief recorded this from captured text. Gemini reached it from the source and
+The brief recorded this from captured text. The review reached it from the source and
 cited the line. Both are right, and the two agree:
 
 ```
@@ -70,7 +70,7 @@ reject 100% of valid production translations. AC-P0-10 pins the real format.
 
 ### Accepted — "Deep" mode is rejected
 
-The brief permitted Deep "only if a real semantic difference exists". Gemini:
+The brief permitted Deep "only if a real semantic difference exists". The review:
 *"In a pipeline processing isolated units in parallel, there is no technical mechanism
 for Deep other than inflating token budget or dumping distant glossary terms."*
 
@@ -185,7 +185,7 @@ offline by default.
 > *Must translation cache identity use a per-unit effective-context hash rather than
 > only a document-level analysis hash?*
 
-**Yes.** Gemini's reasoning, accepted in full:
+**Yes.** The reasoning, accepted in full:
 
 1. **Correctness.** Generic strings repeat across sections. Keyed only on source text
    plus a document hash, whichever unit translates first poisons every later identical

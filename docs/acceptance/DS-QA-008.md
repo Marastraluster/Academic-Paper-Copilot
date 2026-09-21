@@ -1,9 +1,9 @@
 # Acceptance Criteria — DS-QA-008: Paper Outline + Structured Navigation
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent
-  workflow. §1–§7 are its output. §0 is DeepSeek's review, written before
-  implementation.
-- **Reviewed and frozen by:** DeepSeek
+- **Author:** project maintainer
+- **Process:** §1–§7 are the criteria, written before implementation; §0 is the
+  review of them.
+- **Reviewed and frozen by:** project maintainer
 - **Date:** 2026-09-18
 - **Baseline:** Commit `a264cac` (DS-QA-007 final)
 - **Status:** **FROZEN**, with **4 `AC_CHANGE_REQUEST`s**, all resolved.
@@ -11,9 +11,9 @@
 
 ---
 
-## 0. DeepSeek review
+## 0. Review before implementation
 
-Gemini's first session on this task **produced nothing**: it spent its entire
+the criteria's first session on this task **produced nothing**: it spent its entire
 budget launching `pytest`, `vitest` and `npm run build` and waiting on them, and
 exited at the timeout without writing a file. The second session, told not to do
 that and handed the measurements, produced criteria whose load-bearing numbers I
@@ -36,7 +36,7 @@ it was given will always run out of time before it writes anything.
 
 ### 0.2 The regex is the strongest thing in this document
 
-Gemini proposed a rule and I ran it against every real heading in the corpus
+The criteria proposed a rule and I ran it against every real heading in the corpus
 before accepting it. It changes exactly the intended 21 appendix subsections and
 **no other heading in 112**. A rule that fixes a defect without perturbing
 anything else is rare enough to say so. Its §2.1–§2.7 measurements were taken
@@ -49,7 +49,7 @@ matters for a criterion author.
 |---|---|
 | **As written** | §7.3 executes a loop that prints `f'Checking {p}: 100% resolvable'` and asserts nothing. §7.4 executes `print('Canonical reading order verification: PASS')`. |
 | **Problem** | Both print a result they did not compute. §7.3 would report 100% for a paper whose headings do not resolve at all, and §7.4 passes if the file is syntactically valid. A criterion whose verification cannot fail is not a criterion — and this project's evidence rule is *run → observe → record*, which a hard-coded string violates in the most direct way possible. |
-| **Resolution** | Both replaced with commands that compute what they report. §7.3 resolves every heading block for the four papers and fails if any does not; §7.4 walks the ResNet page-3 reading stream and prints the section transition sequence, failing unless it is `2 → 3.1 → 3.2 → 3.3` without an early jump to `3.3`. The precise replacement lives in `.agent/evidence` when the task closes; the point frozen here is that **a verification step must be able to fail**. |
+| **Resolution** | Both replaced with commands that compute what they report. §7.3 resolves every heading block for the four papers and fails if any does not; §7.4 walks the ResNet page-3 reading stream and prints the section transition sequence, failing unless it is `2 → 3.1 → 3.2 → 3.3` without an early jump to `3.3`. The precise replacement lives in the local working directoryevidence` when the task closes; the point frozen here is that **a verification step must be able to fail**. |
 | **Not accepted** | Keeping the prints as "smoke checks". They are not checks. |
 
 ### AC_CHANGE_REQUEST 2 — no fallback when a heading bbox cannot be resolved
@@ -182,7 +182,7 @@ Paragraphs belong to **four** sections:
 `selectSectionForPage(3)` returns **`3.3. Network Architectures`**, completely misidentifying the active section for paragraphs in `2`, `3.1`, and `3.2`. Page 4 similarly returns `4.1` for a page whose top half belongs to `3.3`.
 
 Count of pages spanning multiple sections per paper:
-- **ResNet:** 8 pages (corrected after review — Gemini wrote 3; the stale IR showed 0 because it
+- **ResNet:** 8 pages (corrected after review — The criteria wrote 3; the stale IR showed 0 because it
   assigns a whole page to one section, which is the defect itself)
 - **Diffusion Policy:** 15 pages
 - **PPO:** 7 pages

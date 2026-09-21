@@ -47,7 +47,7 @@ AC-P0-10 was reported PASS on inherited behaviour. That is not good enough, and 
 was re-measured on a purpose-built fixture.
 
 **Fixture:** the benchmark paper with **page 1 set to `/Rotate 90`** and the rest
-untouched — `fitz`, 12 pages, saved to `.agent/results/e2e-rotated/source.pdf`.
+untouched — `fitz`, 12 pages, saved to the e2e-rotated/source.pdf run log.
 The first attempt rotated *every* page and produced **0 sections**: the layout
 model reaches a rotated page sideways and classifies the whole page as one
 `plain text` block, so no headings are detected and there is nothing to click.

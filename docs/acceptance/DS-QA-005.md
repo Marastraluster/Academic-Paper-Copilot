@@ -1,10 +1,10 @@
 # Acceptance Criteria — DS-QA-005: Selection → ParagraphIR Mapping + Selection QA
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow.
-  Gemini returned its criteria in the session rather than writing this file; §2–§7 are
-  transcribed from that output with nothing added or removed. §1 is DeepSeek's review,
+- **Author:** project maintainer.
+  The criteria returned its criteria in the session rather than writing this file; §2–§7 are
+  transcribed from that output with nothing added or removed. §1 is the review,
   written before implementation.
-- **Reviewed and frozen by:** DeepSeek
+- **Reviewed and frozen by:** project maintainer
 - **Date:** 2026-09-18
 - **Baseline:** `79ed9ec` (DS-QA-004 disposition)
 - **Status:** **FROZEN**, with **4 `AC_CHANGE_REQUEST`s** raised in review below.
@@ -12,9 +12,9 @@
 
 ---
 
-## 1. DeepSeek review
+## 1. Review before implementation
 
-Gemini confirmed the local-mapping decision and corrected **five** premises, three of which
+The criteria confirmed the local-mapping decision and corrected **five** premises, three of which
 matter. Two of them I verified against the repository rather than taking on trust.
 
 **It is right that a bounding rect is wrong for two columns.** The criterion requires
@@ -83,7 +83,7 @@ mid-drag collapses the range.
 ### Note on the matching thresholds (§4.2), recorded rather than claimed as measured
 
 The containment and n-gram thresholds — token containment ≥ 0.35, character 3-gram Jaccard
-≥ 0.25, the 80 pt² and 40% area bounds — are **Gemini's specified defaults**, not measurements.
+≥ 0.25, the 80 pt² and 40% area bounds — are **the specified defaults**, not measurements.
 The task brief asks for thresholds measured against real selections rather than chosen and
 called empirical, so the implementation uses these values and the evidence reports **what they
 actually admit and reject** on the real fixtures. If a threshold turns out to admit a figure

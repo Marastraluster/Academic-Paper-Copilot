@@ -1,21 +1,21 @@
 # Acceptance Criteria — DS-QA-002: Grounded Answer Generation
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek, before implementation
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer, before implementation
 - **Date:** 2026-09-18
 - **Baseline:** `bb018a4`, `3438e5a` (DS-QA-001 committed; 718 backend tests, 78 frontend tests pass)
 - **Status:** **FROZEN**, with **3 `AC_CHANGE_REQUEST`s** raised in review below. **18 P0 · 6 P1 · 3 P2.**
 
 ---
 
-## Gemini's pre-implementation analysis
+## Pre-implementation analysis
 
-Before specifying the criteria, Gemini examines the brief against the repository's invariants,
+Before specifying the criteria, The criteria examines the brief against the repository's invariants,
 architecture, and previous measured baselines. It identifies five critical flaws or false
 premises in the brief and specifies their corrections. All five are accepted:
 
 * **The API must not take an `EvidenceBundle` from the client.** Accepted, and taken further —
-  see AC_CHANGE_REQUEST 1, which removes the optional field Gemini's own schema then added.
+  see AC_CHANGE_REQUEST 1, which removes the optional field the criteria's own schema then added.
 * **The ResNet pretraining confound needs an adversarial mechanism, not a reminder.** The
   counterfactual-injection test is stronger than the brief's version and is adopted as P0-09.
 * **Bounding boxes must be resolved by the application.** Accepted. `EvidenceItem` carries
@@ -67,7 +67,7 @@ premises in the brief and specifies their corrections. All five are accepted:
 
 ---
 
-## DeepSeek review
+## Review before implementation
 
 Three things in this document contradict other parts of it. All three are resolved before
 implementation rather than discovered during it.

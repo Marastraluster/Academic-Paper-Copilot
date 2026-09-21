@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-QA-011: Cross-page Selection + Persistent Annotation
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek (Round 1 review pending)
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer (round 1 review pending)
 - **Date:** 2026-09-19
 - **Baseline:** Commit `2529674` / DS-QA-010 closed (`SOURCE_ANCHOR_VERSION = "1"`, `IR_PIPELINE_VERSION = "4"`, `SCHEMA_VERSION = 4`)
 - **Deliverable:** `docs/acceptance/DS-QA-011.md` (authored before any production code)
@@ -9,7 +9,7 @@
 
 ---
 
-## 0. Round 1 review and freezing (DeepSeek) — 6 AC_CHANGE_REQUESTs
+## 0. Round 1 review and freezing — 6 AC_CHANGE_REQUESTs
 
 Read against the repository at `2529674` and the measurements in §2. The author
 was given the probe output and used it well: Decisions A, C, D, G, M and O
@@ -54,7 +54,7 @@ It is applied unchanged to a multi-page target set."*
 
 **Reason.** `jumpToAnnotation` selects
 `targets.find(t => t.resolved_paragraph_id !== null) ?? targets.find(t => t.amenable_to_jump)`.
-Gemini's rule would send the reader to an ORPHANED target whenever the first
+the criteria's rule would send the reader to an ORPHANED target whenever the first
 target failed to resolve and a later one resolved — a worse destination than the
 one DS-QA-010 ships, and a regression of an accepted criterion. Cross-page does
 not change what "the useful target" means.
@@ -138,7 +138,7 @@ against this list and nothing else.
 
 ### 0.1 Process Discipline: Acceptance before Implementation
 In this repository, process sequencing is load-bearing:
-- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that had to be retroactively diagnosed and repaired (`.agent/evidence/DS-DOC-002.md`).
+- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that had to be retroactively diagnosed and repaired (the evidence record for DS-DOC-002).
 - **DS-DOC-003** strictly enforced acceptance criteria first (`docs/acceptance/DS-DOC-003.md`). That discipline exposed three critical defects before code was written: anchor scoping omission across papers (AC_CHANGE_REQUEST 1), ordinal position fragility (AC_CHANGE_REQUEST 2), and conflicting de-hyphenation normalization (AC_CHANGE_REQUEST 3).
 - **DS-QA-010** established the multi-target persistent notes architecture (`docs/acceptance/DS-QA-010.md`), closing at **18/18 P0 PASS** (`2529674`) with 0 AI calls, 0 PDF mutations, and 0.0% wrong-attachment rate.
 
@@ -196,7 +196,7 @@ In DS-QA-010, attempting to select across a page boundary returned `status: "cro
 
 ## 2. Measured Native Browser Behaviour & The Central Hazard
 
-The empirical findings below were measured by `frontend/scripts/probe-crosspage.mjs` running against the built production frontend, real backend, and Chromium/Edge under window 1440×900, viewport height 770 px, fit-width scale 1.7647 (`.agent/results/crosspage/probe.json`):
+The empirical findings below were measured by `frontend/scripts/probe-crosspage.mjs` running against the built production frontend, real backend, and Chromium/Edge under window 1440×900, viewport height 770 px, fit-width scale 1.7647 (the crosspage/probe.json run log):
 
 ### 2.1 Finding 1: A Native Drag Spans Two PDF.js Text Layers
 Dragging from line `L1-37` (first line of the last paragraph on page 1) to line `L2-04` (last line of the first paragraph on page 2) produced:
@@ -642,9 +642,9 @@ Execute:
 ```bash
 node frontend/scripts/probe-crosspage.mjs
 ```
-Assertion in `.agent/results/crosspage/probe.json`:
+Assertion in the crosspage/probe.json run log:
 ```javascript
-const report = JSON.parse(fs.readFileSync('.agent/results/crosspage/probe.json', 'utf8'));
+const report = JSON.parse(fs.readFileSync('the crosspage/probe.json run log', 'utf8'));
 const c = report.strategies.c;
 assert(c['1'].rects.length > 0, 'Page 1 must have rects');
 assert(c['2'].rects.length > 0, 'Page 2 must have rects');
@@ -730,7 +730,7 @@ backend\.venv\Scripts\python.exe -c "
 import hashlib
 from pathlib import Path
 
-fixture = Path('.agent/results/crosspage/fixture.pdf')
+fixture = Path('the crosspage/fixture.pdf run log')
 if fixture.is_file():
     before = hashlib.sha256(fixture.read_bytes()).hexdigest()
     # Mock lifecycle

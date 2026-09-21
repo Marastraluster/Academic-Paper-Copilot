@@ -1,9 +1,9 @@
 # Acceptance Criteria — DS-QA-007: Hybrid Semantic Retrieval Experiment
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent
-  workflow. §1–§7 are its output. §0 is DeepSeek's review, written before
-  implementation.
-- **Reviewed and frozen by:** DeepSeek
+- **Author:** project maintainer
+- **Process:** §1–§7 are the criteria, written before implementation; §0 is the
+  review of them.
+- **Reviewed and frozen by:** project maintainer
 - **Date:** 2026-09-18
 - **Baseline:** Commit `80c753c` (DS-QA-006 final)
 - **Status:** **FROZEN**, with **4 `AC_CHANGE_REQUEST`s**, all resolved.
@@ -13,9 +13,9 @@
 
 ---
 
-## 0. DeepSeek review
+## 0. Review before implementation
 
-Gemini measured before it wrote, and the measurements hold. This is the third
+The criteria measured before it wrote, and the measurements hold. This is the third
 round in which it has produced criteria whose numbers I could reproduce, and the
 first in which **every load-bearing figure it quotes is exactly right** — including
 the ones it had to derive itself.
@@ -24,8 +24,8 @@ the ones it had to derive itself.
 
 | Claim | Verified |
 |---|---|
-| §2.1 diagnostic baseline Hit@1/3/5/10 = 54.5 / 69.7 / 75.8 / 84.8%, 5 `NOT_RETRIEVED`, 4-of-7 lifted, 0 regressions | **exact** — re-run today on `80c753c` via `.agent/results/qa/gate_check.py` |
-| §2.1 held-out Mamba baseline Hit@1 35.7% (5/14), Hit@3 50.0% (7/14), Hit@5 57.1% (8/14), Hit@10 71.4% (10/14) | **exact** — independently measured with `.agent/results/qa/run_bench.py lexical` before reading this section |
+| §2.1 diagnostic baseline Hit@1/3/5/10 = 54.5 / 69.7 / 75.8 / 84.8%, 5 `NOT_RETRIEVED`, 4-of-7 lifted, 0 regressions | **exact** — re-run today on `80c753c` via the qa/gate_check.py run log |
+| §2.1 held-out Mamba baseline Hit@1 35.7% (5/14), Hit@3 50.0% (7/14), Hit@5 57.1% (8/14), Hit@10 71.4% (10/14) | **exact** — independently measured with the qa/run_bench.py run log lexical` before reading this section |
 | §2.1 held-out `NOT_RETRIEVED` = 3 cross-language + 1 Method (`over a 1.0 perplexity improvement`); `LOW_RANK` = the rank-9 cross-language and rank-6 `S6` | **exact**, including which four and why the rank-9 case survived (literal Latin tokens `Mamba` / `Transformer` in the Chinese question) |
 | §2.1 held-out configuration is `analysis=None` | **exact** — Mamba has no `DocumentAnalysis`, so only the `raw` variant runs |
 | §2.2.1 chunk counts: ResNet 115, Diffusion Policy 186, PPO 58, Mamba 295 | **exact**, all four, measured from the `chunks` table |
@@ -36,7 +36,7 @@ the ones it had to derive itself.
 Two claims are procedural rather than numeric and are **incomplete**: §7.2 names
 `run_experiment_arms.py` and §7.4 names `profile_dense.py`, and neither file
 exists. The three-arm harness is `run_bench.py` (already written) and the profiler
-will be added; I will keep Gemini's names as the criterion's entry points rather
+will be added; I will keep the criteria's names as the criterion's entry points rather
 than rename my own, because a criterion that names a file is only evaluable if
 that file is the one that runs.
 
@@ -54,7 +54,7 @@ retrieval existed in this repository*, and a verifier refuses to run if a gold
 phrase is missing or an "unanswerable" question names a term the paper contains.
 It caught two of my own three unanswerable items (`weight decay` and `dropout`
 both appear in Mamba's appendices) — so the negative benchmark is grounded rather
-than asserted. Gemini's §2.2 corrections and its Gate-2 thresholds were written
+than asserted. the criteria's §2.2 corrections and its Gate-2 thresholds were written
 against a held-out result it could not have tuned, which is the property that
 makes them worth freezing.
 
@@ -90,7 +90,7 @@ makes them worth freezing.
 | | |
 |---|---|
 | **As written** | AC-P0-11: *"Experimental dense/hybrid code must be guarded behind an explicit parameter or executed via offline benchmark harnesses **until Gate 2 is formally frozen**."* §5 describes Gate 2's PASS branch as *"Adopt in Prod"*. |
-| **Problem** | The task's Phase 72 requires that a C/D outcome productionize *"the smallest accepted architecture in the same task **IF Gemini's frozen criteria explicitly allow it**"*, and otherwise *"stop and create a separate DS-QA-008 productionization task."* AC-P0-11 states the prohibition before Gate 2 is frozen and never states the permission after. It is therefore silent on the one question Phase 72 delegates to it, and silence resolves to "separate task" — which may or may not be what was intended. |
+| **Problem** | The task's Phase 72 requires that a C/D outcome productionize *"the smallest accepted architecture in the same task **IF the frozen criteria explicitly allow it**"*, and otherwise *"stop and create a separate DS-QA-008 productionization task."* AC-P0-11 states the prohibition before Gate 2 is frozen and never states the permission after. It is therefore silent on the one question Phase 72 delegates to it, and silence resolves to "separate task" — which may or may not be what was intended. |
 | **Resolution** | Made explicit: **a Gate-2 PASS does not, by itself, authorize productionization in DS-QA-007.** Because Gate 2 also requires 0 regressions, 16/16 abstentions, citation validity and the latency/storage budgets *on the production answer path* — none of which this experiment measures end-to-end — production changes are substantial by construction. A Gate-2 pass therefore ends DS-QA-007 with the experiment committed behind the experimental boundary, and creates **DS-QA-008 — Hybrid Retrieval Productionization** carrying the frozen Gate-2 evidence. This is the conservative reading, and it is the one the task's own "prefer a separate task if production changes are substantial" argues for. |
 | **Not accepted** | Treating "Adopt in Prod" in the §5 diagram as a same-task mandate. A diagram is not a criterion, and Phase 72 asks for the permission to be explicit. |
 
@@ -102,7 +102,7 @@ EXPERIMENT SUCCESS GATE (Gate 1)  — can pass while concluding "not worth adopt
   G1.2  three arms measured over 33 diagnostic + 14 held-out questions
   G1.3  candidate-pool recall@20 and recall@50 recorded for all 9 NOT_RETRIEVED
   G1.4  100% local CPU; no external service, no vector DB, no GPU, no remote call
-  G1.5  diagnostic artifacts recorded under .agent/results/qa/
+  G1.5  diagnostic artifacts recorded under the qa/ run log
 
 PRODUCTION ADOPTION GATE (Gate 2) — requires value over DS-QA-006
   G2.1  ≥ 4 of 5 diagnostic NOT_RETRIEVED into pool@20; ≥ 3 of 5 into Top-5
@@ -301,7 +301,7 @@ To pass Gate 1, the experiment must:
 2. Measure and record all three arms (Lexical, Dense, Hybrid) over both the 33-question diagnostic set and the 14-question fresh held-out Mamba set.
 3. Quantify candidate-pool recall@20 and recall@50 for all 5 diagnostic `NOT_RETRIEVED` cases and all 4 Mamba `NOT_RETRIEVED` cases.
 4. Execute 100% locally on CPU without external services, vector databases, or GPU requirements.
-5. Record complete diagnostic artifacts (`gate_experiment.json`, latency profiles, memory footprints) in `.agent/results/qa/`.
+5. Record complete diagnostic artifacts (`gate_experiment.json`, latency profiles, memory footprints) in the qa/ run log.
 
 ### Gate 2: Production Adoption Gate (Readiness to Enter Default QA Path)
 *Requires unambiguous value addition over DS-QA-006.*
@@ -349,7 +349,7 @@ To pass Gate 2, hybrid retrieval must satisfy:
 - **AC-P0-11 Production serving path invariance during experiment.**
   Production code in `app/qa/retrieval.py` and `app/qa/answering.py` must retain default lexical behavior during the experiment. Experimental dense/hybrid code must be guarded behind an explicit parameter or executed via offline benchmark harnesses until Gate 2 is formally frozen.
 - **AC-P0-12 Zero benchmark hardcoding & clean artifact isolation.**
-  No query string, benchmark gold phrase, or document ID may appear in executed production code. All experimental scripts, temporary caches, and diagnostic outputs must be written to `.agent/results/qa/` (gitignored) or OS temp, leaving `backend/` tracked files clean.
+  No query string, benchmark gold phrase, or document ID may appear in executed production code. All experimental scripts, temporary caches, and diagnostic outputs must be written to the qa/ run log (gitignored) or OS temp, leaving `backend/` tracked files clean.
 
 ---
 

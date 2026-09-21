@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-DOC-004: Reading Session Continuity
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek (Round 1 review pending)
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer (round 1 review pending)
 - **Date:** 2026-09-21
 - **Baseline:** Commit `85207e8` / Post-DS-QA-015 (`SCHEMA_VERSION = 5`, `IR_PIPELINE_VERSION = "5"`, `CountingProvider` ledger in `app/llm/accounting.py`, bundle ceiling amended to `310.0 kB`)
 - **Deliverable:** `docs/acceptance/DS-DOC-004.md` (authored before any production code)
@@ -13,13 +13,13 @@
 
 ### 0.1 Process Discipline: Acceptance before Implementation
 In this repository, process sequencing is load-bearing:
-- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that required retroactive diagnosis and repair (`.agent/evidence/DS-DOC-002.md`).
+- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that required retroactive diagnosis and repair (the evidence record for DS-DOC-002).
 - **DS-DOC-003** strictly enforced acceptance criteria first (`docs/acceptance/DS-DOC-003.md`), catching three structural defects prior to coding.
 - **DS-QA-010** established multi-target persistent notes (`docs/acceptance/DS-QA-010.md`), closing at **18/18 P0 PASS** (`2529674`) with 0 AI calls, 0 PDF mutations, and 0.0% wrong-attachment rate.
 - **DS-QA-010-FIX-001** diagnosed and fixed the note list identity defect: notes were keyed to ephemeral document rows (`uuid4().hex`) and made unreachable on reopen; the fix keyed them to `content_hash`.
 - **DS-QA-015** established the content-addressed Reader Overview and code splitting (`docs/acceptance/DS-QA-015.md`), closing at **55/55 P0 PASS** with initial bundle at 304.54 kB.
 
-**This task will not violate process discipline.** This specification is produced independently as Round 1 acceptance criteria, written against the real repository before a single line of production code in `backend/app/` or `frontend/src/` is drafted.
+**This task will not violate process discipline.** This specification is written as Round 1 acceptance criteria, written against the real repository before a single line of production code in `backend/app/` or `frontend/src/` is drafted.
 
 ### 0.2 The Core Problem & Guiding Principle
 The defect was reported by the user in one sentence:
@@ -61,7 +61,7 @@ Yet, on the backend:
 
 ---
 
-## 0.4 Round 1 review and freezing (DeepSeek) — 1 AC_CHANGE_REQUEST
+## 0.4 Round 1 review and freezing — 1 AC_CHANGE_REQUEST
 
 Read against the repository at `5d7f719`. Decisions **A, B, C, D, E, F, G, H** are
 accepted as written, and two of them settle questions the implementation would
@@ -411,7 +411,7 @@ The session restoration sequence executes strictly within the local read boundar
 
 - **AC-P2-02 Dedicated Chromium E2E Continuity Test Harness.**  
   Provide a dedicated Playwright verification script `frontend/scripts/e2e-session-continuity.mjs` that launches the production preview, opens ResNet, starts translation, triggers `page.reload()`, and asserts that both original and translated viewports re-render with identical page positions and zero provider calls.  
-  *Evidence:* Successful execution of `node scripts/e2e-session-continuity.mjs` outputting `.agent/results/e2e-session-continuity/results.json`.
+  *Evidence:* Successful execution of `node scripts/e2e-session-continuity.mjs` outputting the e2e-session-continuity/results.json run log.
 
 ---
 

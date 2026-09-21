@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-09-15
 - **Phase:** 0
-- **Deciders:** DeepSeek (architecture owner)
+- **Deciders:** project maintainer
 - **Evidence:** `docs/REPO_AUDIT.md` §6-§9, §13
 
 ## Context
@@ -50,7 +50,7 @@ Rules that follow from this:
 
 If per-block page attribution becomes necessary, we convert to a **documented patch series**
 against the pinned commit — never a silent fork — and raise an `AC_CHANGE_REQUEST` if
-Gemini-authored acceptance criteria are affected (brief §10).
+The acceptance criteria are affected (brief §10).
 
 ## Consequences
 

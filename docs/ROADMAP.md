@@ -39,7 +39,7 @@ place to land. It is not redone.
    Phase 10.
 5. **Placeholders are `{vN}` single-brace** — the `{{vN}}` form in earlier briefs does not
    exist in the live pipeline (`REPO_AUDIT` §2.1).
-6. **Every task: Gemini authors acceptance criteria before implementation** (brief §70).
+6. **Every task: acceptance criteria are written and frozen before implementation** (brief §70).
 7. **Credentials go to the OS keyring** via `keyring`, never SQLite/logs/`ConfigManager`.
 8. **No `cargo` installed** — Phase 10 requires provisioning Rust first.
 

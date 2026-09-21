@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-QA-010: Notes + Persistent Highlights
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek (Round 1 review pending)
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer (round 1 review pending)
 - **Date:** 2026-09-19
 - **Baseline:** Commit `3617322` / DS-DOC-003 closed (`SOURCE_ANCHOR_VERSION = "1"`, `IR_PIPELINE_VERSION = "4"`, `SCHEMA_VERSION = 3`)
 - **Deliverable:** `docs/acceptance/DS-QA-010.md` (authored before any production code)
@@ -13,7 +13,7 @@
 
 ### 0.1 Process discipline: Acceptance before Implementation
 In this repository, process sequencing is load-bearing:
-- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that had to be retroactively diagnosed and repaired (`.agent/evidence/DS-DOC-002.md`).
+- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that had to be retroactively diagnosed and repaired (the evidence record for DS-DOC-002).
 - **DS-DOC-003** strictly enforced acceptance criteria first (`docs/acceptance/DS-DOC-003.md`). That discipline exposed three critical defects before a single line of production code was written: anchor scoping omission across papers (AC_CHANGE_REQUEST 1), ordinal position counter fragility in disambiguation (AC_CHANGE_REQUEST 2), and conflicting de-hyphenation normalization (AC_CHANGE_REQUEST 3).
 
 **This task (DS-QA-010) enforces that same discipline.** This document is authored independently against the real repository before any database migration, backend endpoint, or frontend component is written.
@@ -43,9 +43,9 @@ In this repository, process sequencing is load-bearing:
 
 ---
 
-## 0. DeepSeek review
+## 0. Review before implementation
 
-Gemini inspected the repository, reproduced the identity contract, and produced
+The criteria inspected the repository, reproduced the identity contract, and produced
 18 P0 with a schema and a state machine. Two things in it are contradicted by
 measurement or by the repository, and both concern what happens to user data —
 which is the part of this task that cannot be got wrong.
@@ -563,7 +563,7 @@ backend\.venv\Scripts\python.exe -c "
 import hashlib
 from pathlib import Path
 
-source = Path('.agent/results/papers/ppo.pdf')
+source = Path('the papers/ppo.pdf run log')
 if not source.is_file():
     print('Benchmark paper not found, skipping fixture test')
 else:

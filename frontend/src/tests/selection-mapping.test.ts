@@ -382,7 +382,7 @@ describe("DS-QA-005 · geometry to paragraph", () => {
 describe("DS-QA-005 · mapping cost", () => {
   it("maps against the real paper's IR without a perceptible cost", () => {
     // The matcher over the real 101-paragraph ResNet IR, with the 82 line
-    // fragments a real multi-line drag produced. Not a gate — Gemini set no
+    // fragments a real multi-line drag produced. Not a gate — the criteria set no
     // millisecond budget — but "it feels instant" deserves a number.
     const paragraphs = JSON.parse(
       readFileSync("src/tests/__resnet_ir.json", "utf8"),

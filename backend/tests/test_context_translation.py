@@ -674,11 +674,11 @@ class TestTranslatorBehaviour:
         assert translator.stats["cache_hits"] == 1
 
 
-# --- Gemini Premise 3: is the run instability thread-local leakage? -----------
+# --- Premise 3: is the run instability thread-local leakage? -------------------
 
 
 class TestThreadReuseCannotLeakContext:
-    """The diagnostic Gemini asked for, stated as a property rather than a run.
+    """The diagnostic the criteria asked for, stated as a property rather than a run.
 
     DS-CTX-002's A/B moved from 1-of-7 to 4-of-5 on identical inputs, and
     attributing that to model stochasticity without checking is the kind of

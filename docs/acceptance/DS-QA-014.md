@@ -1,14 +1,14 @@
 # Acceptance Criteria — DS-QA-014: Paper Overview / Reading Entry
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek (Pending Round 1 review)
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer (round 1 review pending)
 - **Date:** 2026-09-19
 - **Baseline:** Commit `4cb6d2d` / DS-QA-013 (`SCHEMA_VERSION = 5`, `BLOCK_ANCHOR_VERSION = "1"`, `SOURCE_ANCHOR_VERSION = "1"`, `IR_PIPELINE_VERSION = "4"`)
 - **Frontend baseline bundle:** 337.51 kB against 350.0 kB ceiling (~12.49 kB headroom)
 - **Deliverable:** `docs/acceptance/DS-QA-014.md` (authored before any production code)
 - **Status:** **PROPOSED FOR ROUND 1 REVIEW — 38 P0 · 6 P1 · 4 P2**
 
-## 0. Round 1 review and freezing (DeepSeek) — 4 AC_CHANGE_REQUESTs
+## 0. Round 1 review and freezing — 4 AC_CHANGE_REQUESTs
 
 Read against the repository at `ae50b01` and the measurements in §2. Decisions A,
 C, D, F, G, H, I, J, K, L, M, N, O, P, R, S, T and U are accepted as written; the
@@ -111,7 +111,7 @@ be behind an explicit action.
 
 ### 0.1 Process Discipline: Acceptance before Implementation
 In this repository, process sequencing is load-bearing:
-- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that required retroactive diagnosis and repair (`.agent/evidence/DS-DOC-002.md`).
+- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that required retroactive diagnosis and repair (the evidence record for DS-DOC-002).
 - **DS-DOC-003** strictly enforced acceptance criteria first (`docs/acceptance/DS-DOC-003.md`), catching three structural defects prior to coding.
 - **DS-QA-010** established multi-target persistent notes (`docs/acceptance/DS-QA-010.md`), closing at **18/18 P0 PASS** (`2529674`) with 0 AI calls, 0 PDF mutations, and 0.0% wrong-attachment rate.
 - **DS-QA-012** established instant client-side substring search and deterministic server-side export (`docs/acceptance/DS-QA-012.md`), closing at **27/27 P0 PASS** (`10ef696`).

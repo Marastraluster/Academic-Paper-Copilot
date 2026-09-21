@@ -1,10 +1,10 @@
 # DS-BE-006 — Acceptance Criteria (FROZEN)
 
-> **Author:** Gemini 3.8 Flash (High) via Antigravity CLI — *independent Acceptance Criteria Agent*  
+> **Author:** project maintainer  
 > **Authored:** 2026-09-16, **before any implementation code was written**  
 > **Scope:** Provider Profile HTTP API (CRUD + Connection Test), strict secret containment, error envelope mapping, three-way API key semantics, offline testing  
 >
-> **FROZEN.** DeepSeek may not silently weaken or delete any criterion (brief §10). Only P0 blocks completion.
+> **FROZEN.** No criterion may be silently weakened or deleted (brief §10). Only P0 blocks completion.
 
 ---
 

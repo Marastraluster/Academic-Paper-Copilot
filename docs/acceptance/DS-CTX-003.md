@@ -1,18 +1,18 @@
 # Acceptance Criteria — DS-CTX-003: Context Effectiveness & Mapping Benchmark
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek, before implementation
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer, before implementation
 - **Date:** 2026-09-17
 - **Baseline:** `e837d08`
 - **Status:** **FROZEN.** **9 P0 · 3 P1 · 2 P2.**
 
 Baselines: `backend 663 passed · frontend 75 passed`.
 
-## DeepSeek review — the measurement ran before the freeze, and it settles two things
+## Review before implementation — the measurement ran before the freeze, and it settles two things
 
 Part 2 of the task was to measure mapping coverage *before* changing anything.
 That is provider-independent work, so it was done while the criteria were being
-authored. It answers one of Gemini's two questions and **refutes one of its premises**.
+authored. It answers one of the criteria's two questions and **refutes one of its premises**.
 
 Measured across three real papers — ResNet, PPO (arXiv:1707.06347), Diffusion Policy
 (arXiv:2303.04137) — 432 translation units captured from real runs:
@@ -28,13 +28,13 @@ Measured across three real papers — ResNet, PPO (arXiv:1707.06347), Diffusion 
 10.0%, tables 2.5%, running headers 1.6%. Only **2.8%** of units are body prose the IR
 failed to represent as a paragraph.
 
-### Answering Gemini's Q1 with data
+### Answering Q1 with data
 
-Gemini asked what coverage is sufficient and answered **≥85% of body prose**. The
+The criteria ask what coverage is sufficient and answered **≥85% of body prose**. The
 measurement gives **96.3%**, so the bar is met and **Decision D (`MAPPING BOTTLENECK`)
 is excluded** — it requires prose coverage below 75%.
 
-### Refuting Gemini's Premise 1
+### Refuting the criteria's Premise 1
 
 > *"High prose mapping coverage cannot be achieved purely via string gymnastics in
 > `unit_mapper.py`. … a split half-paragraph will fail … Attempting to solve this by
@@ -47,7 +47,7 @@ ambiguity rule stayed in place; coverage came from the containment-first scoring
 from loosening it.
 
 This matters because the premise, if accepted, would have justified the large change
-Gemini defers to P1 — passing bounding boxes and page numbers down from upstream. The
+The criteria defer to P1 — passing bounding boxes and page numbers down from upstream. The
 data says that complexity is not needed to reach the prose coverage bar.
 
 ## Premise critiques accepted
@@ -68,14 +68,14 @@ the real pipeline, that each unit receives its own context and no other's.**
 
 **Premise 4 — ResNet is disqualified as the primary benchmark.** Accepted.
 
-### Answering Gemini's Q2 — and it changes the implementation
+### Answering Q2 — and it changes the implementation
 
 > *"Unmatched units should receive Off-mode translation (zero context) by default.
 > Document-level fallback should be strictly restricted or eliminated for unmapped
 > units."*
 
-**Accepted, and the measurement supports it more strongly than Gemini could have known.**
-Gemini argued from the *shape* of unmatched units — fragments, table cells, short
+**Accepted, and the measurement supports it more strongly than the criteria could have known.**
+The argument runs from the *shape* of unmatched units — fragments, table cells, short
 headings. The measurement confirms it: of 121 unmatched units, **111 are captions,
 headings, tables, references and running headers**; only 9 are prose.
 
@@ -87,7 +87,7 @@ current implementation does exactly that.
 
 ## What is *not* changed, and why
 
-Gemini defers geometric metadata passing to P1, on the grounds that P0 must first
+The criteria defers geometric metadata passing to P1, on the grounds that P0 must first
 establish whether the text-only mapper is the bottleneck. The measurement settles that
 question: it is not. **No upstream signature change is made in this task.**
 

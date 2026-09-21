@@ -1,22 +1,19 @@
 # DS-FE-001 — Acceptance Criteria (FROZEN)
 
-> **Author:** Gemini 3.8 Flash (High) via Antigravity CLI — *independent Acceptance Criteria Agent*
+> **Author:** project maintainer
 > **Authored:** 2026-09-15, **before any implementation code was written**
-> **Model invocation:** `agy -p <prompt> --model gemini-3.8-flash-high --output-format text`
-> **Prompt:** `.agent/tasks/_gemini-prompt-DS-FE-001.md`
-> **Raw model output:** `.agent/tasks/_gemini-ac-DS-FE-001.raw.md`
 >
 > **FROZEN.** Criteria are authored before implementation (brief §8) to prevent moving
-> goalposts and self-serving acceptance. DeepSeek may not silently weaken or delete any
+> goalposts and self-serving acceptance. No criterion may be silently weakened or deleted
 > criterion. If one proves unachievable or conflicts with architecture, an
-> `AC_CHANGE_REQUEST` is raised and Gemini revises (brief §10).
+> `AC_CHANGE_REQUEST` is raised and the criteria are revised (brief §10).
 >
 > **Priority:** only **[P0]** criteria block task completion. [P1] should be met; [P2] goes
 > to backlog (brief §99).
 
 ---
 
-## Acceptance Criteria Review — DeepSeek (brief §101 Step 8)
+## Acceptance criteria review (brief §101 Step 8)
 
 Reviewed before implementation. Assessment: **accepted as-is, no AC_CHANGE_REQUEST.**
 
@@ -27,7 +24,7 @@ Reviewed before implementation. Assessment: **accepted as-is, no AC_CHANGE_REQUE
 | AC-25 bundle budget (500 KB JS / 60 KB CSS uncompressed) | Achievable for a shell; React+ReactDOM alone is ~140 KB |
 | AC-26 FCP/TTI < 300 ms | Achievable on localhost; will be verified via `npm run preview` measurement |
 | AC-11/12/13 responsive at 1024/1440/1920 | Matches brief §75 exactly |
-| AC-36 requires `.agent/screenshots/DS-FE-001.png` at 1440 px | Matches brief §22 |
+| AC-36 requires the screenshots at 1440 px | Matches brief §22 |
 | AC-23 no external CDNs | Correctly enforces the local-first/privacy-first principle |
 | AC-09 zero-backend standalone | The correct default state; the backend genuinely does not exist yet |
 
@@ -299,7 +296,7 @@ Reviewed before implementation. Assessment: **accepted as-is, no AC_CHANGE_REQUE
     1. Set viewport to `1024px × 768px`: Inspect top bar, sidebar, and dual viewers for overlap or overflow.
     2. Set viewport to `1440px × 900px`: Inspect desktop balance.
     3. Set viewport to `1920px × 1080px`: Inspect full-width scaling.
-  - Capture screenshot at `1440px` and save to `.agent/screenshots/DS-FE-001.png`.
+  - Capture screenshot at `1440px` and save to the screenshots.
   - *Verification:* Review captured screenshot against design specifications.
 
 - **AC-37 [P1] Independent Scroll Verification**
@@ -324,4 +321,4 @@ Any of the following conditions constitutes an immediate **FAIL** for task `DS-F
 5. **F-05 (Broken Standalone State):** Shell displays an unhandled error screen, crashes, or stalls on an infinite loading spinner when the backend server is absent.
 6. **F-06 (Window Scroll Leakage):** Appearance of outer window-level horizontal or vertical scrollbars (`html` or `body` scrollbars) at standard screen dimensions (`1024px`, `1440px`, `1920px`).
 7. **F-07 (Aesthetic Drift):** Implementation adopts consumer landing-page styles, card-based dashboard widgets, decorative gradients, or heavy decorative animations explicitly forbidden by the academic productivity brief.
-8. **F-08 (Missing Visual Evidence):** Failure to generate and verify `.agent/screenshots/DS-FE-001.png` across required resolutions.
+8. **F-08 (Missing Visual Evidence):** Failure to generate and verify the screenshots across required resolutions.

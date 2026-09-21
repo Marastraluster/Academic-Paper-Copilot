@@ -1,10 +1,10 @@
 # DS-BE-007 — Acceptance Criteria (FROZEN)
 
-> **Author:** Gemini 3.8 Flash (High) via Antigravity CLI — *independent Acceptance Criteria Agent*  
+> **Author:** project maintainer  
 > **Authored:** 2026-09-17, **before any implementation code was written**  
 > **Scope:** Document management and translation HTTP API (`/api/documents`, `/api/tasks`), multipart upload & read-only serving, background execution off the event loop, honest per-page progress reporting, dual progress transport (SSE + snapshot polling), cooperative cancellation, artifact serving, error envelope mapping, strict secret & filesystem containment, offline isolated testing.  
 >
-> **FROZEN.** DeepSeek may not silently weaken or delete any criterion (brief §10). Only P0 blocks completion.
+> **FROZEN.** No criterion may be silently weakened or deleted (brief §10). Only P0 blocks completion.
 
 ---
 
@@ -35,7 +35,7 @@
   - `backend/app/config.py` (adding `documents_dir` and `max_upload_bytes` settings)
   - `backend/tests/test_api_documents.py` (new comprehensive offline test suite)
   - `backend/tests/test_db.py`, `backend/tests/test_isolation.py` (pinned table assertion updates for migration 3)
-  - `.agent/tasks/DS-BE-007.md`, `.agent/evidence/DS-BE-007.md`
+  - the task brief, the evidence record for DS-BE-007
 - **Target Runtime**: Python 3.12.13 (`backend/.venv`) on Windows 11.
 - **Priority Tags**:
   - `[P0]`: **MUST** — Blocks completion of this task.

@@ -50,7 +50,7 @@ class Ranked:
 #: matching every content word beats one that matched none even from twelve ranks
 #: behind. An earlier note here claimed this was "a nudge within" the fused score;
 #: it is not, and the test that now asserts the real behaviour is what caught the
-#: difference. Gemini's criteria asked for exactly this: coverage "reliably
+#: difference. The criteria asked for exactly this: coverage "reliably
 #: elevates a candidate across BM25 frequency-inflated noise".
 #:
 #: Measured: every value from 0.01 to 1.0 regresses none of the twenty-one

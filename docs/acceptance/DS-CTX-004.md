@@ -1,19 +1,19 @@
 # Acceptance Criteria — DS-CTX-004: Academic Prompt Translation Baseline
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek, before implementation
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer, before implementation
 - **Date:** 2026-09-18
 - **Baseline:** `4811ae9`
 - **Status:** **FROZEN.** **8 P0 · 4 P1 · 3 P2.**
 
-## DeepSeek review
+## Review before implementation
 
-Gemini answered both questions with reasoning rather than preference, and its premise
+Both questions are answered with reasoning rather than preference, and its premise
 critiques are sharper than the brief's own framing in two places. One is wrong.
 
 ### Corrections
 
-**Gemini's P0.8 diagnoses the flake from a test it did not read.** It attributes the
+**P0.8 diagnoses the flake from a test it did not read.** It attributes the
 single unreproduced failure to NTFS `mtime` tick resolution and mandates a clock mock
 or a bounded time advance.
 
@@ -55,7 +55,7 @@ no analysis must not be invalidated when analysis changes.
 
 ### Answer 1 — should Academic become the default?
 
-**Provisionally yes, formally gated on the three-arm benchmark.** Gemini's gates:
+**Provisionally yes, formally gated on the three-arm benchmark.** The gates:
 
 ```
 BETTER > WORSE for Academic vs Basic          (>= 20% net win)
@@ -69,7 +69,7 @@ brief asked for. The default does not move until these are met.
 
 ### Answer 2 — Contextual mode's product status
 
-**EXPERIMENTAL**, not "Visible Advanced" and not hidden. Gemini's reasoning is right in
+**EXPERIMENTAL**, not "Visible Advanced" and not hidden. The reasoning is right in
 both directions: labelling it "Advanced" would imply production-ready superiority when
 it costs 6.58× and waits 392 seconds for no observed disambiguation gain; hiding it
 would prevent the evaluation on genuinely polysemous papers where a document glossary

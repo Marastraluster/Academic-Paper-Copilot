@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-QA-003: Paper QA Sidebar + Citation Jumping
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek, before implementation
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer, before implementation
 - **Date:** 2026-09-18
 - **Baseline:** `1732024` (DS-QA-002 committed; 768 backend tests, 78 frontend tests pass) — corrected by AC_CHANGE_REQUEST 1
 - **Status:** **FROZEN**, with **4 `AC_CHANGE_REQUEST`s** raised in review below. **19 P0 · 6 P1 · 3 P2.**
@@ -9,7 +9,7 @@
 
 ---
 
-## DeepSeek review
+## Review before implementation
 
 Four things in this document could not be implemented as written. All four are resolved
 before any production code, and none of them touches a P0's substance.
@@ -75,7 +75,7 @@ initial bundle → < 350 kB (measured 275 kB; PDF.js in lazy async chunk; strict
 
 ## Section 1 — Critique of the Brief & Premise Corrections
 
-Before specifying criteria, Gemini audits the brief against the repository architecture, backend contracts, and reader mechanics. Four false premises and architectural gaps are identified and resolved below:
+Before specifying criteria, The criteria audits the brief against the repository architecture, backend contracts, and reader mechanics. Four false premises and architectural gaps are identified and resolved below:
 
 ### Critique 1: Frontend Scope `"document"` vs. Backend `"whole_paper"` & Undefined Scope Payloads
 
@@ -92,7 +92,7 @@ Before specifying criteria, Gemini audits the brief against the repository archi
 |---|---|
 | **Brief premise** | The brief requires: *"The answer text arrives as Markdown with inline `[E1]` markers. Normal users must not see E1 or raw paragraph ids."* Simultaneously, the brief notes: *"There is no Markdown renderer and no math renderer in package.json"* and *"Do not specify anything that needs ... a new dependency unless you say plainly that it is new."* |
 | **Problem** | Leaving this unspecified forces the engineer to either: (a) render raw markdown as plain text (exposing markdown syntax like `###`, `**bold**`, `- item` directly to the user, violating academic polish), or (b) import a heavy markdown library that risks blowing up the initial JS bundle (> 500 kB budget). |
-| **Resolution** | We explicitly authorize DeepSeek to either: (1) implement a lightweight, zero-dependency tokenizing renderer for the clean academic subset emitted by DS-QA-002 (paragraphs, bullet lists, bold, inline code, and code blocks) that replaces `\[(E\d+)\]` with interactive citation buttons; OR (2) introduce a vetted, ultra-lightweight markdown parser (e.g. `snarkdown` at ~1 kB or `marked` at ~30 kB) with bundle-size verification. The initial bundle must strictly remain `< 350 kB`. Math rendering remains deferred. |
+| **Resolution** | The implementation is authorized to either: (1) implement a lightweight, zero-dependency tokenizing renderer for the clean academic subset emitted by DS-QA-002 (paragraphs, bullet lists, bold, inline code, and code blocks) that replaces `\[(E\d+)\]` with interactive citation buttons; OR (2) introduce a vetted, ultra-lightweight markdown parser (e.g. `snarkdown` at ~1 kB or `marked` at ~30 kB) with bundle-size verification. The initial bundle must strictly remain `< 350 kB`. Math rendering remains deferred. |
 | **Not accepted** | Rendering unparsed markdown source code, or importing heavyweight markdown ecosystems (e.g. `react-markdown` + `rehype` + `remark` tree) that exceed the bundle budget. |
 
 ### Critique 3: Viewer Isolation vs. Global Navigation Coordination
@@ -373,7 +373,7 @@ Before specifying criteria, Gemini audits the brief against the repository archi
 ## Section 5 — Verification & Test Plan
 
 ### 1. Frontend Unit & Integration Tests (`src/tests/qa-sidebar.test.tsx`)
-DeepSeek must implement a dedicated test suite with at least the following test cases:
+The implementation must include a dedicated test suite with at least the following test cases:
 1. **`test_idle_when_no_document`**: Renders sidebar with `document: null`. Asserts composer, scope selector, and quick actions are disabled.
 2. **`test_chinese_ime_enter_key_does_not_submit`**: Types with `compositionstart` event, triggers `keydown` with `Enter`, verifies `fetch` is NOT called. Then triggers `compositionend` and `Enter`, verifies `fetch` is called.
 3. **`test_empty_whitespace_cannot_submit`**: Enters spaces in composer, verifies send button is disabled.

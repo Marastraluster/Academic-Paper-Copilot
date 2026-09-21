@@ -35,7 +35,7 @@ safely suppress bounding box drawing when `rotation != 0`."*
 Two clauses, both now measured.
 
 **Clause 1 — coordinates on a rotated page.** Fixture: the benchmark paper with
-page 1 at `/Rotate 90` (`.agent/results/e2e-rotated/source.pdf`).
+page 1 at `/Rotate 90` (the e2e-rotated/source.pdf run log).
 
 ```
 page 1 rotation field                     90

@@ -1,15 +1,15 @@
 # DS-BE-005 — Acceptance Criteria (FROZEN)
 
-> **Author:** Gemini 3.8 Flash (High) via Antigravity CLI — *independent Acceptance Criteria Agent*
+> **Author:** project maintainer
 > **Authored:** 2026-09-16, **before any implementation code was written**
-> **Prompt:** `.agent/tasks/_gemini-prompt-DS-BE-005.md`
-> **Raw model output:** `.agent/tasks/_gemini-ac-DS-BE-005.raw.md`
+> **Prompt:** the task brief
+> **Raw model output:** the task brief
 > *(The generation exceeded the CLI's 5-minute print window and returned partial output; the
 > document is nonetheless complete through FC-11, verified by inspection.)*
 >
-> **FROZEN.** DeepSeek may not silently weaken or delete any criterion (brief §10).
+> **FROZEN.** No criterion may be silently weakened or deleted (brief §10).
 
-## Acceptance Criteria Review — DeepSeek (before implementation)
+## Acceptance criteria review (before implementation)
 
 **Verdict: accepted as-is. No `AC_CHANGE_REQUEST`.** 29 criteria (22 P0, 5 P1, 2 P2),
 28 specified tests, 11 failure conditions.

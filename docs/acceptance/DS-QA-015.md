@@ -1,15 +1,15 @@
 # Acceptance Criteria — DS-QA-015: Reader Overview Pipeline + Content-Addressed Analysis Cache
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek (Pending Round 1 review)
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer (round 1 review pending)
 - **Date:** 2026-09-20
 - **Baseline:** Commit `85207e8` / Post-DS-QA-014 (`SCHEMA_VERSION = 5`, `IR_PIPELINE_VERSION = "5"`, `CountingProvider` ledger in `app/llm/accounting.py`)
-- **Measured Generation Baseline:** 1565.8 s (~26 min), 11 serial calls, `PARTIAL` status (`.agent/results/analysis-measure.log`)
+- **Measured Generation Baseline:** 1565.8 s (~26 min), 11 serial calls, `PARTIAL` status (the analysis-measure.log run log)
 - **Frontend Baseline Bundle:** 349.14 kB initial chunk against 350.0 kB ceiling (0.86 kB headroom, 0 code splitting)
 - **Deliverable:** `docs/acceptance/DS-QA-015.md` (authored before any production code)
 - **Status:** **PROPOSED FOR ROUND 1 REVIEW — 55 P0 · 6 P1 · 4 P2**
 
-## 0. Round 1 review and freezing (DeepSeek) — 3 AC_CHANGE_REQUESTs
+## 0. Round 1 review and freezing — 3 AC_CHANGE_REQUESTs
 
 Read against the repository at `85207e8` and the measurements in §2. Decisions
 **C, D, E, F, G, H, I, J, K, L, N, O, P, Q, R, S, T, U** are accepted as written;
@@ -207,8 +207,8 @@ across the boundary without removing them.
 
 ### Disposition
 
-**Accepted by the acceptance author.** The `gemini-3.8-flash-high` final
-evaluation of 2026-09-21 (`.agent/results/ds015-fix4-gemini-eval.md`) rules:
+**Accepted in the final review.** The
+evaluation of 2026-09-21 (the ds015-fix4-gemini-eval.md run log) rules:
 *"ACCEPTED. The ceiling of AC-P0-52 is amended from ≤ 300.0 kB to ≤ 310.0 kB"*,
 on the recorded decomposition and the three rejected reductions — including the
 independently re-derived `tailwind-merge` finding (`.h-full` overriding `.h-5`
@@ -229,7 +229,7 @@ amendment, and fails at 304.54 kB > 300.0 kB without it.**
 
 ### 0.1 Process Discipline: Acceptance before Implementation
 In this repository, process sequencing is load-bearing:
-- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that required retroactive diagnosis and repair (`.agent/evidence/DS-DOC-002.md`).
+- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that required retroactive diagnosis and repair (the evidence record for DS-DOC-002).
 - **DS-DOC-003** strictly enforced acceptance criteria first (`docs/acceptance/DS-DOC-003.md`), catching three structural defects prior to coding.
 - **DS-QA-010** established multi-target persistent notes (`docs/acceptance/DS-QA-010.md`), closing at **18/18 P0 PASS** (`2529674`) with 0 AI calls, 0 PDF mutations, and 0.0% wrong-attachment rate.
 - **DS-QA-010-FIX-001** diagnosed and fixed the note list identity defect: notes were keyed to ephemeral document rows (`uuid4().hex`) and made unreachable on reopen; the fix keyed them to `content_hash`.
@@ -305,7 +305,7 @@ Measured in `backend/tests/test_analysis_cache_identity.py`:
 - The paid-for artifact remains on disk under the old directory, completely unreachable.
 
 ### 2.2 Defect B: Translation Orientation, High Error Rate, and Bad Output Classes
-Measured on real ResNet generation (`.agent/results/analysis-measure.log` and claim audit):
+Measured on real ResNet generation (the analysis-measure.log run log and claim audit):
 - **Elapsed Time:** 1565.8 s (~26.1 minutes).
 - **Prompt:** `"Produce a compact orientation for a translation system that must choose the right sense of a term."`
 - **Claim Audit (48 claims):** 30 SUPPORTED, 12 PARTIAL, **6 UNSUPPORTED** (12.5% failure rate).

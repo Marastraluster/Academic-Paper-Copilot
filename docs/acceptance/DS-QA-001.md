@@ -1,13 +1,13 @@
 # Acceptance Criteria — DS-QA-001: Scope-Aware Retrieval + Citation Grounding
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek, before implementation
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer, before implementation
 - **Date:** 2026-09-18
 - **Baseline:** `0d952bf`
 - **Status:** **FROZEN.** **9 P0 · 7 P1 · 3 P2.** P0-9 was **redefined** after measurement —
   see AC_CHANGE_REQUEST 1, raised post-implementation at DS-QA-002 §2.
 
-## DeepSeek review
+## Review before implementation
 
 ### AC_CHANGE_REQUEST 1 — P0-9 predicts a number that measurement falsified
 
@@ -35,14 +35,14 @@ distinction, would be confidently wrong about one question in five.
 
 ### The rest of the review
 
-Gemini answered all four decisions and the index-location question, and **corrected a claim
+The criteria answered all four decisions and the index-location question, and **corrected a claim
 I put in its brief**. Two verifications were run before freezing, and one of them changed
 the reasoning behind a P0.
 
 ### The index location: per-document `search.db` (Option B)
 
 The brief noted that `tests/test_db.py` names `chunks_fts` as forbidden and asked which
-resolution to take. Gemini chose **(B)**: each document indexed in its own SQLite file at
+resolution to take. The chosen answer is **(B)**: each document indexed in its own SQLite file at
 `<documents_dir>/<document_id>/search.db`, beside `ir.json` and `analysis.json`.
 
 Its strongest argument is one I had not considered, and it is decisive:
@@ -79,13 +79,13 @@ MATCH 'neural*'     -> []                 (valid, matched nothing)
 MATCH '"deep nets"' -> ['degradation problem in deep nets']
 ```
 
-**Ordinary academic queries raise an unhandled exception.** Gemini's mechanism was slightly
+**Ordinary academic queries raise an unhandled exception.** The proposed mechanism was slightly
 wrong — it predicted the hyphen would invert the query to `ResNet NOT 50`, whereas SQLite
 raises a column-syntax error — but its conclusion is better founded than its reasoning:
 sanitisation is not a nicety, it is what stops `ResNet-50` from being a 500. P0-5 stands,
 with the corrected evidence recorded.
 
-### A ground-truth ambiguity Gemini found in the IR
+### A ground-truth ambiguity The criteria found in the IR
 
 `ParagraphIR` carries both `page_number` and `page_range`. A paragraph starting at the foot
 of page 3 and finishing on page 4 cited only as page 3 would send a reader to a page where

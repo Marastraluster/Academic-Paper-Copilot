@@ -1,6 +1,6 @@
 # REPO_AUDIT.md
 
-**Auditor:** DeepSeek (Claude Code CLI harness) · **Date:** 2026-09-15
+**Auditor:** project maintainer · **Date:** 2026-09-15
 
 This document has two parts:
 
@@ -33,11 +33,11 @@ below was executed, not assumed. File counts are literal.
 
 | Capability | Status | Where |
 |---|---|---|
-| Agent orchestration (task → Gemini AC → implement → evidence) | **Working** | `.agent/`, `docs/acceptance/` |
+| Acceptance-before-implementation (task → frozen criteria → implement → evidence) | **Working** | the local working directory, `docs/acceptance/` |
 | Both CLI harnesses | **Healthy** | `claude` 2.1.218, `agy` 1.2.3, `gemini-3.8-flash-*` |
 | Architecture / roadmap / API contract / test plan | **Written** | `docs/*.md` |
 | Upstream dependency audited, pinned, installable | **Verified** | `docs/REPO_AUDIT.md` Part II |
-| Frontend application shell (DS-FE-001) | **Complete, 38/38 AC PASS** | `frontend/`, `.agent/evidence/DS-FE-001.md` |
+| Frontend application shell (DS-FE-001) | **Complete, 38/38 AC PASS** | `frontend/`, the evidence record for DS-FE-001 |
 | React + TS + Vite + Tailwind + shadcn/ui + Zustand | **Configured** | `frontend/package.json` |
 | Four-region workspace layout, reader-mode state, collapsible sidebar | **Working** | `frontend/src/{app,reader,assistant}` |
 | Automated browser verification harness | **Working** | `frontend/scripts/capture.mjs` |
@@ -358,7 +358,7 @@ Consequences to respect:
 
 **Yes — verified by execution, not inspection.** (`uv venv --python 3.12` +
 `uv pip install -e _reference/PDFMathTranslate`; evidence log in
-`.agent/evidence/DS-ARCH-000.md`.)
+the evidence record for DS-ARCH-000.)
 
 ```
 $ backend/.venv/Scripts/python.exe -c "import pdf2zh; ..."

@@ -1,9 +1,10 @@
 """Create a provider profile in the real application database.
 
-Until there is a settings UI, this is how a provider gets configured. It uses the
+The application has a settings screen for this; the script exists for machines
+where a browser session is inconvenient, and for scripted setup. It uses the
 application's own stores — the same ``ProfileStore`` and credential store the HTTP
-API uses — so a profile created here is indistinguishable from one created later
-through the UI.
+API uses — so a profile created here is indistinguishable from one created through
+the UI.
 
 **Run this in your own terminal, not through an agent.** The API key is read
 without echo and written straight to the OS credential store. It is never printed,

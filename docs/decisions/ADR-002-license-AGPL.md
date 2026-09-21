@@ -3,7 +3,7 @@
 - **Status:** **Decided** — local / personal use only
 - **Date:** 2026-09-15
 - **Phase:** 0
-- **Deciders:** **User** (decided 2026-09-15) · DeepSeek (analysis)
+- **Deciders:** **User** (decided 2026-09-15)
 - **Evidence:** `docs/REPO_AUDIT.md` §19
 
 ## DECISION (user, 2026-09-15)

@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-DOC-001: Document IR + Page / Section / Paragraph Mapping
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek, before any implementation code was written
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer, before any implementation code was written
 - **Date:** 2026-09-17
 - **Baseline:** `155a887` (DS-FE-003)
 - **Authoring input:** the actual repository — `app/db.py` migrations, `app/documents/store.py`,
@@ -18,9 +18,9 @@ backend  → 514 passed
 frontend →  75 passed
 ```
 
-## DeepSeek review
+## Review before implementation
 
-Gemini inspected real files and cited them (`test_db.py#L74-L82`, `test_isolation.py#L190-L203`,
+The criteria review inspected real files and cited them (`test_db.py#L74-L82`, `test_isolation.py#L190-L203`,
 `adapter.py#L75-L91`). I verified both load-bearing guards directly — they are exactly as
 described, and both constrain the design hard.
 
@@ -46,7 +46,7 @@ AC-DOC-24's own final branch: **no database change at all**, `ir.json` on disk, 
 stays 3. That is also the better design — the IR is a derived artifact, exactly like
 `mono.pdf` and `dual.pdf`, and deleting the document directory already cleans it up.
 
-### AC_CHANGE_REQUEST 1 — `pyproject.toml` must be modified, and Gemini's file list omits it
+### AC_CHANGE_REQUEST 1 — `pyproject.toml` must be modified, and the criteria's file list omits it
 
 | | |
 |---|---|

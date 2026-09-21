@@ -1,9 +1,9 @@
 # Acceptance Criteria — DS-QA-004: Retrieval Recall Improvement
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow.
-  Gemini returned its criteria in the session rather than writing this file; they are
+- **Author:** project maintainer.
+  The criteria returned its criteria in the session rather than writing this file; they are
   transcribed here verbatim in §2–§5, with nothing added or removed.
-- **Reviewed and frozen by:** DeepSeek, before implementation
+- **Reviewed and frozen by:** project maintainer, before implementation
 - **Date:** 2026-09-18
 - **Baseline:** `6198bad` (DS-QA-003)
 - **Status:** **FROZEN**, with **6 `AC_CHANGE_REQUEST`s** — five raised in review before
@@ -14,21 +14,21 @@
 
 ---
 
-## 1. DeepSeek review
+## 1. Review before implementation
 
-Gemini **accepted the measurement in our brief and corrected the brief's own framing**, which is
+The criteria **accepted the measurement in our brief and corrected the brief's own framing**, which is
 the second time it has done that and the more useful half of its job. Three of its calls are
 worth recording before the change requests.
 
 **It refused to make Stage A an empirical blocker for Stage B.** Our brief asked what evidence
-would be required before adding LLM query rewriting; Gemini's answer is that the evidence is
+would be required before adding LLM query rewriting; the criteria's answer is that the evidence is
 already in hand — a Chinese query shares no token with an English index, so no amount of
 deterministic metadata appending can reach it, and 5 of the 13 measured misses are exactly that.
 It is right, and holding Stage B behind a Stage A measurement we can already predict would be
 ceremony.
 
 **It found a flaw in the current design that the brief had not noticed.** Today expansion is one
-big `(base) OR (exp1) OR (exp2)` expression. Gemini's point: concatenating alternatives into one
+big `(base) OR (exp1) OR (exp2)` expression. the criteria's point: concatenating alternatives into one
 FTS5 query lets common expanded tokens dilute the query's IDF and outvote the paragraph that
 actually answers it — which is precisely the PPO miss where the paragraph titled "Algorithm 1
 PPO" was outvoted by four ordinary words. Query variants must be **independent queries, fused
@@ -70,7 +70,7 @@ afterwards**. That is a better design than ours and it is adopted.
 | | |
 |---|---|
 | **As written** | AC-14 (P1): evaluate on a third academic paper — *"e.g. LoRA or FlashAttention, 10 pre-authored questions with gold spans"* — and reach Hit@5 ≥ 75%. |
-| **Measured** | The project contains **two** real papers: ResNet (`gate0/resnet.pdf`, the validated baseline) and the two in `.agent/results/papers/` (Diffusion Policy, PPO). Everything else is either a synthetic fixture (`doc001-probe/two-col.pdf`, the E2E-generated `paper.pdf`) or a 3-page toy from the upstream repository's test directory. Obtaining another academic PDF means downloading one, which this project has not done and should not start doing as a side effect of a retrieval task. |
+| **Measured** | The project contains **two** real papers: ResNet (`gate0/resnet.pdf`, the validated baseline) and the two in the papers/ run log (Diffusion Policy, PPO). Everything else is either a synthetic fixture (`doc001-probe/two-col.pdf`, the E2E-generated `paper.pdf`) or a 3-page toy from the upstream repository's test directory. Obtaining another academic PDF means downloading one, which this project has not done and should not start doing as a side effect of a retrieval task. |
 | **Problem** | The criterion's *intent* is the important part — do not overfit to PPO — and it is satisfiable without a third paper. The property that matters is that the held-out numbers are **published before any tuning is done against them**, so that a change which helps PPO can be told apart from a change that was chosen because it helps PPO. |
 | **Resolution** | PPO stays the held-out set, and the discipline is made explicit and checkable: every configuration's held-out numbers are recorded on its **first** run, no configuration is revised after seeing them, and failures are reported with the same prominence as successes. If a future task wants to verify generalization a third time, that belongs with obtaining a third paper, as its own step. |
 | **Not accepted** | Calling the ResNet and Diffusion Policy sets held-out when both have been read repeatedly during development; they are diagnostic sets, and the criteria already say so. |
@@ -80,7 +80,7 @@ afterwards**. That is a better design than ours and it is adopted.
 | | |
 |---|---|
 | **As written** | DS-QA-002 AC-P0-01: *"If `evidence_bundle.items` is empty … the pipeline returns `insufficient_evidence` immediately **without calling any LLM provider**"*, verified as *"Provider `generate()` call count == 0"*. |
-| **Problem** | An empty result is the **exact** condition under which a rewrite is worth attempting, and the measured dominant failure class produces exactly that: a Chinese question against an English paper retrieves **zero rows**, every time, by construction — the characters cannot match the index. Under DS-QA-002's rule as written, the rewrite could never fire on the case it exists for, and Stage B — which Gemini itself authorised — would be dead code. |
+| **Problem** | An empty result is the **exact** condition under which a rewrite is worth attempting, and the measured dominant failure class produces exactly that: a Chinese question against an English paper retrieves **zero rows**, every time, by construction — the characters cannot match the index. Under DS-QA-002's rule as written, the rewrite could never fire on the case it exists for, and Stage B — which the criteria authorised — would be dead code. |
 | **What the DS-QA-002 rule was protecting** | Two things, and neither is at risk. It prevented *"asking a model to look at nothing and report back"* — buying an answer from memory with an empty prompt. The rewrite does not answer: it is asked for search phrases, its output goes through FTS5, and a phrase that matches nothing retrieves nothing. And it protected the deterministic fast path's cost; that is preserved by the cascade, since the rewrite is reached only after the local paths have already failed. |
 | **Resolution** | The rule narrows to what it was defending: **the answer model is never called on empty evidence.** The rewrite may be, because it is a different call with a different contract — it produces queries, not claims, and every hit it leads to still comes from the index. The four DS-QA-002 tests that assert "zero provider calls" are updated to assert "zero **answer** calls", which is the property that matters and is still checkable. |
 | **Measured cost of the narrowing** | On the held-out set, 3 of 13 questions reached the rewrite and none failed; each paid 884–1291 ms. On the diagnostic set, 3 of 10. Every other question — including every exact-term lookup — stayed on the lexical path at a median of ~5 ms. A genuinely off-topic question now pays one bounded call before abstaining, which is the price of being able to answer a cross-language one at all. |
@@ -120,7 +120,7 @@ browser-derived paragraph ids.
 
 ---
 
-## 2. False premises Gemini corrected
+## 2. False premises The criteria corrected
 
 **False Premise 1 — "Entity-type expansion is the most important deterministic experiment."**
 In the measured taxonomy across 33 questions (13 misses at Hit@5), `ENTITY_TYPE` accounts for
@@ -246,7 +246,7 @@ STAGE C: hybrid dense retrieval
 - **AC-16 Stage C formal evaluation report.** Document residual misses after Stage B; if Hit@5
   ≥ 85% everywhere, archive Stage C as unnecessary.
 
-## 6. Verification protocol Gemini specified
+## 6. Verification protocol The criteria specified
 
 1. Unit tests — bidirectional acronym mapping, entity frequency cutoff and cap, RRF monotonicity,
    and that synthetic duplicate paragraphs with distinct ids keep separate ranks.

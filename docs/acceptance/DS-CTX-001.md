@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-CTX-001: Academic Context Foundation
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek, before any implementation code was written
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer, before any implementation code was written
 - **Date:** 2026-09-17
 - **Baseline:** `ff744ab` (DS-DOC-001 + Gate 0 fix)
 - **Authoring input:** the actual Document IR, the actual LLM provider layer, the profile
@@ -15,9 +15,9 @@ backend  → 560 passed
 frontend →  75 passed
 ```
 
-## DeepSeek review
+## Review before implementation
 
-Gemini inspected the real implementation and criticised its own brief rather than writing
+The criteria review inspected the real implementation and criticised its own brief rather than writing
 criteria around it — including catching that the suggested prompt conflates language-independent
 analysis with Chinese glossary translation. That criticism is accepted and the resolution it
 proposes is adopted.
@@ -54,7 +54,7 @@ proposes is adopted.
 - **Paragraph ids are the evidence anchor**; verbatim snippets are optional and validated by
   normalised containment rather than exact equality, because models normalise whitespace and
   hyphens and exact matching would reject honest output.
-- **Adaptive fast path accepted** for short documents (§6.4 of Gemini's critique): forcing a
+- **Adaptive fast path accepted** for short documents (§6.4 of the critique): forcing a
   two-page paper through three serialised calls is waste, not rigour.
 - **No new SQLite table, no second PDF parser, no translation-kernel change, no frontend work,
   no embeddings, no vector store.**

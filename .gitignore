@@ -50,3 +50,7 @@ data/
 Thumbs.db
 .idea/
 .vscode/
+
+# The agent workspace: task briefs, raw model output, run logs. Not the product,
+# and it carries local measurement detail that does not belong in a public tree.
+.agent/

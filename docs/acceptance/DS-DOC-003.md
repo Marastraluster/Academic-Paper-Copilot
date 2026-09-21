@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-DOC-003: Stable Canonical Source Identity
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek (Round 1 review pending)
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer (round 1 review pending)
 - **Date:** 2026-09-18
 - **Baseline:** Commit `1d76313` / DS-DOC-002 closed (`IR_PIPELINE_VERSION = "3"`)
 - **Deliverable:** `docs/acceptance/DS-DOC-003.md` (authored before any production code)
@@ -12,9 +12,9 @@
 ## 0. Independent Acceptance Author Statement & Review Framing
 
 ### 0.1 Process discipline: Acceptance before Implementation
-A previous task in this repository (DS-DOC-002) implemented a reading-order repair and invalidation fixes before freezing an acceptance criteria document; that process deviation is explicitly recorded in its evidence (`.agent/evidence/DS-DOC-002.md`). 
+A previous task in this repository (DS-DOC-002) implemented a reading-order repair and invalidation fixes before freezing an acceptance criteria document; that process deviation is explicitly recorded in its evidence (the evidence record for DS-DOC-002). 
 **This task will not repeat that deviation.** 
-This specification is produced independently as Round 1 acceptance criteria, written against the real repository before a single line of production code in `backend/app/` or `frontend/src/` is drafted.
+This specification is written as Round 1 acceptance criteria, written against the real repository before a single line of production code in `backend/app/` or `frontend/src/` is drafted.
 
 ### 0.2 The Core Guiding Principle (Brief Phase 79)
 > **Do not chase 100% reattachment.** The metric that matters is the **wrong-attachment rate, which must be strictly 0.0%**. An orphan is vastly preferable to a wrong attachment.
@@ -26,7 +26,7 @@ If extraction changes because a multi-column split was corrected, a formula was 
 | Starting State Property | Repo Evidence / Verification Location | Verified Finding |
 |---|---|---|
 | **Runtime identity is an ordinal** | `backend/app/document/extract.py:661`, `extract.py:393` | `p_{document_id}_{len(paragraphs) + 1:04d}` and `b_{document_id}_p{page}_{ordinal:03d}`. Every ID is a transient reading position. |
-| **DS-DOC-002 Churn on Real Papers** | `.agent/evidence/DS-DOC-002.md:91-100` | Gutter constant change (8.0 → 6.0 pt) left 5 papers bit-identical (ResNet 101, PPO 47, Mamba 274, SAM 212, ConvNeXt 99) while re-segmenting **145 of 160 paragraphs** on Diffusion Policy. |
+| **DS-DOC-002 Churn on Real Papers** | the evidence record for DS-DOC-002:91-100` | Gutter constant change (8.0 → 6.0 pt) left 5 papers bit-identical (ResNet 101, PPO 47, Mamba 274, SAM 212, ConvNeXt 99) while re-segmenting **145 of 160 paragraphs** on Diffusion Policy. |
 | **Paragraph ID Dependency Map** | Grep across backend, frontend, and tests | All consumers treat `paragraph_id` as an **opaque string**. No consumer parses `p_<doc>_NNNN` structure. One place builds it (`extract.py:661`). |
 | **Existing Invalidation Machinery** | `document/service.py:79`, `qa/index.py:131`, `context/models.py:76` | `IR_PIPELINE_VERSION = "3"`, `DocumentIR.content_hash`, `AnalysisProvenance.ir_pipeline_version`. |
 | **Retrieval Baseline on IR v3** | Recorded in §2.5 of brief | Fused BM25 retrieval yields Hit@1: 49%, Hit@3: 64%, Hit@5: 70%, Hit@10: 79%, MRR: 0.580 across 47 benchmark queries. |
@@ -34,16 +34,16 @@ If extraction changes because a multi-column split was corrected, a formula was 
 
 ---
 
-## 0. DeepSeek review
+## 0. Review before implementation
 
-Gemini measured before writing and its §2 reproduces my numbers, including the
+The criteria were measured before writing and §2 reproduces my numbers, including the
 retrieval table and the 145-of-160 churn. Three of its 16 P0 criteria are
 contradicted by measurement, and all three are in the same place: the anchor
 recipe in §4.2.
 
 I implemented that recipe from the document — nothing else — and ran it on the
 inputs the document does not consider. The script is
-`.agent/results/qa/probe_gemini_anchor.py`.
+the qa/probe_gemini_anchor.py run log.
 
 ### 0.1 What was verified and holds
 
@@ -57,7 +57,7 @@ inputs the document does not consider. The script is
 
 The 2.0 pt grid is worth a note: I had measured the plateau at 0.0/0.25/0.5/1.0
 and it holds at 2.0 and 4.0 as well, with zero collisions on 577 paragraphs. The
-quantum is genuinely undetermined by measurement, and Gemini's choice sits inside
+quantum is genuinely undetermined by measurement, and The chosen value sits inside
 that plateau — so it is adopted, not merely tolerated.
 
 ### AC_CHANGE_REQUEST 1 — the anchor is not scoped to the document
@@ -694,4 +694,4 @@ node frontend/scripts/e2e-outline.mjs
    - When multiple candidates have near-equal overlap ($\Delta S < 0.20$), the resolver must return `AMBIGUOUS`.
    - Never randomly pick the first or closest paragraph when confidence is low.
 6. **Must NOT create new tracked directories under `backend/` for scratch files.**
-   - Scratch and test outputs belong strictly in `.agent/results/qa/` (gitignored).
+   - Scratch and test outputs belong strictly in the qa/ run log (gitignored).

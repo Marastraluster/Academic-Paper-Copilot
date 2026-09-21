@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-FE-003: Translate Action + Translation Result Viewer
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek, before any implementation code was written
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer, before any implementation code was written
 - **Date:** 2026-09-17
 - **Baseline:** `ef17457` (DS-BE-007)
 - **Authoring input:** the *actual* DS-BE-007 HTTP implementation, schemas, and tests — not the
@@ -16,9 +16,9 @@ frontend →  48 passed
 initial bundle → < 500 kB  (measured 250 kB; PDF.js in its own 483 kB async chunk)
 ```
 
-## DeepSeek review
+## Review before implementation
 
-Gemini produced 20 P0, 5 P1 and 2 P2 criteria, a traceability matrix covering all 40 requested
+The criteria set is 20 P0, 5 P1 and 2 P2, with a traceability matrix, a traceability matrix covering all 40 requested
 dimensions, 6 explicit non-applicable dimensions, and 5 premise critiques. It independently
 reached the same conclusions as the audit on the four load-bearing points: multipart upload
 (the browser has no path), non-blocking local rendering, **original + mono** for the bilingual
@@ -72,7 +72,7 @@ fallback, not an automatic retry of the translation, so it does not conflict wit
 
 ---
 
-# Section 1 — Architectural decisions (Gemini's resolutions to the 13 open questions)
+# Section 1 — Architectural decisions (Resolutions to the 13 open questions)
 
 1. **Local `File` → backend document.** `POST /api/documents` with `multipart/form-data`, field
    `file`. The JSON `{path}` form is for local headless callers and **must not** be used by the

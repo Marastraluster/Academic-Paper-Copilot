@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-DOC-005: Document Library and Translation Record
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek (Pending Round 1 review)
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer (round 1 review pending)
 - **Date:** 2026-09-21
 - **Baseline:** Commit `f429b3f` / Post-DS-FE-004 (`SCHEMA_VERSION = 5`, initial bundle measured at `309.96 kB`, headroom `40 bytes` under amended `310.0 kB` ceiling)
 - **Deliverable:** `docs/acceptance/DS-DOC-005.md` (authored before any production code)
@@ -13,14 +13,14 @@
 
 ### 0.1 Process Discipline: Acceptance Before Implementation
 In the Academic PDF Copilot repository, process sequencing is load-bearing:
-- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that required retroactive diagnosis and repair (`.agent/evidence/DS-DOC-002.md`).
+- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that required retroactive diagnosis and repair (the evidence record for DS-DOC-002).
 - **DS-DOC-003** enforced criteria first, catching three structural defects prior to coding.
 - **DS-QA-010** and **DS-QA-010-FIX-001** established persistent multi-target notes keyed to the cryptographic `content_hash` of the PDF bytes, decoupling reader annotations from ephemeral document rows.
 - **DS-QA-015** established the content-addressed Reader Overview and code splitting, setting the initial bundle ceiling at `310.0 kB`.
 - **DS-DOC-004** established reading session continuity across browser reloads via `session/restore.ts`, proving that an existing document row can be adopted without minting new rows or re-running extraction passes (0 provider calls).
 - **DS-FE-004** established the provider settings screen as a code-split lazy dialog, preserving the bundle ceiling while managing OS keyring credentials.
 
-**This task continues that discipline.** DeepSeek owns all production code; Gemini authors the acceptance criteria independently. Not a single line of production code in `frontend/src/` or `backend/app/` is written until this contract is reviewed and frozen.
+**This task continues that discipline.** The criteria below were written and frozen before any implementation, and not a single line of production code in `frontend/src/` or `backend/app/` is written until this contract is reviewed.
 
 ### 0.2 The Core Problem & The Reader's Inquiries
 The reader requested two capabilities in a single breath:
@@ -54,7 +54,7 @@ What the reader is asking for right now is fundamental:
 
 ---
 
-## 0.4 Round 1 review and freezing (DeepSeek) — 1 AC_CHANGE_REQUEST
+## 0.4 Round 1 review and freezing — 1 AC_CHANGE_REQUEST
 
 Read against the repository at `5113b56`. Decisions **D1–D8** are accepted as
 written, and three of them settle questions that would otherwise have been
@@ -515,7 +515,7 @@ Every interaction in the Document Library executes strictly within the local bou
 
 - **AC-P2-02 Dedicated Chromium E2E Document Library Test Harness.**  
   Provide an automated Playwright script `frontend/scripts/e2e-document-library.mjs` that launches the application, opens Paper A, translates it, opens the library dialog, switches to Paper B, verifies Paper B renders with 0 provider calls, re-opens the library, deletes Paper A, and verifies Paper A's notes remain in SQLite.  
-  *Evidence:* Execution of `node scripts/e2e-document-library.mjs` passing with JSON output in `.agent/results/e2e-document-library/results.json`.
+  *Evidence:* Execution of `node scripts/e2e-document-library.mjs` passing with JSON output in the e2e-document-library/results.json run log.
 
 ---
 

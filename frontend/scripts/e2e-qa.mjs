@@ -1,7 +1,7 @@
 /**
  * DS-QA-003 real-browser end-to-end verification.
  *
- * Drives the actual application — built bundle, real backend, **real DeepSeek
+ * Drives the actual application — built bundle, real backend, **real provider
  * provider** — through the loop this milestone exists to close:
  *
  *   open PDF → choose scope → ask → read a grounded answer → click a citation

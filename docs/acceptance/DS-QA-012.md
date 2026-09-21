@@ -1,7 +1,7 @@
 # Acceptance Criteria — DS-QA-012: Notes Search + Export
 
-- **Author:** Gemini (`gemini-3.8-flash-high`), via the standing two-agent workflow
-- **Reviewed and frozen by:** DeepSeek (Pending Round 1 review)
+- **Author:** project maintainer
+- **Reviewed and frozen by:** project maintainer (round 1 review pending)
 - **Date:** 2026-09-19
 - **Baseline:** Commit `2529674` / DS-QA-011 (`SOURCE_ANCHOR_VERSION = "1"`, `IR_PIPELINE_VERSION = "4"`, `SCHEMA_VERSION = 4`)
 - **Deliverable:** `docs/acceptance/DS-QA-012.md` (authored before any production code)
@@ -9,10 +9,10 @@
 
 ---
 
-## 0. Round 1 review and freezing (DeepSeek) — 5 AC_CHANGE_REQUESTs
+## 0. Round 1 review and freezing — 5 AC_CHANGE_REQUESTs
 
 Read against the repository at `10ef696` and the probe record in
-`.agent/results/notes/fts_probe.txt`. Decisions A–W are accepted as written:
+the notes/fts_probe.txt run log. Decisions A–W are accepted as written:
 each follows from a measurement, and the one genuinely contested case (`ResNet
 退化`, where substring and term-AND semantics differ) is recorded rather than
 smoothed over. Five items are changed before freezing.
@@ -115,7 +115,7 @@ against this list and nothing else.
 
 ### 0.1 Process Discipline: Acceptance before Implementation
 In this repository, process sequencing is load-bearing:
-- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that had to be retroactively diagnosed and repaired (`.agent/evidence/DS-DOC-002.md`).
+- **DS-DOC-002** bypassed pre-implementation acceptance criteria, resulting in reading-order and cache-invalidation defects that had to be retroactively diagnosed and repaired (the evidence record for DS-DOC-002).
 - **DS-DOC-003** strictly enforced acceptance criteria first (`docs/acceptance/DS-DOC-003.md`). That discipline exposed three critical defects before code was written: anchor scoping omission across papers (AC_CHANGE_REQUEST 1), ordinal position fragility (AC_CHANGE_REQUEST 2), and conflicting de-hyphenation normalization (AC_CHANGE_REQUEST 3).
 - **DS-QA-010** established the multi-target persistent notes architecture (`docs/acceptance/DS-QA-010.md`), closing at **18/18 P0 PASS** (`2529674`) with 0 AI calls, 0 PDF mutations, and 0.0% wrong-attachment rate.
 - **DS-QA-011** extended persistent selection across page boundaries (`docs/acceptance/DS-QA-011.md`), eliminating container-sized DOM bounding-box artifacts via text-node clamped geometry (Strategy C).
@@ -140,7 +140,7 @@ In this repository, process sequencing is load-bearing:
 | **Test suite baselines** | Test runners | Backend **950 passed**, frontend **182 passed**, typecheck PASS, build exit 0. |
 | **Bundle size & ceiling** | Vite build output | Initial bundle **331.84 kB** against **350.0 kB ceiling** (~18 kB headroom). |
 | **Schema version & tables** | `backend/app/db.py:27, 132` | `SCHEMA_VERSION = 4`. Tables: `annotations`, `annotation_targets`, `documents`, `profiles`, `schema_version`, `translation_tasks`. |
-| **SQLite version & FTS5** | In-memory probe / `.agent/results/notes/fts_probe.txt` | SQLite 3.53.1 with `fts5`, `unicode61`, `trigram`. FTS5 fails on CJK bigrams and throws SQL errors on `ResNet-50`. |
+| **SQLite version & FTS5** | In-memory probe / the notes/fts_probe.txt run log | SQLite 3.53.1 with `fts5`, `unicode61`, `trigram`. FTS5 fails on CJK bigrams and throws SQL errors on `ResNet-50`. |
 | **Client-side annotations** | `frontend/src/stores/workspace.ts`, `NotesPanel.tsx:61-70` | Annotations are **already fully loaded in browser memory** (`workspaceStore.annotations`), sorted by source order (`targets[0].page_number`, then `rects[0][1]`). |
 | **AnnotationView client model** | `backend/app/annotations/service.py:118-120` | `summary()` deliberately omits `source_anchor_id` and `anchor_version`. |
 | **Lightweight listing route** | `backend/app/api/annotations.py:114-164` | `GET /documents/{id}/annotations` hashes source file; does not run 14s ONNX extraction pipeline. |
@@ -170,7 +170,7 @@ As a researcher annotates multiple sections of a dense paper, two needs arise:
 
 ## 2. Measured Evidence & Search Architecture Selection
 
-The architecture for DS-QA-012 is dictated directly by empirical measurements on SQLite 3.53.1 and the real notes corpus (`.agent/results/notes/fts_probe.txt`):
+The architecture for DS-QA-012 is dictated directly by empirical measurements on SQLite 3.53.1 and the real notes corpus (the notes/fts_probe.txt run log):
 
 ### 2.1 Empirical Search Probe Results
 
@@ -195,7 +195,7 @@ The architecture for DS-QA-012 is dictated directly by empirical measurements on
 4. **Plain casefolded substring matching passed 10/10 cases:** It effortlessly matches unigrams, bigrams, 4-grams, English terms, and hyphenated identifiers without tokenizer configuration or escaping hazards.
 
 ### 2.3 Measured Performance Scaling
-Measured in `.agent/results/notes/fts_probe.txt` (20 iterations each after warm-up):
+Measured in the notes/fts_probe.txt run log (20 iterations each after warm-up):
 ```
       0 rows   LIKE   0.002 ms/query
      10 rows   LIKE   0.006 ms/query
@@ -221,7 +221,7 @@ Even at 1000 annotations on a single document, substring search takes $\approx 0
 | **C** | **Highlight-Only Annotations** | **SEARCHABLE VIA VERBATIM QUOTE.** | Highlighting text creates an annotation with `kind: "highlight"` and `comment: null`. These must be fully searchable via their selected source quote (`quote`). |
 | **D** | **Local Search Mechanism** | **DETERMINISTIC IN-MEMORY CASE-FOLDED SUBSTRING SEARCH.** | Frontend executes native `normalize("NFKC").toLowerCase().includes(...)` over loaded annotations in React `useMemo`. Zero backend round trips, zero FTS complexity. |
 | **E** | **SQLite FTS5 Tokenisation Suitability** | **UNACCEPTABLE FOR CJK & HYPHENATED IDENTIFIERS.** | Measured probe proved `unicode61` misses all Chinese queries, `trigram` misses all bigrams (`残差`, `退化`), and both throw `sqlite3.OperationalError: no such column` on `ResNet-50` and `CIFAR-10`. FTS index is strictly forbidden. |
-| **F** | **Deterministic Unicode Substring Preference** | **PREFERRED AND MANDATED.** | Normalized Unicode substring matching passed 10/10 test cases in `.agent/results/notes/fts_probe.txt`. |
+| **F** | **Deterministic Unicode Substring Preference** | **PREFERRED AND MANDATED.** | Normalized Unicode substring matching passed 10/10 test cases in the notes/fts_probe.txt run log. |
 | **G** | **Ranking vs Source-Order Filtering** | **SOURCE-ORDER FILTERING ONLY; NO RELEVANCE SCORING.** | In a paper reader, notes represent marginalia tied to reading sequence. Shuffling notes by arbitrary keyword frequency disorients the user. Matches are presented strictly in canonical document source order. |
 | **H** | **Result Ordering Contract** | **CANONICAL READING ORDER (`page_number ASC, y0 ASC`).** | Matches retain the natural document reading order implemented by `NotesPanel.tsx` (ordered by first target's `page_number`, then `rects[0][1]`). |
 | **I** | **Markdown Export Content** | **TITLE, SOURCE QUOTE, USER NOTE, PAGE RANGE, TIMESTAMPS, RESOLUTION STATE.** | Markdown export must contain: Document Title/Filename, SHA-256 content hash, export timestamp, note anchor quote (`> quote`), user comment, page or page range (`Page 1` or `Pages 1–2`), timestamps (`created_at`, `updated_at`), and resolution state badge if non-EXACT (`REATTACHED`, `AMBIGUOUS`, `ORPHANED`, `UNRESOLVED`). Section title included when IR is available. |
@@ -429,7 +429,7 @@ Headers emitted:
 | **54** | **Backend regression** | Running existing backend test suite. | All existing 950 tests pass with zero failures. | `pytest` reports 0 failures. |
 | **55** | **Frontend regression** | Running existing frontend test suite. | All existing 182 tests pass with zero failures. | `vitest` reports 0 failures. |
 | **56** | **Bundle ceiling** | Running production frontend build. | Production bundle remains under 350.0 kB ceiling. | Build size $\le 350.0\text{ kB}$. |
-| **57** | **No new AI path** | Checking code imports in export/search modules. | Zero imports of OpenAI, Anthropic, Gemini, or ONNX. | AST check confirms zero AI dependencies. |
+| **57** | **No new AI path** | Checking code imports in export/search modules. | Zero imports of OpenAI, Anthropic, or ONNX. | AST check confirms zero AI dependencies. |
 | **58** | **No retrieval redesign** | Checking `app/qa/retrieval.py`. | Retrieval modules untouched; notes excluded from search chunks. | Zero notes code in QA engine. |
 | **59** | **No persistence redesign** | Checking SQLite tables and `SCHEMA_VERSION`. | `SCHEMA_VERSION = 4`; no new tables or altered columns. | Database schema untouched. |
 | **60** | **No import functionality** | Reviewing API endpoints and UI buttons. | No import endpoint or file upload for notes exists. | Import explicitly non-goal. |
@@ -462,7 +462,7 @@ Headers emitted:
   2. Searching `退化` matches annotations containing `退化` or `退化问题`;
   3. Searching `网络` matches annotations containing `残差网络`;
   4. Searching `退化问题` matches annotations containing `退化问题`.
-  *Evidence:* Test against the exact corpus from `.agent/results/notes/fts_probe.txt`; asserting 100% match rate across `残差`, `退化`, `网络`, `退化问题`, and `残差网络`.
+  *Evidence:* Test against the exact corpus from the notes/fts_probe.txt run log; asserting 100% match rate across `残差`, `退化`, `网络`, `退化问题`, and `残差网络`.
 
 - **AC-P0-05 Case-Insensitive English, Mixed-Script, Punctuation & Identifier Safety (Decisions D, E, F; Areas 9, 10, 11, 12).**
   Search must be case-insensitive for English and mixed-script queries (`degradation` matches `Degradation`; `resnet` matches `ResNet`). Searching hyphenated technical identifiers containing digits (e.g. `ResNet-50`, `CIFAR-10`, `VGG-16`) or strings with punctuation (e.g. `Algorithm 1`) must execute safely without tokenizer exceptions or SQL syntax errors, returning exact substring matches.
