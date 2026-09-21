@@ -401,6 +401,19 @@ describe("DS-QA-015 · reading the cache", () => {
     expect(screen.getByTestId("overview-abstract")).toHaveTextContent(ABSTRACT);
     expect(calls.filter((call) => call.startsWith("POST"))).toEqual([]);
   });
+
+  it("treats 'nothing generated yet' as an answer, not as a failed read", async () => {
+    /* Found by running the application: the route's 404 is the designed answer
+       for a paper with no overview, but the client raised on it like any other
+       error, so the panel told the reader there was no overview *and*, one line
+       above the button, that reading the existing one had not worked. */
+    backend({ overview: null });
+    openOverview();
+    await screen.findByTestId("overview-not-generated");
+
+    expect(screen.queryByTestId("overview-error")).toBeNull();
+    expect(screen.getByTestId("overview-generate")).toBeInTheDocument();
+  });
 });
 
 describe("DS-QA-015 · generating", () => {

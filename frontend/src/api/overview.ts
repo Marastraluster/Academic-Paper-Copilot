@@ -16,7 +16,7 @@
  *
  * The only thing that may call the second is a button.
  */
-import { apiFetch, apiJson } from "@/api/client";
+import { apiFetch, apiJson, isApiError } from "@/api/client";
 
 export type OverviewStatus = "READY" | "PARTIAL" | "FAILED";
 
@@ -86,16 +86,26 @@ export async function fetchOverview(
   targetLanguage: string,
   { signal }: { signal?: AbortSignal } = {},
 ): Promise<OverviewView | null> {
-  const response = await apiFetch(
-    `/api/documents/${encodeURIComponent(documentId)}/overview` +
-      `?target_language=${encodeURIComponent(targetLanguage)}`,
-    { signal },
-  );
-  // The route answers 404 when no artifact exists, which is an answer rather
-  // than a failure: the reader is shown the deterministic entry and a button.
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`overview read failed: ${response.status}`);
-  return (await response.json()) as OverviewView;
+  try {
+    const response = await apiFetch(
+      `/api/documents/${encodeURIComponent(documentId)}/overview` +
+        `?target_language=${encodeURIComponent(targetLanguage)}`,
+      { signal },
+    );
+    return (await response.json()) as OverviewView;
+  } catch (error) {
+    /* The route answers 404 when no artifact exists, which is an answer rather
+       than a failure: the reader is shown the deterministic entry and a button.
+
+       It has to be recognised here rather than from a response, because
+       `apiFetch` raises on every non-ok status — a check on the response below
+       it would never run, and "nothing has been generated yet" would reach the
+       panel as the read *failing*. It did, for every paper that had no overview:
+       the panel said there was none and, one line above the button, that reading
+       the existing one had not worked. */
+    if (isApiError(error) && error.status === 404) return null;
+    throw error;
+  }
 }
 
 /**
