@@ -30,9 +30,11 @@ const workDir = join(repoRoot, ".agent", "results", "e2e-nonprose");
 const BACKEND_PORT = 8000;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 
-const PAPER = process.argv[2] ?? join(
-  repoRoot, ".agent", "results", "e2e-notes", "documents",
-  "doc_5e6aaca5ea5d4109b4f3a33a75df043d", "source.pdf",
+/* The argument, then `E2E_PAPER`, then the checked-in fixture. It used to
+   borrow another suite's working copy, which that suite deletes on its next
+   run — so this harness failed whenever the notes suite had been run first. */
+const PAPER = process.argv[2] ?? process.env.E2E_PAPER ?? join(
+  repoRoot, ".agent", "results", "fixtures", "resnet.pdf",
 );
 const LABEL = process.env.E2E_LABEL ?? "resnet";
 

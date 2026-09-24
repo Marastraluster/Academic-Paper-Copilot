@@ -88,8 +88,18 @@ function prepareWorkdir() {
     if (existsSync(from)) copyFileSync(from, join(workDir, `db.sqlite3${suffix}`));
   }
 
-  const paper = join(realDataDir, "documents", BASELINE_DOCUMENT, "source.pdf");
-  if (!existsSync(paper)) throw new Error(`ResNet source not found at ${paper}`);
+  /* The paper the suite drives. `E2E_PAPER` first — the same hook the notes and
+     outline suites use — then the developer's own registered copy, and finally
+     the checked-in fixture. The first version read only the developer's data
+     directory, so deleting that document from their library broke the suite with
+     a path error rather than with a finding. */
+  const candidates = [
+    process.env.E2E_PAPER,
+    join(realDataDir, "documents", BASELINE_DOCUMENT, "source.pdf"),
+    join(repoRoot, ".agent", "results", "fixtures", "resnet.pdf"),
+  ].filter(Boolean);
+  const paper = candidates.find((candidate) => existsSync(candidate));
+  if (!paper) throw new Error(`no ResNet source found; tried ${candidates.join(", ")}`);
   const target = join(workDir, "resnet.pdf");
   copyFileSync(paper, target);
   return target;

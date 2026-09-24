@@ -4,13 +4,16 @@ import type { Bbox, DocumentIr } from "@/api/ir";
 import type { ProviderProfile } from "@/api/profiles";
 import type { AnnotationView } from "@/api/annotations";
 import type { AnswerDiagnostics } from "@/api/qa";
+import type { BilingualPlan, BilingualView } from "@/api/bilingual";
 import type { OverviewView } from "@/api/overview";
 import type { Citation } from "@/qa/parse";
 import type { MappingStatus, SelectionMapping } from "@/qa/selection";
 import type { UserFacingError } from "@/translation/errors";
 
-/** AC-04: the three reader modes. */
-export type ReaderMode = "original" | "bilingual" | "translation";
+/** AC-04: the reader modes — the original, two PDF views of a translation, and
+ *  the paragraph-aligned column (DS-DOC-006). */
+
+export type ReaderMode = "original" | "bilingual" | "translation" | "immersive";
 
 /** The tabs the reader-side panel can show. */
 export type SidebarPanel = "overview" | "outline" | "qa" | "notes";
@@ -399,6 +402,19 @@ interface WorkspaceState {
   /** When generation started, so elapsed time is real rather than simulated. */
   overviewStartedAt: number | null;
 
+  /* ---- The paragraph-aligned reading (DS-DOC-006) ----
+     The artifact is the paper's paragraphs with their translations; the status
+     machine is the overview's, because the two behave the same way: a read on
+     open, a generation only on a button, and a race guard that re-checks the
+     document after every await. */
+  bilingual: BilingualView | null;
+  /** What making one would cost, from the read that found none. */
+  bilingualPlan: BilingualPlan | null;
+  bilingualFor: string | null;
+  bilingualStatus: "idle" | "loading" | "generating" | "ready" | "failed";
+  bilingualError: string | null;
+  bilingualStartedAt: number | null;
+
   // ---- Sidebar (AC-05) ----
   sidebarOpen: boolean;
   toggleSidebar: () => void;
@@ -603,6 +619,12 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   overviewStatus: "idle",
   overviewError: null,
   overviewStartedAt: null,
+  bilingual: null,
+  bilingualPlan: null,
+  bilingualFor: null,
+  bilingualStatus: "idle",
+  bilingualError: null,
+  bilingualStartedAt: null,
 
   // AC-05: expanded by default.
   sidebarOpen: true,
@@ -693,7 +715,13 @@ export function selectHasTranslation(
 export function selectEffectiveMode(
   state: Pick<WorkspaceState, "document" | "translation" | "readerMode">,
 ): ReaderMode {
-  if (state.readerMode === "original") return "original";
+  // `immersive` is the paragraph-aligned reading, which needs no translated PDF:
+  // what it needs is a document, and the mode is selectable exactly when one is
+  // open (DS-DOC-006 D4). Falling back here would swallow it for every reader who
+  // has not also translated the paper.
+  if (state.readerMode === "original" || state.readerMode === "immersive") {
+    return state.readerMode;
+  }
   return selectHasTranslation(state) ? state.readerMode : "original";
 }
 

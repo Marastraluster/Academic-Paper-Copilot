@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { Suspense, lazy, useMemo } from "react";
 import { Languages } from "lucide-react";
 
 import { PdfWorkspace, type PdfSource } from "@/pdf/PdfWorkspace";
@@ -11,6 +11,16 @@ import {
 import { openDocument, noteTranslatedPageCount } from "@/translation/session";
 import { useActiveSection } from "@/outline/useActiveSection";
 import { TranslationNotice } from "@/translation/TranslationNotice";
+
+/**
+ * The paragraph-aligned column loads when the reader asks for it.
+ *
+ * It is the whole paper in two languages — a hundred-odd paragraphs of pairs —
+ * and it is one of four modes, so a reader who never opens it should not carry
+ * it. The initial chunk has less than a kilobyte of headroom under its ceiling,
+ * which is the other half of the reason.
+ */
+const ImmersiveReader = lazy(() => import("@/bilingual/ImmersiveReader"));
 
 /**
  * AC-04 — the workspace reconfigures between one and two panels as the reader
@@ -98,6 +108,17 @@ export function ReaderWorkspace() {
       <TranslationNotice />
       <JumpNotice />
 
+      {mode === "immersive" ? (
+        <Suspense
+          fallback={
+            <p data-testid="assistant-panel-loading" className="p-3 text-xs text-muted-foreground">
+              正在载入…
+            </p>
+          }
+        >
+          <ImmersiveReader />
+        </Suspense>
+      ) : (
       <div className="flex min-h-0 min-w-0 flex-1 gap-2">
         {showOriginal && (
           <PdfWorkspace
@@ -126,6 +147,7 @@ export function ReaderWorkspace() {
           />
         )}
       </div>
+      )}
     </main>
   );
 }

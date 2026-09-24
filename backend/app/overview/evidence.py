@@ -142,13 +142,18 @@ def classify_section(section: SectionIR) -> str:
     return _ROLE_SUBSTANTIVE
 
 
-def _is_front_matter_paragraph(
+def is_front_matter_paragraph(
     paragraph: ParagraphIR,
     index: int,
     abstract_pages: set[int],
     first_abstract_index: int | None,
 ) -> bool:
     """Is this unsectioned paragraph the paper's stationery?
+
+    Public because it is not only this packet's rule: the paragraph-level reading
+    column (DS-DOC-006) must not translate an author list either, and two
+    definitions of "front matter" would drift apart at the first paper that
+    sits differently on its first page.
 
     Measured: a real extraction produces with no `section_id` the arXiv stamp,
     the author list, the affiliations, and the abstract itself — all on page 1.
@@ -218,7 +223,7 @@ def build_evidence_packet(
     unsectioned_title = "Body"
     positions = {id(paragraph): index for index, paragraph in enumerate(ir.paragraphs)}
     for paragraph in unsectioned:
-        if _is_front_matter_paragraph(
+        if is_front_matter_paragraph(
             paragraph, positions.get(id(paragraph), 0), abstract_pages, first_abstract
         ):
             continue

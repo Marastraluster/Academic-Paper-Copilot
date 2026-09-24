@@ -16,8 +16,13 @@ import { App } from "@/app/App";
  */
 export async function renderApp() {
   const result = render(<App />);
-  await waitFor(() =>
-    expect(screen.queryByTestId("assistant-panel-loading")).toBeNull(),
+  // A five-second budget, not the one-second default: the suites run in parallel
+  // and a dynamic import that takes 40 ms alone can take longer than a second
+  // when six files are compiling at once. The wait is for a chunk to arrive, and
+  // a flaky timeout there reads as a product failure that is not one.
+  await waitFor(
+    () => expect(screen.queryByTestId("assistant-panel-loading")).toBeNull(),
+    { timeout: 5_000 },
   );
   return result;
 }

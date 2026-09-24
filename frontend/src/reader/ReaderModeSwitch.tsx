@@ -6,13 +6,18 @@ import {
   type ReaderMode,
 } from "@/stores/workspace";
 
-/** AC-03: exactly these three labels, in this order. */
+/** AC-03's three labels, plus the paragraph-aligned column (DS-DOC-006). */
 const MODES: ReadonlyArray<{ value: ReaderMode; label: string; title: string }> =
   [
     { value: "original", label: "原文", title: "只显示原文" },
     { value: "bilingual", label: "双语", title: "原文与译文左右对照" },
     { value: "translation", label: "译文", title: "只显示译文" },
+    { value: "immersive", label: "逐段", title: "原文一段、译文一段，逐段对照" },
   ];
+
+/** The modes that need a translated PDF. `immersive` needs none: it is its own
+ *  reading, generated from the paper's paragraphs. */
+const NEEDS_A_PDF_TRANSLATION = new Set<ReaderMode>(["bilingual", "translation"]);
 
 const NEEDS_TRANSLATION = "需要先完成一次翻译";
 
@@ -38,7 +43,7 @@ export function ReaderModeSwitch() {
       className="inline-flex shrink-0 items-center gap-0.5 rounded-md border bg-muted/60 p-0.5"
     >
       {MODES.map(({ value, label, title }) => {
-        const locked = value !== "original" && !hasTranslation;
+        const locked = NEEDS_A_PDF_TRANSLATION.has(value) && !hasTranslation;
         const active = effectiveMode === value;
         return (
           <button

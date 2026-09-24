@@ -69,7 +69,16 @@ function startBackend(corsPort, database, documentsDir) {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  child.stderr.on("data", () => {});
+  child.stderr.on("data", (chunk) => {
+    const text = String(chunk);
+    console.error("    [backend-err]", text.trim().slice(0, 300));
+  });
+  // The access log is the only place that says whether a request *arrived*.
+  child.stdout.on("data", (chunk) => {
+    for (const line of String(chunk).split(String.fromCharCode(10))) {
+      if (line.includes("POST /api/documents")) console.error("    [backend-http]", line.trim().slice(0, 160));
+    }
+  });
   return child;
 }
 
@@ -105,6 +114,14 @@ function uploadedDocumentId() {
   return entries.sort().reverse()[0];
 }
 
+/** What the page asked the backend for. A module-level probe so the failure
+ *  path inside `openNotes` can print it — a diagnostic that cannot see the
+ *  traffic is a diagnostic that guesses. */
+const traffic = [];
+function trailer() {
+  return traffic;
+}
+
 /** The rows the panel is showing, in order. */
 const ROWS = () =>
   [...document.querySelectorAll('li[data-testid^="note-"]')].map(
@@ -116,7 +133,26 @@ async function openNotes(page) {
     { timeout: 30000 },
   );
   if (await page.locator('[data-testid="notes-empty-state"]').count() > 0) {
-    throw new Error("the document is not ready");
+    // Say what the panel actually says: "not ready" covers three different
+    // states, and the next reader of this log should not have to guess which.
+    const state = await page.evaluate(() => {
+      const panel = document.querySelector('[data-testid="notes-empty-state"]');
+      const name = document.querySelector('[data-testid="document-name"]')?.textContent;
+      const engine = document.querySelector('[data-testid="engine-status"]')?.textContent;
+      const mode = document.querySelector('[data-testid="reader-workspace"]')?.getAttribute("data-reader-mode");
+      const viewer = document.querySelectorAll('[data-testid="pdf-page-container"]').length;
+      return `${name} :: engine=${engine} mode=${mode} pages=${viewer} :: ${
+        panel ? panel.textContent?.slice(0, 60) : "(no panel)"}`;
+    });
+    console.error("traffic:", traffic.slice(-24).join(" | "));
+    // Is the backend even answering? A loop blocked by one synchronous handler
+    // looks exactly like a page that stopped asking.
+    const health = await Promise.race([
+      fetch(`${BACKEND_URL}/api/health`).then((r) => `health ${r.status}`),
+      new Promise((done) => setTimeout(() => done("health TIMED OUT"), 5000)),
+    ]).catch((error) => `health threw ${error}`);
+    console.error("backend:", health);
+    throw new Error(`the document is not ready — ${state}`);
   }
   await page.waitForSelector('[data-testid="notes-panel"]', { timeout: 30000 });
 }
@@ -177,6 +213,14 @@ page.on("console", (m) => {
 
   const annotations = async (documentId) =>
     (await fetch(`${BACKEND_URL}/api/documents/${documentId}/annotations`)).json();
+
+  trailer();
+  page.on("request", (request) => {
+    if (request.url().includes("/api/documents")) traffic.push(`-> ${request.method()} ${request.url().split("/api")[1]}`);
+  });
+  page.on("response", (response) => {
+    if (response.url().includes("/api/documents")) traffic.push(`<- ${response.status()} ${response.url().split("/api")[1]}`);
+  });
 
   try {
     await page.goto(PREVIEW_URL, { waitUntil: "domcontentloaded" });
