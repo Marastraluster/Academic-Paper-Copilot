@@ -57,6 +57,16 @@ export interface IrBlock {
   bbox: Bbox;
   text: string;
   /**
+   * The size the paper set this block in, in points.
+   *
+   * Read by the in-place bilingual reading, and only there: it sets each
+   * translation at the size of the paragraph it follows, so the unrolled page
+   * keeps the paper's own typographic hierarchy instead of one size throughout.
+   * Optional because the extractor is not obliged to state it, and a missing one
+   * means "the default", not "zero".
+   */
+  font_size?: number | null;
+  /**
    * **Persistent** identity, for the classes a reader may annotate.
    *
    * Empty on every other class, and that is the honest value: being present in

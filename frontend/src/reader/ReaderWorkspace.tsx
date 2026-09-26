@@ -13,14 +13,13 @@ import { useActiveSection } from "@/outline/useActiveSection";
 import { TranslationNotice } from "@/translation/TranslationNotice";
 
 /**
- * The paragraph-aligned column loads when the reader asks for it.
+ * The unrolled page loads when the reader asks for it.
  *
- * It is the whole paper in two languages — a hundred-odd paragraphs of pairs —
- * and it is one of four modes, so a reader who never opens it should not carry
- * it. The initial chunk has less than a kilobyte of headroom under its ceiling,
- * which is the other half of the reason.
+ * It draws the paper's own pixels region by region and inserts a translation
+ * under every paragraph, so it is one of four modes and the whole of it belongs
+ * in its own chunk: the initial download has under a kilobyte of headroom.
  */
-const ImmersiveReader = lazy(() => import("@/bilingual/ImmersiveReader"));
+const InPageBilingualReader = lazy(() => import("@/bilingual/InPageBilingualReader"));
 
 /**
  * AC-04 — the workspace reconfigures between one and two panels as the reader
@@ -116,7 +115,22 @@ export function ReaderWorkspace() {
             </p>
           }
         >
-          <ImmersiveReader />
+          {/* The page surface is handed to the pane that already loaded the
+              PDF, so the unrolled view shares its document, its zoom and its
+              toolbar instead of parsing the same file a second time. */}
+          <PdfWorkspace
+            testId="viewer-immersive"
+            label="逐段对照"
+            source={originalSource}
+            onFileChosen={openDocument}
+            onCurrentPageChange={setActivePage}
+            // An outline click is a position in the *paper*, and the unrolled
+            // page is taller than the paper is — so the surface resolves the
+            // position to the region that contains it rather than to a page
+            // offset. Without this the outline would do nothing in 逐段 mode.
+            jump={jumpRequest}
+            pageView={InPageBilingualReader}
+          />
         </Suspense>
       ) : (
       <div className="flex min-h-0 min-w-0 flex-1 gap-2">

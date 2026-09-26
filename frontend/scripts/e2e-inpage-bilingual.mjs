@@ -1,5 +1,13 @@
 /**
- * DS-DOC-006 — the paragraph-aligned column, in a real browser.
+ * DS-DOC-007 — the unrolled page, in a real browser.
+ *
+ * The view this replaces was a column of extracted text; this one draws the
+ * paper's own pixels, region by region, and inserts each translation under the
+ * paragraph it belongs to. So the checks here are about what is on the screen:
+ * that every region is a canvas with pixels in it, that the paper's own words
+ * are never re-typeset as HTML, that a translation can be selected and copied
+ * without the chrome coming with it, that zoom scales the inserted text along
+ * with the page, and that the reader's place survives the pages settling.
  *
  * What this exists for is what a component test cannot reach: a **real drag**
  * producing a real selection (the clipboard half of AC-P0-19), the jump that puts
@@ -30,7 +38,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 const backendDir = join(repoRoot, "backend");
 const python = join(backendDir, ".venv", "Scripts", "python.exe");
-const workDir = join(repoRoot, ".agent", "results", "e2e-bilingual-reading");
+const workDir = join(repoRoot, ".agent", "results", "e2e-inpage-bilingual");
 const BACKEND_PORT = 8000;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 const PAPER = join(repoRoot, ".agent", "results", "e2e-qa", "resnet.pdf");
@@ -164,6 +172,9 @@ function freePort() {
 
 const ledger = async () => (await fetch(`${BACKEND_URL}/api/_debug/provider-ledger`)).json();
 
+/** The document the page has open, as the backend knows it. */
+let documentId = "";
+
 async function main() {
   prepare();
   const stubPort = await freePort();
@@ -206,6 +217,11 @@ async function main() {
     if (m.type() !== "error") return;
     consoleErrors.push(`${m.text()} :: ${m.location()?.url ?? ""}`);
   });
+  // An exception thrown in a React effect never reaches the console handler as a
+  // message this repository's filters can classify, so it is collected apart.
+  page.on("pageerror", (error) => {
+    consoleErrors.push(`UNCAUGHT ${error.message}`);
+  });
 
   try {
     await page.goto(PREVIEW_URL, { waitUntil: "domcontentloaded" });
@@ -242,10 +258,55 @@ async function main() {
       JSON.stringify(beforeGenerate));
 
     // --- 2. the reader asks ------------------------------------------------
+    documentId = await page.evaluate(async () => {
+      const response = await fetch("http://127.0.0.1:8000/api/documents");
+      const documents = await response.json();
+      return documents[0]?.document_id ?? "";
+    });
     await page.click('[data-testid="bilingual-generate-btn"]');
-    await page.waitForSelector('[data-testid="bilingual-pair"]', { timeout: 300000 });
-    const pairs = await page.locator('[data-testid="bilingual-pair"]').count();
-    check("a generation produces a pair for every paragraph", pairs > 50, `${pairs} pairs`);
+    await page.waitForSelector('[data-testid="bilingual-inpage-strip"]', { timeout: 300000 });
+    await page.waitForSelector('[data-testid="bilingual-inpage-target"]', { timeout: 120000 });
+
+    const strips = await page.locator('[data-testid="bilingual-inpage-strip"]').count();
+    const targets = await page.locator('[data-testid="bilingual-inpage-target"]').count();
+    check("the page is drawn as its own regions", strips > 20, `${strips} region(s)`);
+    check("a translation is inserted for every paragraph that has one", targets > 50,
+      `${targets} insertion(s)`);
+
+    // The paper is drawn, not re-typeset: every region carries a canvas, and the
+    // canvases have real pixels in them at the live scale.
+    const drawn = await page.evaluate(() => {
+      const nodes = Array.from(document.querySelectorAll('[data-testid="bilingual-inpage-strip"]'));
+      const canvases = nodes.map((node) => node.querySelector("canvas")).filter(Boolean);
+      // Windowing is by design: a page far from the viewport reserves its space
+      // and holds no canvas. The claim is that every region that *is* rendered
+      // carries painted pixels, at the live scale.
+      return {
+        regions: nodes.length,
+        canvases: canvases.length,
+        painted: canvases.filter((canvas) => canvas.width > 0 && canvas.height > 0).length,
+        widths: canvases.slice(0, 4).map((canvas) => Math.round(canvas.getBoundingClientRect().width)),
+      };
+    });
+    check("every rendered region is the paper's own pixels, painted at the live scale",
+      drawn.canvases > 0 &&
+        drawn.painted === drawn.canvases &&
+        drawn.canvases < drawn.regions &&
+        drawn.widths.every((width) => width > 100),
+      JSON.stringify(drawn));
+
+    // And the source is never HTML text: what the artifact holds for a paragraph
+    // must not be findable as text on the page.
+    const artifact = await fetch(`${BACKEND_URL}/api/documents/${documentId}/bilingual-text`).then(
+      (response) => response.json(),
+    );
+    const firstSource = (artifact.paragraphs ?? []).find(
+      (paragraph) => paragraph.status === "translated" && paragraph.source_text.length > 60,
+    )?.source_text ?? "";
+    const shownText = await page.locator('[data-testid="bilingual-inpage-scroll"]').innerText();
+    check("the paper's own words are pixels, not re-typeset text",
+      firstSource !== "" && !shownText.includes(firstSource.slice(0, 40).trim()),
+      JSON.stringify(firstSource.slice(0, 40)));
 
     const afterGenerate = await ledger();
     const synthesis = afterGenerate.by_operation?.bilingual_text ?? 0;
@@ -254,17 +315,30 @@ async function main() {
       synthesis >= 5 && synthesis <= 10,
       `${synthesis} synthesis call(s) + ${probes} protocol probe(s) = ${afterGenerate.calls} request(s)`);
 
-    const section = await page.locator('[data-testid^="bilingual-section-"]').first().innerText();
-    check("headings are shown in both languages", /[A-Za-z]/.test(section) && /【译】|[一-鿿]/.test(section),
-      section.replace(/\s+/g, " ").slice(0, 60));
+    const perPage = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-testid="bilingual-inpage-page"]')).map((page) =>
+        Array.from(page.querySelectorAll('[data-testid="bilingual-inpage-strip"]'))
+          .map((node) => node.dataset.stripLane),
+      ));
+    const columnsInOrder = perPage.filter((lanes) => lanes.includes("left") && lanes.includes("right"));
+    const misordered = columnsInOrder.filter(
+      (lanes) => lanes.lastIndexOf("left") > lanes.indexOf("right"),
+    );
+    check("the left column is unrolled before the right, on every page",
+      columnsInOrder.length > 0 && misordered.length === 0,
+      `${columnsInOrder.length} two-column page(s) on screen, ${perPage.length} page(s) in the flow`);
 
-    const formula = await page.locator('[data-testid="bilingual-block-isolate_formula"]').count();
-    check("formulas are carried in the source and never translated", formula >= 1, `${formula} formula(s)`);
+    const seams = await page.locator('[data-testid="bilingual-inpage-seam"]').count();
+    check("the change of column is marked rather than silent", seams >= 1, `${seams} seam(s)`);
+
+    const kept = await page.locator('[data-testid="bilingual-inpage-kept-original"]').count();
+    check("a page whose references are kept in the paper's words says so", kept >= 1,
+      `${kept} notice(s)`);
 
     // --- 3. the clipboard, with a real drag ---------------------------------
-    const pair = page.locator('[data-testid="bilingual-pair"]').nth(2);
-    const source = pair.locator('[data-testid="bilingual-source-p"]');
-    const box = await source.boundingBox();
+    const prose = page.locator('[data-testid="bilingual-inpage-text"]').nth(1);
+    await prose.scrollIntoViewIfNeeded();
+    const box = await prose.boundingBox();
     if (box) {
       await page.mouse.move(box.x + 4, box.y + 4);
       await page.mouse.down();
@@ -272,15 +346,88 @@ async function main() {
       await page.mouse.up();
     }
     const copied = await page.evaluate(() => window.getSelection()?.toString() ?? "");
-    const sourceText = (await source.innerText()).trim();
-    check("a drag across a paragraph selects its prose", copied.trim().length > 20, copied.trim().slice(0, 40));
-    check("and the selection carries no badge, button or paragraph id",
-      !copied.includes("P. ") && !/未翻译/.test(copied) && !/p_doc_/.test(copied), copied.slice(-40));
-    check("the copied text is the paragraph's own words",
-      sourceText.startsWith(copied.trim().slice(0, 30)), sourceText.slice(0, 30));
+    const proseText = (await prose.innerText()).trim();
+    check("a drag across a translation selects it", copied.trim().length > 20,
+      copied.trim().slice(0, 40));
+    check("and the selection carries no badge, button or gap notice",
+      !copied.includes("P. ") && !/未翻译/.test(copied) && !/分栏/.test(copied) && !/重新生成/.test(copied),
+      copied.slice(-40));
+    check("the copied text is the translation's own words",
+      proseText.includes(copied.trim().slice(0, 20)), proseText.slice(0, 30));
+
+    // --- 3b. zoom scales the page and the inserted text together ------------
+    const measure = () =>
+      page.evaluate(() => {
+        const strip = document.querySelector('[data-testid="bilingual-inpage-strip"] canvas');
+        const target = document.querySelector('[data-testid="bilingual-inpage-text"]');
+        return {
+          width: strip ? Math.round(strip.getBoundingClientRect().width) : 0,
+          font: target ? Number.parseFloat(getComputedStyle(target).fontSize) : 0,
+        };
+      });
+    const describe = async () => ({
+      regions: await page.locator('[data-testid="bilingual-inpage-strip"]').count(),
+      painted: await page.locator('[data-testid="bilingual-inpage-strip"] canvas').count(),
+      targets: await page.locator('[data-testid="bilingual-inpage-target"]').count(),
+      pages: await page.locator('[data-testid="bilingual-inpage-page"]').count(),
+      scale: await page
+        .locator('[data-testid="bilingual-inpage-page"]')
+        .first()
+        .getAttribute("data-page-scale")
+        .catch(() => "(none)"),
+    });
+    await page.locator('[data-testid="bilingual-inpage-strip"]').first().scrollIntoViewIfNeeded();
+    const before = await measure();
+    console.log("  before zoom:", JSON.stringify(await describe()));
+    await page.click('[aria-label="放大"]');
+    await sleep(2000);
+    const after = await measure();
+    console.log("  after zoom :", JSON.stringify(await describe()), JSON.stringify(after));
+    if (after.width === 0) {
+      console.error("  console:", consoleErrors.slice(0, 5).join(" | ") || "(none)");
+      console.error(
+        "  reader pane:",
+        (await page.locator('[data-testid="reader-workspace"]').innerText().catch(() => "(none)"))
+          .slice(0, 400),
+      );
+    }
+    check("zooming redraws the page at the new scale", after.width > before.width,
+      `${before.width}px -> ${after.width}px`);
+    check("and the inserted translation scales with it", after.font > before.font,
+      `${before.font}px -> ${after.font}px`);
+
+    // --- 3c. the reader's place survives the pages settling ------------------
+    const marker = page.locator('[data-testid="bilingual-inpage-target"]').nth(30);
+    await marker.scrollIntoViewIfNeeded();
+    await sleep(500);
+    const anchored = await marker.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+    await sleep(2500);
+    const settled = await marker.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+    check("scrolling does not move the reader while pages settle",
+      Math.abs(settled - anchored) < 40, `${anchored}px -> ${settled}px`);
+
+    // --- 3d. an outline click moves the unrolled page ----------------------
+    await page.click('[data-testid="assistant-tab-outline"]');
+    await page.waitForSelector('[data-testid="outline-panel"]', { timeout: 30000 });
+    const nodes = page.locator('[data-testid^="outline-node-"]');
+    const nodeCount = await nodes.count();
+    // A section later in the paper, so the scroll has somewhere to go.
+    const target = nodes.nth(Math.min(6, nodeCount - 1));
+    const label = (await target.innerText()).replace(/\s+/g, " ").trim().slice(0, 30);
+    const scrollBefore = await page.evaluate(
+      () => document.querySelector('[data-testid="bilingual-inpage-scroll"]').scrollTop,
+    );
+    await target.click();
+    await sleep(1200);
+    const scrollAfter = await page.evaluate(
+      () => document.querySelector('[data-testid="bilingual-inpage-scroll"]').scrollTop,
+    );
+    check("a section in the outline moves the unrolled page",
+      nodeCount > 1 && scrollAfter !== scrollBefore,
+      `"${label}": scrollTop ${Math.round(scrollBefore)} -> ${Math.round(scrollAfter)}`);
 
     // --- 4. back to the paper ----------------------------------------------
-    await pair.locator('[data-testid="bilingual-jump-pdf"]').first().click();
+    await page.locator('[data-testid="bilingual-jump-pdf"]').first().click();
     await page.waitForSelector('[data-testid="pdf-page-container"]', { timeout: 60000 });
     const mode = await page.getAttribute('[data-testid="reader-workspace"]', "data-reader-mode");
     check("a page badge puts the reader back in the PDF", mode === "original", `mode ${mode}`);
@@ -294,14 +441,16 @@ async function main() {
     // empty. Without this the check would report every call the session has made.
     await fetch(`${BACKEND_URL}/api/_debug/provider-ledger/reset`, { method: "POST" });
     await page.reload({ waitUntil: "domcontentloaded" });
-    await page.waitForSelector('[data-testid="pdf-page-container"]', { timeout: 120000 });
+    await page.waitForSelector('[data-testid="reader-workspace"]', { timeout: 120000 });
+    // The step above left the reader in the PDF, which is what a reload restores;
+    // the question here is what *opening the reading again* costs.
+    await page.click('[data-testid="reader-mode-immersive"]');
+    await page.waitForSelector('[data-testid="bilingual-inpage-strip"]', { timeout: 120000 });
     const hash = createHash("sha256").update(readFileSync(PAPER)).digest("hex").slice(0, 12);
     const cached = readdirSync(join(workDir, "documents", "_cache", "bilingual"))
       .some((name) => name.startsWith(hash));
     check("the reading is cached under the paper's content hash", cached, hash);
 
-    await page.click('[data-testid="reader-mode-immersive"]');
-    await page.waitForSelector('[data-testid="bilingual-pair"]', { timeout: 60000 });
     const reopenCalls = await ledger();
     check("reopening renders it without reaching a provider", reopenCalls.calls === 0,
       JSON.stringify(reopenCalls));

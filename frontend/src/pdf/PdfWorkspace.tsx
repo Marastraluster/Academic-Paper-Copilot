@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { FileUp, Loader2, ShieldAlert, TriangleAlert } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,8 @@ import {
   zoomIn as nextZoomIn,
   zoomOut as nextZoomOut,
 } from "@/pdf/pdfjs";
-import { PdfToolbar } from "@/pdf/PdfToolbar";
 import { PdfViewer, type PageSize, type PdfViewerHandle } from "@/pdf/PdfViewer";
+import type { PageSurfaceProps } from "@/pdf/pageSurface";
 import type { ViewerError, ViewerStatus, ZoomMode } from "@/pdf/types";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist";
 import { cn } from "@/lib/utils";
@@ -78,7 +78,29 @@ interface PdfWorkspaceProps {
    */
   annotationBoxes?: Record<number, number[][]>;
   allowHighlight?: boolean;
+  /**
+   * A different way to draw the pages, when the reader mode needs one.
+   *
+   * Supplied as a component rather than as children so it receives the loaded
+   * document, the live scale and the viewer handle — the pane keeps owning the
+   * load, the toolbar and the zoom, and the surface draws differently. DS-DOC-007
+   * unrolls the page and inserts translations into it; the plain viewer is what
+   * every other mode uses.
+   */
+  pageView?: React.ComponentType<PageSurfaceProps> | null;
 }
+
+/**
+ * The toolbar, in its own chunk.
+ *
+ * It appears when a document is ready and never before, and the pages it
+ * annotates take far longer to render than a chunk takes to arrive — so a reader
+ * never sees it missing. It is 3.4 kB of source, which is what keeps the initial
+ * chunk inside its ceiling without the ceiling being moved (DS-DOC-007).
+ */
+const PdfToolbar = lazy(() =>
+  import("@/pdf/PdfToolbar").then((module) => ({ default: module.PdfToolbar })),
+);
 
 /** How long a citation's highlight stays before it fades. */
 const HIGHLIGHT_FADE_MS = 4000;
@@ -107,6 +129,7 @@ export function PdfWorkspace({
   jump,
   allowHighlight = false,
   annotationBoxes = {},
+  pageView = null,
 }: PdfWorkspaceProps) {
   const [status, setStatus] = useState<ViewerStatus>("empty");
   const [error, setError] = useState<ViewerError | null>(null);
@@ -319,6 +342,42 @@ export function PdfWorkspace({
   const openPicker = () => inputRef.current?.click();
   const showPicker = !controlled || onFileChosen !== undefined;
 
+  /**
+   * The mode's own page surface, or nothing when the mode has none.
+   *
+   * Written as a call rather than as an inline branch because the surface is a
+   * *component* given as a prop: TS narrows the prop inside this function, and a
+   * capitalised local is what makes JSX treat it as a component rather than as
+   * an unknown DOM tag that renders nothing.
+   */
+  const renderPageSurface = (pdf: PDFDocumentProxy, module: PdfjsModule) => {
+    if (pageView === null) return null;
+    const Surface = pageView;
+    return (
+      <Suspense
+        fallback={
+          <p
+            data-testid="page-surface-loading"
+            className="flex flex-1 items-center justify-center p-3 text-xs text-muted-foreground"
+          >
+            正在载入…
+          </p>
+        }
+      >
+        <Surface
+          pdfjs={module}
+          document={pdf}
+          pageCount={pageCount}
+          scale={effectiveScale}
+          baseSize={baseSize}
+          viewerRef={viewerRef}
+          onCurrentPageChange={handleCurrentPageChange}
+          onContainerWidthChange={setContainerWidth}
+        />
+      </Suspense>
+    );
+  };
+
   return (
     <section
       aria-label={label}
@@ -355,6 +414,7 @@ export function PdfWorkspace({
       )}
 
       {status === "ready" && (
+        <Suspense fallback={null}>
         <PdfToolbar
           currentPage={currentPage}
           pageCount={pageCount}
@@ -369,6 +429,7 @@ export function PdfWorkspace({
             )
           }
         />
+        </Suspense>
       )}
 
       {status === "empty" &&
@@ -396,7 +457,9 @@ export function PdfWorkspace({
         <ErrorState error={error} onRetry={openPicker} canRetry={showPicker} />
       )}
 
-      {status === "ready" && proxyRef.current && pdfjs && (
+      {status === "ready" && proxyRef.current && pdfjs && renderPageSurface(proxyRef.current, pdfjs)}
+
+      {status === "ready" && proxyRef.current && pdfjs && !pageView && (
         <PdfViewer
           pdfjs={pdfjs}
           document={proxyRef.current}
