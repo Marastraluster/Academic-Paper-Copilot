@@ -47,13 +47,16 @@ class MockResizeObserver implements ResizeObserver {
 vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 vi.stubGlobal("ResizeObserver", MockResizeObserver);
 
-// jsdom has no layout engine, so every element measures zero. Fit-width maths
-// would then divide by zero and the viewer would render nothing measurable;
-// giving the viewer pane a width keeps that path exercised.
+// jsdom has no layout engine, so every element measures zero — which makes
+// fit-width divide by zero and a column clamp collapse to its floor. The boxes
+// that are measured for real are given a width instead, so those paths are
+// exercised rather than bypassed: the PDF viewer's scroll box, and the reflowed
+// reading's.
+const MEASURED_BOXES = new Set(["pdf-viewer", "reflow-scroll"]);
 Object.defineProperty(HTMLElement.prototype, "clientWidth", {
   configurable: true,
   get(this: HTMLElement) {
-    return this.dataset.testid === "pdf-viewer" ? 800 : 0;
+    return this.dataset.testid !== undefined && MEASURED_BOXES.has(this.dataset.testid) ? 800 : 0;
   },
 });
 

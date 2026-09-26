@@ -24,6 +24,13 @@
  * said `title`, which it says about table sub-labels and, once, about a
  * sentence fragment.
  *
+ * DS-DOC-009 answered the reader's verdict on *how it looked*: the source is set
+ * in an academic serif because it is the paper, the translation in a CJK sans a
+ * size down because it is the aid, the stripe that ran down every translation is
+ * gone — 97 of them is noise, not emphasis — and a display formula, which the
+ * paper set at 6.5–10 pt beside a 16 px sentence, is drawn larger from the
+ * page's own vector content.
+ *
  * The whole module is behind a dynamic import: a reader who never opens this
  * view never downloads it, and the initial chunk has two kilobytes of headroom
  * under its ceiling.
@@ -34,7 +41,7 @@ import { Loader2, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { bilingualIsCurrent, generateBilingual, loadBilingual } from "@/bilingual/session";
-import { CropCanvas, usePageRasters } from "@/bilingual/reflow/crops";
+import { CropCanvas, magnificationFor, usePageRasters } from "@/bilingual/reflow/crops";
 import {
   itemPage,
   itemY0,
@@ -55,11 +62,37 @@ const VIEW_LABELS: ReadonlyArray<{ value: ViewMode; label: string }> = [
   { value: "source", label: "仅原文" },
 ];
 
+/** The reading measure: a longer line is harder to read, whatever the window. */
+const COLUMN_CLASS = "mx-auto w-full max-w-[680px]";
+
+/**
+ * The two voices.
+ *
+ * The source is the paper, so it is set as a paper is — an academic serif at
+ * body size. The translation is the aid, so it is set in the system's own
+ * reading face, one size down and a shade lighter. Neither is a webfont: this
+ * application works offline and ships no font files, so both are the stacks the
+ * reader's own operating system already has.
+ */
+const SERIF_CLASS =
+  "[font-family:Charter,'Source_Serif_Pro','Iowan_Old_Style',Georgia,Cambria,'Times_New_Roman',serif] [font-feature-settings:'kern'_1,'liga'_1,'calt'_1]";
+const SANS_CLASS =
+  "[font-family:-apple-system,BlinkMacSystemFont,'PingFang_SC','Hiragino_Sans_GB','Microsoft_YaHei','WenQuanYi_Micro_Hei',ui-sans-serif,system-ui,sans-serif]";
+
+/** Each level at the size the criteria froze, with the rhythm around it. */
 const HEADING_CLASS: Record<number, string> = {
-  1: "text-xl font-bold leading-snug",
-  2: "text-lg font-semibold leading-snug",
-  3: "text-base font-semibold leading-snug",
+  1: "mt-10 mb-3 text-[1.375rem] font-bold leading-[1.35]",
+  2: "mt-8 mb-2 text-[1.1875rem] font-semibold leading-[1.4]",
+  3: "mt-6 mb-2 text-[1.0625rem] font-semibold leading-[1.45]",
 };
+const HEADING_TRANSLATION_CLASS: Record<number, string> = {
+  1: "mt-1 text-[0.9375rem]",
+  2: "mt-1 text-[0.875rem]",
+  3: "mt-0.5 text-[0.8125rem]",
+};
+
+/** The number's own column, so a formula can be centred without it. */
+const NUMBER_SLOT_PX = 64;
 
 export default function ReflowBilingualReader({
   pdfjs,
@@ -80,6 +113,7 @@ export default function ReflowBilingualReader({
 
   const [refusal, setRefusal] = useState<string | null>(null);
   const [mode, setMode] = useState<ViewMode>("both");
+  const [columnWidth, setColumnWidth] = useState(680);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
 
@@ -97,7 +131,27 @@ export default function ReflowBilingualReader({
   );
 
   // `version` is what makes the column re-render when a page's render lands.
-  const { rasterFor, request, version } = usePageRasters(pdf, pdfjs, scale);
+  /**
+   * How much larger the paper's formulas are drawn.
+   *
+   * One number for the document, from the size the paper set its own display
+   * formulas in — because that size varies: 6.5 pt and 9.3 pt in one of the
+   * papers here, 10 pt in another. A fixed factor suits exactly one of them
+   * (AC_CHANGE_REQUEST 1 in `docs/acceptance/DS-DOC-009.md`).
+   */
+  const magnification = useMemo(() => {
+    if (ir === null) return 1;
+    const inks = ir.pages
+      .flatMap((page) => page.blocks)
+      .filter((block) => block.layout_class === "isolate_formula")
+      .map((block) => block.font_size)
+      .filter((size): size is number => typeof size === "number" && size > 0)
+      .sort((a, b) => a - b);
+    if (inks.length === 0) return 1;
+    return magnificationFor(inks[Math.floor(inks.length / 2)] ?? null);
+  }, [ir]);
+
+  const { rasterFor, request, version } = usePageRasters(pdf, pdfjs, scale, magnification);
   void version;
 
   // --- the reader's place, and the outline ------------------------------------
@@ -122,11 +176,10 @@ export default function ReflowBilingualReader({
         const target =
           (offsetPt === undefined
             ? onPage[0]
-            : onPage.find((entry) => entry.y0 >= offsetPt - 4) ?? onPage[onPage.length - 1]) ??
+            : (onPage.find((entry) => entry.y0 >= offsetPt - 4) ?? onPage[onPage.length - 1])) ??
           candidates.find((entry) => entry.page > page);
         if (target === undefined) return;
-        container.scrollTop +=
-          target.element.getBoundingClientRect().top - container.getBoundingClientRect().top - 8;
+        target.element.scrollIntoView({ block: "start", behavior: "auto" });
       },
     };
   }, [items, viewerRef]);
@@ -168,16 +221,30 @@ export default function ReflowBilingualReader({
     };
   }, [items, onCurrentPageChange]);
 
-  // --- fit-width needs the width of *this* box --------------------------------
+  /**
+   * The width of this box — for fit-width, and for clamping a crop.
+   *
+   * `usable` is in the dependency list for a reason that cost a real bug: on the
+   * first render there is no reading yet, so the component returns its empty
+   * state and the container this measures **does not exist**. The effect then
+   * returned early and never ran again, leaving the column width at its initial
+   * 680 on every narrower viewport — invisible at 1440 px, and a crop hanging
+   * out of its column at 768 px.
+   */
   useEffect(() => {
     const container = containerRef.current;
     if (container === null) return;
-    const report = () => onContainerWidthChange(container.clientWidth);
+    const report = () => {
+      onContainerWidthChange(container.clientWidth);
+      // The column is what a crop is clamped against: narrower than the box on a
+      // wide screen, the box itself on a narrow one.
+      setColumnWidth(Math.min(680, Math.max(240, container.clientWidth - 32)));
+    };
     report();
     const observer = new ResizeObserver(report);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [onContainerWidthChange]);
+  }, [onContainerWidthChange, usable]);
 
   const attach = useCallback((id: string, element: HTMLElement | null) => {
     if (element === null) itemRefs.current.delete(id);
@@ -310,18 +377,19 @@ export default function ReflowBilingualReader({
       <div
         ref={containerRef}
         data-testid="reflow-scroll"
-        className="min-h-0 flex-1 overflow-auto bg-workspace px-4 py-6"
+        data-column-width={columnWidth}
+        className={cn(
+          SANS_CLASS,
+          "min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-workspace px-4 py-8",
+        )}
       >
-        {/* One measure, centred: the column width is the reading measure, and it
-            is the same on every screen because a longer line is harder to read,
-            not because the window is narrower. */}
-        <div className="mx-auto w-full max-w-[680px] space-y-6">
+        {/* 28 px between pairs, 8 px inside one: the ratio is what makes a
+            paragraph and its translation read as one thing rather than two. */}
+        <div className={cn(COLUMN_CLASS, "space-y-7")}>
           {items.map((item) => {
             if (item.kind === "heading") {
-              const Tag = (item.level === 1 ? "h1" : item.level === 2 ? "h2" : "h3") as
-                | "h1"
-                | "h2"
-                | "h3";
+              const level = item.level === 1 ? 1 : item.level === 2 ? 2 : 3;
+              const Tag = (level === 1 ? "h1" : level === 2 ? "h2" : "h3") as "h1" | "h2" | "h3";
               return (
                 <Tag
                   key={item.id}
@@ -330,16 +398,17 @@ export default function ReflowBilingualReader({
                   data-item-y0={item.y0}
                   data-testid="reflow-heading"
                   data-section-id={item.sectionId}
-                  className={cn(
-                    "scroll-mt-4 select-none text-balance",
-                    HEADING_CLASS[item.level ?? 3] ?? HEADING_CLASS[3],
-                  )}
+                  data-heading-level={level}
+                  className={cn("scroll-mt-4 select-none text-balance", HEADING_CLASS[level])}
                 >
                   {item.title}
                   {item.titleTranslated !== null && item.titleTranslated !== "" && (
                     <span
                       data-testid="reflow-heading-translated"
-                      className="mt-1 block font-normal text-muted-foreground"
+                      className={cn(
+                        "block font-normal text-muted-foreground",
+                        HEADING_TRANSLATION_CLASS[level],
+                      )}
                     >
                       {item.titleTranslated}
                     </span>
@@ -368,6 +437,8 @@ export default function ReflowBilingualReader({
                   rasterFor={rasterFor}
                   request={request}
                   scale={scale}
+                  magnification={magnification}
+                  columnWidth={columnWidth}
                   attach={attach}
                 />
               );
@@ -419,14 +490,15 @@ function PairItem({
       data-testid="reflow-pair"
       data-paragraph-id={pair.paragraphId}
       data-hovered={hovered ? "true" : undefined}
-      className={cn("reflow-pair", hovered && "bg-primary/[0.03]")}
+      className={cn("reflow-pair rounded-md transition-colors", hovered && "bg-muted/40")}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
       <p
         data-testid="reflow-source"
         className={cn(
-          "reflow-pair-source text-[0.9375rem] leading-[1.65] text-foreground",
+          SERIF_CLASS,
+          "reflow-pair-source text-base leading-[1.7] text-foreground",
           mode === "target" && "hidden",
         )}
       >
@@ -437,7 +509,8 @@ function PairItem({
         <p
           data-testid="reflow-translation"
           className={cn(
-            "reflow-pair-translation mt-2 border-l-2 border-primary/25 pl-3 text-sm leading-[1.6] text-foreground/85",
+            SANS_CLASS,
+            "reflow-pair-translation mt-2 text-sm leading-[1.65] text-foreground/80",
             mode === "source" && "hidden",
           )}
         >
@@ -446,7 +519,7 @@ function PairItem({
       )}
 
       {pair.status === "untranslated" && (
-        <p className="mt-2 flex select-none items-start gap-1 text-xs text-amber-600 dark:text-amber-500">
+        <p className="mt-2 flex select-none items-start gap-1 text-xs text-amber-600">
           <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
           <span data-testid="bilingual-gap-badge">
             此段未翻译{pair.note !== "" ? `（${pair.note}）` : ""}
@@ -467,12 +540,16 @@ function CropItem({
   rasterFor,
   request,
   scale,
+  magnification,
+  columnWidth,
   attach,
 }: {
   crop: ReflowCrop;
   rasterFor: (page: number) => HTMLCanvasElement | null;
   request: (page: number) => void;
   scale: number;
+  magnification: number;
+  columnWidth: number;
   attach: (id: string, element: HTMLElement | null) => void;
 }) {
   const [near, setNear] = useState(false);
@@ -497,6 +574,19 @@ function CropItem({
 
   const raster = rasterFor(crop.pageNumber);
   const caption = crop.caption;
+  const isFormula = crop.layoutClass === "isolate_formula";
+  const boxWidth = Math.max(crop.box[2] - crop.box[0], 0.01);
+
+  // Measured against the size the paper set the formula in, then drawn larger so
+  // a 6.5–10 pt formula is not fine print beside a 16 px sentence — but never
+  // past the column, and never past the slot its equation number needs.
+  const naturalPx = boxWidth * scale;
+  const slot = isFormula && caption !== null ? columnWidth - NUMBER_SLOT_PX : columnWidth;
+  // A crop wider than the column *at its natural size* is not shrunk: the reader
+  // asked for that zoom. It gets a scroller of its own, so the column itself
+  // never scrolls sideways.
+  const overflows = naturalPx > columnWidth;
+  const displayWidthPx = overflows ? naturalPx : Math.min(naturalPx * magnification, slot);
 
   return (
     <figure
@@ -509,36 +599,54 @@ function CropItem({
       data-testid="reflow-crop"
       data-layout-class={crop.layoutClass}
       data-class-caption={caption === null ? undefined : (crop.captionSide ?? undefined)}
+      data-display-width={Math.round(displayWidthPx)}
       className="my-6"
       aria-label={`${crop.layoutClass}（第 ${crop.pageNumber} 页原图）`}
     >
       {caption !== null && crop.captionSide === "above" && (
         <figcaption
           data-testid="reflow-caption"
-          className="mb-2 text-xs leading-[1.45] text-muted-foreground"
+          className="mb-2 text-[0.8125rem] leading-[1.5] text-muted-foreground"
         >
           {caption.text}
         </figcaption>
       )}
 
-      <div className="flex items-center justify-center gap-2">
-        <div className="min-w-0">
-          <CropCanvas raster={raster} box={crop.box} scale={scale} />
+      {/* Three slots — an equal spacer, the formula, the number — so the
+          formula's centre is the column's centre whatever the number's width. */}
+      <div
+        className={cn(
+          isFormula &&
+            caption !== null &&
+            "grid w-full grid-cols-[1fr_auto_1fr] items-center gap-2",
+        )}
+      >
+        {isFormula && caption !== null && <div aria-hidden="true" />}
+        <div
+          data-testid={overflows ? "reflow-crop-scroller" : undefined}
+          className={cn("flex min-w-0 justify-center", overflows && "touch-pan-x overflow-x-auto")}
+        >
+          <CropCanvas
+            raster={raster}
+            box={crop.box}
+            drawScale={scale * magnification}
+            displayWidthPx={displayWidthPx}
+          />
         </div>
-        {caption !== null && crop.captionSide === "beside" && (
-          <span
+        {isFormula && caption !== null && (
+          <figcaption
             data-testid="reflow-caption"
-            className="shrink-0 select-none text-xs text-muted-foreground"
+            className="flex select-none justify-end pr-1 text-xs text-muted-foreground"
           >
             {caption.text}
-          </span>
+          </figcaption>
         )}
       </div>
 
       {caption !== null && crop.captionSide === "below" && (
         <figcaption
           data-testid="reflow-caption"
-          className="mt-2 text-xs leading-[1.45] text-muted-foreground"
+          className="mt-2 text-[0.8125rem] leading-[1.5] text-muted-foreground"
         >
           {caption.text}
         </figcaption>
@@ -547,7 +655,7 @@ function CropItem({
       {crop.footnote !== null && (
         <p
           data-testid="reflow-footnote"
-          className="mt-1 text-2xs leading-[1.45] text-muted-foreground/80"
+          className="mt-1.5 text-xs leading-[1.4] text-muted-foreground"
         >
           {crop.footnote}
         </p>

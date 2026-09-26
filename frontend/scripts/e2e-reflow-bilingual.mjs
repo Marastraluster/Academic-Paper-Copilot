@@ -175,11 +175,32 @@ const ledger = async () => (await fetch(`${BACKEND_URL}/api/_debug/provider-ledg
 /** The document the page has open, as the backend knows it. */
 let documentId = "";
 
+/** Is something already answering on the port this suite needs? */
+async function portIsTaken() {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/health`, { signal: AbortSignal.timeout(1500) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   prepare();
   const stubPort = await freePort();
   const stub = await startStubProvider(stubPort);
   console.log(`stub provider: http://127.0.0.1:${stubPort}/v1`);
+
+  /* A backend left running from another session holds this port, and then every
+     request this suite makes lands in the wrong data directory — which presents
+     as `profile: undefined` three steps later and cost three confusing failures
+     before it was named. Fail here instead, saying what to do. */
+  if (await portIsTaken()) {
+    throw new Error(
+      `something is already listening on ${BACKEND_URL} — stop it before running this suite ` +
+        "(a backend left over from another session is the usual cause)",
+    );
+  }
 
   const previewPort = await freePort();
   const backend = startBackend(previewPort);
@@ -384,16 +405,76 @@ async function main() {
     // --- 3b. typing is readable without zooming ------------------------------
     const type = await page.evaluate(() => {
       const source = document.querySelector('[data-testid="reflow-source"]');
+      const translation = document.querySelector('[data-testid="reflow-translation"]');
       const column = source?.closest("div[class*='max-w-']");
+      const style = source ? getComputedStyle(source) : null;
+      const translationStyle = translation ? getComputedStyle(translation) : null;
       return {
-        font: source ? Number.parseFloat(getComputedStyle(source).fontSize) : 0,
-        lineHeight: source ? Number.parseFloat(getComputedStyle(source).lineHeight) : 0,
+        font: source ? Number.parseFloat(style.fontSize) : 0,
+        lineHeight: source ? Number.parseFloat(style.lineHeight) : 0,
         measure: column ? Math.round(column.getBoundingClientRect().width) : 0,
+        sourceFamily: style?.fontFamily ?? "",
+        translationFamily: translationStyle?.fontFamily ?? "",
+        translationFont: translation ? Number.parseFloat(translationStyle.fontSize) : 0,
       };
     });
     check("the prose is set at a readable size and measure",
-      type.font >= 14 && type.lineHeight >= type.font * 1.4 && type.measure <= 700,
+      type.font >= 15.5 && type.lineHeight >= 26 && type.measure <= 680,
       `font ${type.font}px, line-height ${type.lineHeight}px, measure ${type.measure}px`);
+    const SERIF_FACES = /Charter|Source Serif|Iowan|Georgia|Cambria|Times New Roman/;
+    check("the source is set in a serif face and the translation is not",
+      SERIF_FACES.test(type.sourceFamily) &&
+        !SERIF_FACES.test(type.translationFamily) &&
+        /YaHei|PingFang|WenQuanYi Micro Hei/.test(type.translationFamily),
+      `source "${type.sourceFamily.split(",")[0]}" / translation "${type.translationFamily.split(",").slice(-4).join(",")}"`);
+
+    // --- 3b1. the formula is drawn larger, and centred with its number --------
+    // Wait for the crop to be painted: a raster may have to be re-rendered after
+    // the cache handed one back, and measuring mid-render measures the wait.
+    await page.waitForFunction(
+      () => {
+        const crop = document.querySelector(
+          '[data-testid="reflow-crop"][data-layout-class="isolate_formula"] canvas',
+        );
+        return crop !== null && crop.width > 1;
+      },
+      { timeout: 30000 },
+    );
+    const formula = await page.evaluate(() => {
+      const crop = document.querySelector('[data-testid="reflow-crop"][data-layout-class="isolate_formula"]');
+      if (crop === null) return null;
+      const column = document.querySelector('[data-testid="reflow-source"]')?.closest("div[class*='max-w-']");
+      const canvas = crop.querySelector("canvas");
+      const number = crop.querySelector('[data-testid="reflow-caption"]');
+      if (canvas === null || column === null) return null;
+      const box = canvas.getBoundingClientRect();
+      const columnBox = column.getBoundingClientRect();
+      const styleWidth = Number.parseFloat(getComputedStyle(canvas).width);
+      return {
+        recorded: Number(crop.dataset.displayWidth ?? 0),
+        styleWidth: Math.round(styleWidth),
+        drawn: Math.round(box.width),
+        columnWidth: Math.round(columnBox.width),
+        offsetFromCentre: Math.round(
+          Math.abs((box.left + box.width / 2) - (columnBox.left + columnBox.width / 2)),
+        ),
+        numberRightGap: number
+          ? Math.round(Math.abs(columnBox.right - number.getBoundingClientRect().right))
+          : null,
+      };
+    });
+    // The formula is drawn at the width the view computed — the canvas is the
+    // size it was told to be, not stretched to something else.
+    check("a formula is drawn at the magnified width the view computed, not stretched",
+      formula !== null &&
+        formula.recorded > 0 &&
+        formula.drawn === formula.recorded &&
+        formula.styleWidth === formula.recorded,
+      JSON.stringify(formula));
+    check("a formula is centred in the column, its number at the right margin",
+      formula !== null && formula.offsetFromCentre <= 4 &&
+        (formula.numberRightGap === null || formula.numberRightGap <= 12),
+      JSON.stringify(formula));
 
     // --- 3b2. a crop is re-rendered on zoom, never stretched -----------------
     const measureCrop = () =>
@@ -420,6 +501,29 @@ async function main() {
         cropAfter.pixels > cropBefore.pixels &&
         cropAfter.stretched === false,
       `${JSON.stringify(cropBefore)} -> ${JSON.stringify(cropAfter)}`);
+
+    // --- 3b3. the whole paper and back: the raster cache must hand memory back
+    const height = await page.evaluate(
+      () => document.querySelector('[data-testid="reflow-scroll"]').scrollHeight,
+    );
+    await page.evaluate((to) => {
+      document.querySelector('[data-testid="reflow-scroll"]').scrollTo({ top: to });
+    }, height);
+    await sleep(2500);
+    await page.evaluate(() => {
+      document.querySelector('[data-testid="reflow-scroll"]').scrollTo({ top: 0 });
+    });
+    await sleep(2500);
+    const afterRoundTrip = await page.evaluate(() => {
+      const crops = Array.from(document.querySelectorAll('[data-testid="reflow-crop"] canvas'));
+      return {
+        crops: crops.length,
+        painted: crops.filter((canvas) => canvas.width > 0 && canvas.height > 0).length,
+      };
+    });
+    check("scrolling the whole paper and back still paints every crop",
+      afterRoundTrip.crops > 0 && afterRoundTrip.painted === afterRoundTrip.crops,
+      `${afterRoundTrip.painted}/${afterRoundTrip.crops} painted`);
 
     // --- 3c. an outline click moves the reflowed column --------------------
     await page.click('[data-testid="assistant-tab-outline"]');
@@ -474,6 +578,40 @@ async function main() {
 
     const designed = (text) =>
       /status of 404/.test(text) && /\/(overview|analysis|bilingual-text)(\?|\s|$)/.test(text);
+    // --- 5b. the column never scrolls sideways (AC-P0-10) ------------------
+    for (const width of [768, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await sleep(900);
+      const fit = await page.evaluate(() => {
+        const scroll = document.querySelector('[data-testid="reflow-scroll"]');
+        // Name the widest thing inside, so an overflow says what caused it.
+        const nodes = Array.from(scroll.querySelectorAll("*"))
+          .map((node) => ({
+            testid: node.dataset.testid ?? node.tagName.toLowerCase(),
+            width: Math.round(node.getBoundingClientRect().width),
+            chain: [node.parentElement, node.parentElement?.parentElement]
+              .map((parent) =>
+                parent === null || parent === undefined
+                  ? ""
+                  : `${parent.dataset.testid ?? parent.tagName.toLowerCase()}(${Math.round(parent.getBoundingClientRect().width)}${/overflow-x-auto/.test(parent.className) ? ",scrolls" : ""})`,
+              )
+              .join(" < "),
+          }))
+          .sort((a, b) => b.width - a.width);
+        const widest = nodes[0] ?? { testid: "(none)", width: 0, chain: "" };
+        const runners = nodes.slice(0, 3);
+        return {
+          scrollWidth: scroll.scrollWidth,
+          clientWidth: scroll.clientWidth,
+          columnWidth: Number(scroll.dataset.columnWidth ?? 0),
+          widest,
+          runners,
+        };
+      });
+      check(`the reading column does not scroll sideways at ${width}px`,
+        fit.scrollWidth <= fit.clientWidth + 1, JSON.stringify(fit));
+    }
+
     check("no uncaught console errors during the run",
       consoleErrors.filter((text) => !designed(text)).length === 0,
       consoleErrors.slice(0, 2).join(" | "));

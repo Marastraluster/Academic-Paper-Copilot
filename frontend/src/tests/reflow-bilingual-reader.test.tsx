@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { BilingualView } from "@/api/bilingual";
 import { App } from "@/app/App";
+import { magnificationFor, pagesToEvict } from "@/bilingual/reflow/crops";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { seedDocument, seedQaSections } from "@/tests/fixtures";
 
@@ -55,7 +56,7 @@ const SLOW = { timeout: 5_000 };
 
 const BLOCKS = [
   { id: "b_head", layout_class: "abandon", bbox: [60, 25, 550, 49], text: "running head" },
-  { id: "b_h1", layout_class: "title", bbox: [50, 80, 295, 96], text: "1 Introduction" },
+  { id: "b_h1", layout_class: "title", bbox: [50, 80, 295, 96], text: "1 Introduction", font_size: 11.5 },
   // A `title` the extractor derived no section from: a table sub-label, and the
   // class of the trap this view must not fall into.
   { id: "b_fake", layout_class: "title", bbox: [50, 300, 200, 312], text: "Method | Acc" },
@@ -67,8 +68,8 @@ const BLOCKS = [
   { id: "b_fig", layout_class: "figure", bbox: [50, 520, 560, 640], text: "" },
   { id: "b_tab", layout_class: "table", bbox: [50, 660, 560, 740], text: "Method Acc" },
   { id: "b_tabcap", layout_class: "table_caption", bbox: [50, 745, 560, 760], text: "Table 1. Results.", caption_of: "b_tab" },
-  { id: "b_fx", layout_class: "isolate_formula", bbox: [80, 770, 300, 800], text: "LInfoNCE = −1" },
-  { id: "b_fxcap", layout_class: "formula_caption", bbox: [320, 770, 340, 782], text: "(1)", caption_of: "b_fx" },
+  { id: "b_fx", layout_class: "isolate_formula", bbox: [80, 770, 300, 800], text: "LInfoNCE = −1", font_size: 9.5 },
+  { id: "b_fxcap", layout_class: "formula_caption", bbox: [320, 770, 340, 782], text: "(1)", caption_of: "b_fx", font_size: 9.3 },
   { id: "b_ref", layout_class: "plain text", bbox: [317, 100, 560, 200], text: "[1] He et al." },
 ];
 
@@ -321,7 +322,12 @@ describe("DS-DOC-008 · the reading", () => {
     expect(source.closest("[data-testid='reflow-pair']")).toBe(
       translation.closest("[data-testid='reflow-pair']"),
     );
-    expect(translation.className).toContain("border-l-2");
+    // DS-DOC-009 D2: the stripe that used to run down every translation is gone
+    // — 97 of them is noise, not emphasis. Subordination is size and tone.
+    expect(translation.className).not.toContain("border-l");
+    expect(translation.className).toContain("text-foreground/80");
+    expect(source.className).toContain("Georgia");
+    expect(translation.className).not.toContain("Georgia");
   });
 
   it("takes headings from the sections, not from `title` blocks (AC-P0-08)", async () => {
@@ -481,6 +487,142 @@ describe("DS-DOC-008 · the reading", () => {
     expect(await screen.findByTestId("bilingual-disclaimer", {}, SLOW)).toHaveTextContent(
       "与版面翻译 PDF",
     );
+  });
+});
+
+describe("DS-DOC-009 · the type", () => {
+  it("sets the source in an academic serif and the translation in a CJK sans (AC-P0-01/02)", async () => {
+    backend({ reading: reading() });
+    render(<App />);
+
+    const source = (await screen.findAllByTestId("reflow-source", {}, SLOW))[0]!;
+    const translation = screen.getByTestId("reflow-translation");
+    expect(source.className).toMatch(/Charter|Georgia/);
+    expect(translation.className).toMatch(/PingFang_SC|Microsoft_YaHei/);
+    // The source is 16 px and the translation a step down; both at 1.7-ish.
+    expect(source.className).toContain("text-base");
+    expect(translation.className).toContain("text-sm");
+  });
+
+  it("keeps the column at the reading measure and hides its overflow (AC-P0-04/10)", async () => {
+    backend({ reading: reading() });
+    render(<App />);
+
+    const scroll = await screen.findByTestId("reflow-scroll", {}, SLOW);
+    expect(scroll.className).toContain("overflow-x-hidden");
+    expect(scroll.innerHTML).toContain("max-w-[680px]");
+  });
+
+  it("scales the headings away from the body text (AC-P0-05)", async () => {
+    backend({ reading: reading() });
+    render(<App />);
+
+    const heading = await screen.findByTestId("reflow-heading", {}, SLOW);
+    expect(heading.dataset.headingLevel).toBe("1");
+    expect(heading.className).toContain("text-[1.375rem]");
+    expect(heading.className).toContain("mt-10");
+  });
+});
+
+describe("DS-DOC-009 · the formula", () => {
+  it("draws a formula larger than the paper set it (AC-P0-07)", async () => {
+    backend({ reading: reading() });
+    render(<App />);
+
+    const crops = await screen.findAllByTestId("reflow-crop", {}, SLOW);
+    const formula = crops.find((crop) => crop.dataset.layoutClass === "isolate_formula")!;
+    const shown = Number(formula.dataset.displayWidth);
+    // The fixture's formula box is 220 pt wide; at the live scale that is its
+    // natural size, and the criterion asks for it drawn to the prose's optical
+    // size — strictly larger, never smaller.
+    expect(shown).toBeGreaterThan(220);
+  });
+
+  it("clamps a formula to the column and puts its number in its own slot (AC-P0-08/09)", async () => {
+    backend({ reading: reading() });
+    render(<App />);
+
+    const crops = await screen.findAllByTestId("reflow-crop", {}, SLOW);
+    const formula = crops.find((crop) => crop.dataset.layoutClass === "isolate_formula")!;
+    expect(Number(formula.dataset.displayWidth)).toBeLessThanOrEqual(680);
+    // Three slots: a spacer, the formula, the number.
+    const caption = within(formula).getByTestId("reflow-caption");
+    expect(caption.className).toContain("justify-end");
+  });
+
+  it("magnifies by the paper's own formula size, not by a constant (AC-P0-07)", () => {
+    // 16 px prose over the ink the paper used; clamped at both ends.
+    expect(magnificationFor(9.3)).toBeCloseTo(1.72, 2);
+    expect(magnificationFor(10)).toBeCloseTo(1.6, 2);
+    expect(magnificationFor(6.5)).toBeCloseTo(2.46, 1);
+    expect(magnificationFor(4)).toBe(2.5);
+    expect(magnificationFor(40)).toBe(1);
+    expect(magnificationFor(null)).toBe(1.71);
+  });
+
+  it("hands back the least recently used page when the cache is full", () => {
+    // Measured: a page raster is ~29.6 MB at this magnification, and the first
+    // version of this cache never evicted — 414 MB on a 14-page paper.
+    expect(pagesToEvict([1, 2, 3])).toEqual([]);
+    expect(pagesToEvict([1, 2, 3, 4])).toEqual([1]);
+    expect(pagesToEvict([1, 2, 3, 4, 5, 6])).toEqual([1, 2, 3]);
+  });
+});
+
+describe("DS-DOC-009 · the theme's contrast (AC-P0-11)", () => {
+  it("keeps the prose and the quieter text above the AA bar", () => {
+    const hsl = (h: number, s: number, l: number): [number, number, number] => {
+      const saturation = s / 100;
+      const lightness = l / 100;
+      const c = (1 - Math.abs(2 * lightness - 1)) * saturation;
+      const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+      const m = lightness - c / 2;
+      const table: Record<number, [number, number, number]> = {
+        0: [c, x, 0],
+        1: [x, c, 0],
+        2: [0, c, x],
+        3: [0, x, c],
+        4: [x, 0, c],
+        5: [c, 0, x],
+      };
+      const [r, g, b] = table[Math.floor(h / 60) % 6]!;
+      return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+    };
+    const luminance = ([r, g, b]: [number, number, number]) => {
+      const channel = (value: number) => {
+        const v = value / 255;
+        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+    };
+    const contrast = (a: [number, number, number], b: [number, number, number]) => {
+      const la = luminance(a);
+      const lb = luminance(b);
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    };
+    const blend = (
+      fg: [number, number, number],
+      bg: [number, number, number],
+      alpha: number,
+    ): [number, number, number] => [
+      fg[0] * alpha + bg[0] * (1 - alpha),
+      fg[1] * alpha + bg[1] * (1 - alpha),
+      fg[2] * alpha + bg[2] * (1 - alpha),
+    ];
+
+    // The tokens the application ships (src/index.css), as HSL.
+    const background = hsl(0, 0, 100);
+    const foreground = hsl(222, 15, 12);
+    const muted = hsl(220, 9, 42);
+
+    expect(contrast(foreground, background)).toBeGreaterThanOrEqual(7);
+    // The translation is foreground at 80 %, which is the value the criterion
+    // freezes — 8.87:1, measured.
+    expect(contrast(blend(foreground, background, 0.8), background)).toBeGreaterThanOrEqual(4.5);
+    // Captions and footnotes use the muted token at full strength: at 85 % it is
+    // 4.03:1 and misses the bar (AC_CHANGE_REQUEST 2).
+    expect(contrast(muted, background)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(blend(muted, background, 0.85), background)).toBeLessThan(4.5);
   });
 });
 
