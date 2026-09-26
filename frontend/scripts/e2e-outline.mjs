@@ -84,15 +84,22 @@ function prepareWorkdir() {
   const documents = join(workDir, "documents", BASELINE_DOCUMENT);
   mkdirSync(documents, { recursive: true });
 
-  if (PAPER_PATH) {
-    copyFileSync(PAPER_PATH, join(documents, "source.pdf"));
-  } else {
-    const source = join(realDataDir, "documents", BASELINE_DOCUMENT, "source.pdf");
-    copyFileSync(source, join(documents, "source.pdf"));
-    for (const name of ["analysis.json", "ir.json", "search.db"]) {
-      const from = join(realDataDir, "documents", BASELINE_DOCUMENT, name);
-      if (existsSync(from)) copyFileSync(from, join(documents, name));
-    }
+  /* The paper the suite drives. `E2E_PAPER` first, then the developer's own
+     registered copy, and finally the checked-in fixture. Reading only the
+     developer's data directory meant that deleting that document from their
+     library broke the suite with a path error rather than with a finding —
+     measured, twice, on two different suites. */
+  const candidates = [
+    process.env.E2E_PAPER,
+    join(realDataDir, "documents", BASELINE_DOCUMENT, "source.pdf"),
+    join(repoRoot, ".agent", "results", "fixtures", "resnet.pdf"),
+  ].filter(Boolean);
+  const paper = candidates.find((candidate) => existsSync(candidate));
+  if (!paper) throw new Error(`no ResNet source found; tried ${candidates.join(", ")}`);
+  copyFileSync(paper, join(documents, "source.pdf"));
+  for (const extra of ["analysis.json", "ir.json", "search.db"]) {
+    const from = join(realDataDir, "documents", BASELINE_DOCUMENT, extra);
+    if (existsSync(from)) copyFileSync(from, join(documents, extra));
   }
 
   const database = join(workDir, "db.sqlite3");

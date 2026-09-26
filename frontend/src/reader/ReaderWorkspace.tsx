@@ -13,13 +13,14 @@ import { useActiveSection } from "@/outline/useActiveSection";
 import { TranslationNotice } from "@/translation/TranslationNotice";
 
 /**
- * The unrolled page loads when the reader asks for it.
+ * The reflowed reading loads when the reader asks for it.
  *
- * It draws the paper's own pixels region by region and inserts a translation
- * under every paragraph, so it is one of four modes and the whole of it belongs
- * in its own chunk: the initial download has under a kilobyte of headroom.
+ * It is the paper unrolled into one column with a translation under every
+ * paragraph, so it is one of four modes and the whole of it belongs in its own
+ * chunk — the initial download has a couple of kilobytes of headroom and a
+ * reader who never opens this view should not pay for it.
  */
-const InPageBilingualReader = lazy(() => import("@/bilingual/InPageBilingualReader"));
+const ReflowBilingualReader = lazy(() => import("@/bilingual/ReflowBilingualReader"));
 
 /**
  * AC-04 — the workspace reconfigures between one and two panels as the reader
@@ -116,20 +117,20 @@ export function ReaderWorkspace() {
           }
         >
           {/* The page surface is handed to the pane that already loaded the
-              PDF, so the unrolled view shares its document, its zoom and its
-              toolbar instead of parsing the same file a second time. */}
+              PDF, so the reflowed view shares its document and its zoom — which
+              is what a crop is rendered at — instead of parsing the same file
+              twice. */}
           <PdfWorkspace
             testId="viewer-immersive"
             label="逐段对照"
             source={originalSource}
             onFileChosen={openDocument}
             onCurrentPageChange={setActivePage}
-            // An outline click is a position in the *paper*, and the unrolled
-            // page is taller than the paper is — so the surface resolves the
-            // position to the region that contains it rather than to a page
-            // offset. Without this the outline would do nothing in 逐段 mode.
+            // An outline click is a position in the *paper*; the reflowed column
+            // is not paged, so the surface resolves it to the item that contains
+            // it. Without this the outline would do nothing in 逐段 mode.
             jump={jumpRequest}
-            pageView={InPageBilingualReader}
+            pageView={ReflowBilingualReader}
           />
         </Suspense>
       ) : (

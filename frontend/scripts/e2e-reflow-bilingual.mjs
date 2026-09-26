@@ -1,13 +1,13 @@
 /**
- * DS-DOC-007 — the unrolled page, in a real browser.
+ * DS-DOC-008 — the reflowed reading, in a real browser.
  *
- * The view this replaces was a column of extracted text; this one draws the
- * paper's own pixels, region by region, and inserts each translation under the
- * paragraph it belongs to. So the checks here are about what is on the screen:
- * that every region is a canvas with pixels in it, that the paper's own words
- * are never re-typeset as HTML, that a translation can be selected and copied
- * without the chrome coming with it, that zoom scales the inserted text along
- * with the page, and that the reader's place survives the pages settling.
+ * The paper unrolled into one column: prose set as prose, each paragraph with
+ * its translation under it, and the paper's figures, tables and formulas carried
+ * as crops of its own pages. So the checks here are about what is on the screen:
+ * that the prose is text and the formulas are never text, that a caption sits
+ * with the crop it belongs to rather than where the block order put it, that a
+ * real drag copies the prose without the chrome, and that opening the reading —
+ * again, and again — costs the reader nothing.
  *
  * What this exists for is what a component test cannot reach: a **real drag**
  * producing a real selection (the clipboard half of AC-P0-19), the jump that puts
@@ -38,7 +38,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 const backendDir = join(repoRoot, "backend");
 const python = join(backendDir, ".venv", "Scripts", "python.exe");
-const workDir = join(repoRoot, ".agent", "results", "e2e-inpage-bilingual");
+const workDir = join(repoRoot, ".agent", "results", "e2e-reflow-bilingual");
 const BACKEND_PORT = 8000;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 const PAPER = join(repoRoot, ".agent", "results", "e2e-qa", "resnet.pdf");
@@ -264,49 +264,52 @@ async function main() {
       return documents[0]?.document_id ?? "";
     });
     await page.click('[data-testid="bilingual-generate-btn"]');
-    await page.waitForSelector('[data-testid="bilingual-inpage-strip"]', { timeout: 300000 });
-    await page.waitForSelector('[data-testid="bilingual-inpage-target"]', { timeout: 120000 });
+    await page.waitForSelector('[data-testid="reflow-pair"]', { timeout: 300000 });
 
-    const strips = await page.locator('[data-testid="bilingual-inpage-strip"]').count();
-    const targets = await page.locator('[data-testid="bilingual-inpage-target"]').count();
-    check("the page is drawn as its own regions", strips > 20, `${strips} region(s)`);
-    check("a translation is inserted for every paragraph that has one", targets > 50,
-      `${targets} insertion(s)`);
+    const counts = await page.evaluate(() => ({
+      pairs: document.querySelectorAll('[data-testid="reflow-pair"]').length,
+      translations: document.querySelectorAll('[data-testid="reflow-translation"]').length,
+      headings: document.querySelectorAll('[data-testid="reflow-heading"]').length,
+      crops: document.querySelectorAll('[data-testid="reflow-crop"]').length,
+      captions: document.querySelectorAll('[data-testid="reflow-caption"]').length,
+    }));
+    check("the paper is reflowed into one column of paragraph pairs", counts.pairs > 90,
+      JSON.stringify(counts));
+    check("each paragraph that has a translation shows it", counts.translations > 80,
+      `${counts.translations} translation(s)`);
+    check("every figure, table and formula is carried", counts.crops > 15,
+      `${counts.crops} crop(s)`);
 
     // The paper is drawn, not re-typeset: every region carries a canvas, and the
     // canvases have real pixels in them at the live scale.
-    const drawn = await page.evaluate(() => {
-      const nodes = Array.from(document.querySelectorAll('[data-testid="bilingual-inpage-strip"]'));
-      const canvases = nodes.map((node) => node.querySelector("canvas")).filter(Boolean);
-      // Windowing is by design: a page far from the viewport reserves its space
-      // and holds no canvas. The claim is that every region that *is* rendered
-      // carries painted pixels, at the live scale.
+    // The prose is text now — and a formula never is: its extracted string is
+    // scrambled, so the crops are the only honest way to show it.
+    const reading = await page.evaluate(() => {
+      const first = document.querySelector('[data-testid="reflow-source"]');
+      const crops = Array.from(document.querySelectorAll('[data-testid="reflow-crop"] canvas'));
       return {
-        regions: nodes.length,
-        canvases: canvases.length,
-        painted: canvases.filter((canvas) => canvas.width > 0 && canvas.height > 0).length,
-        widths: canvases.slice(0, 4).map((canvas) => Math.round(canvas.getBoundingClientRect().width)),
+        sourceText: (first?.textContent ?? "").slice(0, 60),
+        painted: crops.filter((canvas) => canvas.width > 0 && canvas.height > 0).length,
+        crops: crops.length,
+        widths: crops.slice(0, 3).map((canvas) => Math.round(canvas.getBoundingClientRect().width)),
       };
     });
-    check("every rendered region is the paper's own pixels, painted at the live scale",
-      drawn.canvases > 0 &&
-        drawn.painted === drawn.canvases &&
-        drawn.canvases < drawn.regions &&
-        drawn.widths.every((width) => width > 100),
-      JSON.stringify(drawn));
+    check("the paper's prose is selectable text", reading.sourceText.length > 30,
+      JSON.stringify(reading.sourceText));
+    check("every crop is painted from the page, at the live scale",
+      reading.crops > 0 && reading.painted === reading.crops && reading.widths.every((w) => w > 20),
+      JSON.stringify(reading));
 
-    // And the source is never HTML text: what the artifact holds for a paragraph
-    // must not be findable as text on the page.
     const artifact = await fetch(`${BACKEND_URL}/api/documents/${documentId}/bilingual-text`).then(
       (response) => response.json(),
     );
-    const firstSource = (artifact.paragraphs ?? []).find(
-      (paragraph) => paragraph.status === "translated" && paragraph.source_text.length > 60,
-    )?.source_text ?? "";
-    const shownText = await page.locator('[data-testid="bilingual-inpage-scroll"]').innerText();
-    check("the paper's own words are pixels, not re-typeset text",
-      firstSource !== "" && !shownText.includes(firstSource.slice(0, 40).trim()),
-      JSON.stringify(firstSource.slice(0, 40)));
+    const scrambled = (artifact.blocks ?? []).find(
+      (block) => block.layout_class === "isolate_formula" && (block.text ?? "").length > 10,
+    )?.text ?? "";
+    const shownText = await page.locator('[data-testid="reflow-scroll"]').innerText();
+    check("a formula is never shown as its extracted text",
+      scrambled === "" || !shownText.includes(scrambled.slice(0, 20).trim()),
+      JSON.stringify(scrambled.slice(0, 24)));
 
     const afterGenerate = await ledger();
     const synthesis = afterGenerate.by_operation?.bilingual_text ?? 0;
@@ -315,28 +318,51 @@ async function main() {
       synthesis >= 5 && synthesis <= 10,
       `${synthesis} synthesis call(s) + ${probes} protocol probe(s) = ${afterGenerate.calls} request(s)`);
 
-    const perPage = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('[data-testid="bilingual-inpage-page"]')).map((page) =>
-        Array.from(page.querySelectorAll('[data-testid="bilingual-inpage-strip"]'))
-          .map((node) => node.dataset.stripLane),
-      ));
-    const columnsInOrder = perPage.filter((lanes) => lanes.includes("left") && lanes.includes("right"));
-    const misordered = columnsInOrder.filter(
-      (lanes) => lanes.lastIndexOf("left") > lanes.indexOf("right"),
-    );
-    check("the left column is unrolled before the right, on every page",
-      columnsInOrder.length > 0 && misordered.length === 0,
-      `${columnsInOrder.length} two-column page(s) on screen, ${perPage.length} page(s) in the flow`);
+    // The trap: captions sit before their targets about as often as after, so
+    // this asks the DOM where each caption ended up relative to its own crop.
+    const captionPlacement = await page.evaluate(() => {
+      const crops = Array.from(document.querySelectorAll('[data-testid="reflow-crop"]'));
+      const result = { figure: [], table: [], formula: [] };
+      for (const crop of crops) {
+        const kind = crop.dataset.layoutClass ?? "";
+        const caption = crop.querySelector('[data-testid="reflow-caption"]');
+        if (caption === null) continue;
+        const side = crop.dataset.classCaption ?? "?";
+        const children = Array.from(crop.children);
+        const at = children.findIndex((child) => child.contains(caption));
+        const canvasAt = children.findIndex((child) => child.querySelector("canvas") !== null);
+        result[kind] ??= [];
+        result[kind].push({ side, before: at < canvasAt, after: at > canvasAt });
+      }
+      return result;
+    });
+    const figures = captionPlacement.figure ?? [];
+    const tables = captionPlacement.table ?? [];
+    const formulas = captionPlacement.formula ?? [];
+    check("a figure's caption is below its figure, wherever the order put it",
+      figures.length > 0 && figures.every((entry) => entry.side === "below" && entry.after),
+      `${figures.length} figure(s): ${JSON.stringify(figures.slice(0, 3))}`);
+    check("a table's caption is above its table",
+      tables.length > 0 && tables.every((entry) => entry.side === "above" && entry.before),
+      `${tables.length} table(s): ${JSON.stringify(tables.slice(0, 3))}`);
+    check("a formula's caption sits beside it",
+      formulas.every((entry) => entry.side === "beside"),
+      `${formulas.length} formula(s): ${JSON.stringify(formulas.slice(0, 3))}`);
 
-    const seams = await page.locator('[data-testid="bilingual-inpage-seam"]').count();
-    check("the change of column is marked rather than silent", seams >= 1, `${seams} seam(s)`);
+    const headings = await page.evaluate(() => ({
+      count: document.querySelectorAll('[data-testid="reflow-heading"]').length,
+      translated: document.querySelectorAll('[data-testid="reflow-heading-translated"]').length,
+      first: (document.querySelector('[data-testid="reflow-heading"]')?.textContent ?? "").slice(0, 40),
+    }));
+    check("headings come from the extractor's sections, in both languages",
+      headings.count > 8 && headings.translated > 0, JSON.stringify(headings));
 
-    const kept = await page.locator('[data-testid="bilingual-inpage-kept-original"]').count();
-    check("a page whose references are kept in the paper's words says so", kept >= 1,
-      `${kept} notice(s)`);
+    const notices = await page.locator('[data-testid="reflow-references-notice"]').count();
+    check("the references are kept in the paper's words and say so", notices >= 1,
+      `${notices} notice(s)`);
 
     // --- 3. the clipboard, with a real drag ---------------------------------
-    const prose = page.locator('[data-testid="bilingual-inpage-text"]').nth(1);
+    const prose = page.locator('[data-testid="reflow-translation"]').nth(1);
     await prose.scrollIntoViewIfNeeded();
     const box = await prose.boundingBox();
     if (box) {
@@ -355,58 +381,47 @@ async function main() {
     check("the copied text is the translation's own words",
       proseText.includes(copied.trim().slice(0, 20)), proseText.slice(0, 30));
 
-    // --- 3b. zoom scales the page and the inserted text together ------------
-    const measure = () =>
+    // --- 3b. typing is readable without zooming ------------------------------
+    const type = await page.evaluate(() => {
+      const source = document.querySelector('[data-testid="reflow-source"]');
+      const column = source?.closest("div[class*='max-w-']");
+      return {
+        font: source ? Number.parseFloat(getComputedStyle(source).fontSize) : 0,
+        lineHeight: source ? Number.parseFloat(getComputedStyle(source).lineHeight) : 0,
+        measure: column ? Math.round(column.getBoundingClientRect().width) : 0,
+      };
+    });
+    check("the prose is set at a readable size and measure",
+      type.font >= 14 && type.lineHeight >= type.font * 1.4 && type.measure <= 700,
+      `font ${type.font}px, line-height ${type.lineHeight}px, measure ${type.measure}px`);
+
+    // --- 3b2. a crop is re-rendered on zoom, never stretched -----------------
+    const measureCrop = () =>
       page.evaluate(() => {
-        const strip = document.querySelector('[data-testid="bilingual-inpage-strip"] canvas');
-        const target = document.querySelector('[data-testid="bilingual-inpage-text"]');
+        const canvas = document.querySelector('[data-testid="reflow-crop"] canvas');
+        if (canvas === null) return null;
         return {
-          width: strip ? Math.round(strip.getBoundingClientRect().width) : 0,
-          font: target ? Number.parseFloat(getComputedStyle(target).fontSize) : 0,
+          pixels: canvas.width,
+          css: Math.round(canvas.getBoundingClientRect().width),
+          // A bitmap stretched by CSS is the failure this criterion names: the
+          // backing store would be smaller than what is shown.
+          stretched: canvas.width < Math.round(canvas.getBoundingClientRect().width),
         };
       });
-    const describe = async () => ({
-      regions: await page.locator('[data-testid="bilingual-inpage-strip"]').count(),
-      painted: await page.locator('[data-testid="bilingual-inpage-strip"] canvas').count(),
-      targets: await page.locator('[data-testid="bilingual-inpage-target"]').count(),
-      pages: await page.locator('[data-testid="bilingual-inpage-page"]').count(),
-      scale: await page
-        .locator('[data-testid="bilingual-inpage-page"]')
-        .first()
-        .getAttribute("data-page-scale")
-        .catch(() => "(none)"),
-    });
-    await page.locator('[data-testid="bilingual-inpage-strip"]').first().scrollIntoViewIfNeeded();
-    const before = await measure();
-    console.log("  before zoom:", JSON.stringify(await describe()));
+    await page.locator('[data-testid="reflow-crop"]').first().scrollIntoViewIfNeeded();
+    await sleep(1200);
+    const cropBefore = await measureCrop();
     await page.click('[aria-label="放大"]');
-    await sleep(2000);
-    const after = await measure();
-    console.log("  after zoom :", JSON.stringify(await describe()), JSON.stringify(after));
-    if (after.width === 0) {
-      console.error("  console:", consoleErrors.slice(0, 5).join(" | ") || "(none)");
-      console.error(
-        "  reader pane:",
-        (await page.locator('[data-testid="reader-workspace"]').innerText().catch(() => "(none)"))
-          .slice(0, 400),
-      );
-    }
-    check("zooming redraws the page at the new scale", after.width > before.width,
-      `${before.width}px -> ${after.width}px`);
-    check("and the inserted translation scales with it", after.font > before.font,
-      `${before.font}px -> ${after.font}px`);
-
-    // --- 3c. the reader's place survives the pages settling ------------------
-    const marker = page.locator('[data-testid="bilingual-inpage-target"]').nth(30);
-    await marker.scrollIntoViewIfNeeded();
-    await sleep(500);
-    const anchored = await marker.evaluate((node) => Math.round(node.getBoundingClientRect().top));
     await sleep(2500);
-    const settled = await marker.evaluate((node) => Math.round(node.getBoundingClientRect().top));
-    check("scrolling does not move the reader while pages settle",
-      Math.abs(settled - anchored) < 40, `${anchored}px -> ${settled}px`);
+    const cropAfter = await measureCrop();
+    check("a crop is re-rendered at the new scale, not stretched",
+      cropBefore !== null &&
+        cropAfter !== null &&
+        cropAfter.pixels > cropBefore.pixels &&
+        cropAfter.stretched === false,
+      `${JSON.stringify(cropBefore)} -> ${JSON.stringify(cropAfter)}`);
 
-    // --- 3d. an outline click moves the unrolled page ----------------------
+    // --- 3c. an outline click moves the reflowed column --------------------
     await page.click('[data-testid="assistant-tab-outline"]');
     await page.waitForSelector('[data-testid="outline-panel"]', { timeout: 30000 });
     const nodes = page.locator('[data-testid^="outline-node-"]');
@@ -415,22 +430,24 @@ async function main() {
     const target = nodes.nth(Math.min(6, nodeCount - 1));
     const label = (await target.innerText()).replace(/\s+/g, " ").trim().slice(0, 30);
     const scrollBefore = await page.evaluate(
-      () => document.querySelector('[data-testid="bilingual-inpage-scroll"]').scrollTop,
+      () => document.querySelector('[data-testid="reflow-scroll"]').scrollTop,
     );
     await target.click();
     await sleep(1200);
     const scrollAfter = await page.evaluate(
-      () => document.querySelector('[data-testid="bilingual-inpage-scroll"]').scrollTop,
+      () => document.querySelector('[data-testid="reflow-scroll"]').scrollTop,
     );
     check("a section in the outline moves the unrolled page",
       nodeCount > 1 && scrollAfter !== scrollBefore,
       `"${label}": scrollTop ${Math.round(scrollBefore)} -> ${Math.round(scrollAfter)}`);
 
-    // --- 4. back to the paper ----------------------------------------------
-    await page.locator('[data-testid="bilingual-jump-pdf"]').first().click();
+    // --- 4. back to the paper, the way the reader does it -------------------
+    // The reflowed column is one stream with no page badges; the reader gets
+    // back to the paper's own pages by choosing the 原文 mode.
+    await page.click('[data-testid="reader-mode-original"]');
     await page.waitForSelector('[data-testid="pdf-page-container"]', { timeout: 60000 });
     const mode = await page.getAttribute('[data-testid="reader-workspace"]', "data-reader-mode");
-    check("a page badge puts the reader back in the PDF", mode === "original", `mode ${mode}`);
+    check("switching to 原文 puts the reader back in the PDF", mode === "original", `mode ${mode}`);
 
     // --- 5. reopening is free ----------------------------------------------
     const documentIds = () =>
@@ -445,7 +462,7 @@ async function main() {
     // The step above left the reader in the PDF, which is what a reload restores;
     // the question here is what *opening the reading again* costs.
     await page.click('[data-testid="reader-mode-immersive"]');
-    await page.waitForSelector('[data-testid="bilingual-inpage-strip"]', { timeout: 120000 });
+    await page.waitForSelector('[data-testid="reflow-pair"]', { timeout: 120000 });
     const hash = createHash("sha256").update(readFileSync(PAPER)).digest("hex").slice(0, 12);
     const cached = readdirSync(join(workDir, "documents", "_cache", "bilingual"))
       .some((name) => name.startsWith(hash));

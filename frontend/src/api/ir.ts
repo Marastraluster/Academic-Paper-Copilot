@@ -59,13 +59,21 @@ export interface IrBlock {
   /**
    * The size the paper set this block in, in points.
    *
-   * Read by the in-place bilingual reading, and only there: it sets each
-   * translation at the size of the paragraph it follows, so the unrolled page
-   * keeps the paper's own typographic hierarchy instead of one size throughout.
-   * Optional because the extractor is not obliged to state it, and a missing one
-   * means "the default", not "zero".
+   * The extractor's own way of telling a heading from a table sub-label, and the
+   * reason a caption can be set at the size the paper set it. Optional: the
+   * extractor is not obliged to state it, and a missing one means "the default",
+   * not "zero".
    */
   font_size?: number | null;
+  /**
+   * Set on a caption, naming the figure, table or formula it belongs to.
+   *
+   * The reflow pairs captions by this and never by position: measured across the
+   * papers here, a caption sits before its target in the block order about as
+   * often as after it, so walking the order puts half of them above the wrong
+   * thing.
+   */
+  caption_of?: string | null;
   /**
    * **Persistent** identity, for the classes a reader may annotate.
    *
@@ -87,12 +95,41 @@ export interface IrPage {
   blocks: IrBlock[];
 }
 
+/**
+ * One heading, and the block it came from.
+ *
+ * Read by the reflowed reading, and the reason it exists as its own type: the
+ * layout classes call 23 blocks of a real paper `title` while the extractor
+ * derives 16 sections from them — the rest are table sub-labels and, measured
+ * once, a sentence fragment. Headings are sections, never `title` blocks.
+ */
+export interface IrSection {
+  id: string;
+  title: string;
+  /** `null` when the heading carries no numbering and no typographic signal. */
+  level: number | null;
+  page_range: [number, number];
+  parent_id: string | null;
+  /** The block this heading was read from — the one source of its geometry. */
+  heading_block_id: string | null;
+  /**
+   * True for the paper's bibliography, whose paragraphs are never translated.
+   *
+   * The fact lives here, on the section, not on the paragraph: a paragraph knows
+   * its `section_id`, and the pipeline reads the section to decide what never
+   * reaches a model.
+   */
+  is_references: boolean;
+}
+
 export interface DocumentIr {
   document_id: string;
   content_hash: string;
   page_count: number;
   paragraphs: IrParagraph[];
   pages: IrPage[];
+  /** Optional: an IR stored before sections were read still parses. */
+  sections?: IrSection[];
   /**
    * Which extraction algorithm produced this.
    *
