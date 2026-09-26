@@ -42,6 +42,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { bilingualIsCurrent, generateBilingual, loadBilingual } from "@/bilingual/session";
 import { CropCanvas, magnificationFor, usePageRasters } from "@/bilingual/reflow/crops";
+import { FormulaItem } from "@/formulas/FormulaItem";
+import { generateFormulas, loadFormulas } from "@/formulas/session";
 import {
   itemPage,
   itemY0,
@@ -110,6 +112,9 @@ export default function ReflowBilingualReader({
   const profileId = useWorkspaceStore((state) => state.profileId);
   const profiles = useWorkspaceStore((state) => state.profiles);
   const documentId = useWorkspaceStore((state) => state.document?.documentId ?? null);
+  const formulas = useWorkspaceStore((state) => state.formulas);
+  const formulasPlan = useWorkspaceStore((state) => state.formulasPlan);
+  const formulasStatus = useWorkspaceStore((state) => state.formulasStatus);
 
   const [refusal, setRefusal] = useState<string | null>(null);
   const [mode, setMode] = useState<ViewMode>("both");
@@ -117,9 +122,13 @@ export default function ReflowBilingualReader({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
 
-  // The stored reading. A **read**: it cannot reach a provider.
+  // The stored reading and the stored formulas. Both are **reads**: neither can
+  // reach a provider, and they are the only requests this view makes on its own.
   useEffect(() => {
     if (documentId !== null) void loadBilingual();
+  }, [documentId]);
+  useEffect(() => {
+    if (documentId !== null) void loadFormulas();
   }, [documentId]);
 
   const usable =
@@ -386,6 +395,30 @@ export default function ReflowBilingualReader({
         {/* 28 px between pairs, 8 px inside one: the ratio is what makes a
             paragraph and its translation read as one thing rather than two. */}
         <div className={cn(COLUMN_CLASS, "space-y-7")}>
+          {formulasPlan !== null && (
+            <div
+              data-testid="reflow-formulas-upgrade"
+              className="flex flex-wrap items-center gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground"
+            >
+              <span>
+                检测到 {formulasPlan.total_formulas} 处公式，可生成 LaTeX 排版（将消耗{" "}
+                {formulasPlan.batch_count} 次请求）
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-fit select-none"
+                data-testid="reflow-formulas-generate"
+                disabled={formulasStatus === "generating"}
+                onClick={() => void generateFormulas()}
+              >
+                {formulasStatus === "generating" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                ) : null}
+                生成 LaTeX
+              </Button>
+            </div>
+          )}
           {items.map((item) => {
             if (item.kind === "heading") {
               const level = item.level === 1 ? 1 : item.level === 2 ? 2 : 3;
@@ -430,6 +463,51 @@ export default function ReflowBilingualReader({
             }
 
             if (item.kind === "crop") {
+              // A formula is the reconstruction component's to place — but only
+              // when the paper *has* reconstructions. Without them the crop is
+              // what the reader gets, equation number and all: diverting a
+              // formula that has no reconstruction would silently drop the
+              // number the paper printed beside it.
+              // Only an artifact that describes *this* extraction may typeset a
+              // formula; the same guard the reading makes for its own cache.
+              if (
+                item.layoutClass === "isolate_formula" &&
+                formulas !== null &&
+                formulas.content_hash === ir.content_hash
+              ) {
+                const reconstruction =
+                  formulas.formulas.find((entry) => entry.block_id === item.blockId) ?? null;
+                const usable =
+                  reconstruction !== null &&
+                  reconstruction.status === "reconstructed" &&
+                  reconstruction.latex.trim() !== "";
+                return (
+                  <FormulaItem
+                    key={item.id}
+                    latex={usable ? reconstruction.latex : null}
+                    refusalReason={reconstruction?.refusal_reason ?? null}
+                    failureReason={reconstruction?.error_reason ?? null}
+                    number={item.number ?? item.caption?.text ?? null}
+                    pageNumber={item.pageNumber}
+                    blockId={item.blockId}
+                    availableWidthPx={Math.max(240, columnWidth - 128)}
+                    // The number moves to the component's own right-hand slot,
+                    // so the crop underneath it must not print it twice.
+                    crop={
+                      <CropItem
+                        crop={{ ...item, caption: null, captionSide: null, footnote: null }}
+                        rasterFor={rasterFor}
+                        request={request}
+                        scale={scale}
+                        magnification={magnification}
+                        columnWidth={columnWidth}
+                        attach={attach}
+                      />
+                    }
+                  />
+                );
+              }
+
               return (
                 <CropItem
                   key={item.id}

@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import annotations, bilingual, documents, health, overview, profiles
+from app.api import annotations, bilingual, documents, formulas, health, overview, profiles
 from app.api.documents import register_document_error_handlers
 from app.api.profiles import register_profile_error_handlers
 from app.config import Settings
@@ -154,6 +154,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(annotations.router, prefix="/api")
     app.include_router(overview.router, prefix="/api")
     app.include_router(bilingual.router, prefix="/api")
+    app.include_router(formulas.router, prefix="/api")
 
     # Provider-call accounting, for a harness that has to prove a reader action
     # cost nothing. Registered only when the environment asks for it: a default

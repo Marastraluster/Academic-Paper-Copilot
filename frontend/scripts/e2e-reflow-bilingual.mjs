@@ -82,21 +82,58 @@ function startStubProvider(port) {
             .join("\n");
         } catch { /* answered empty; the pipeline will call it a failed batch */ }
 
-        const headingPart = prompt.split("Paragraphs:")[0] ?? "";
-        const paragraphPart = prompt.split("Paragraphs:")[1] ?? "";
         const ids = (text) => [...text.matchAll(/^\[([^\]]+)\]/gm)].map((match) => match[1]);
+        /* The reconstruction prompt sends one JSON object per line, keyed by
+           `block_id`; the translation prompt sends `[id]` lines. The stub
+           answers whichever it was asked, in the shape that prompt defines. */
+        const formulaPart = prompt.split("Formulas to reconstruct:")[1] ?? "";
+        const formulaIds = formulaPart
+          .split(String.fromCharCode(10))
+          .map((line) => line.trim())
+          .filter((line) => line.startsWith("{"))
+          .map((line) => {
+            try {
+              return JSON.parse(line).block_id;
+            } catch {
+              return null;
+            }
+          })
+          .filter((id) => typeof id === "string" && id !== "");
+        const isFormulaPrompt = /Formulas to reconstruct:/.test(prompt);
+        const answer = isFormulaPrompt
+          // The reconstruction prompt: one entry per formula, each either a
+          // LaTeX answer or an honest refusal. Every third formula is refused so
+          // the fallback path is exercised by the same run that exercises the
+          // happy one.
+          ? {
+              // Keyed by `block_id`, which is what both the prompt and the
+              // pipeline's parser use — the shape the criteria froze.
+              formulas: formulaIds.map((block_id, index) =>
+                index % 3 === 2
+                  ? { block_id, status: "refusal", refusal_reason: "stub: 字形无法辨识" }
+                  : {
+                      block_id,
+                      status: "reconstructed",
+                      latex: String.fromCharCode(92) + "\mathcal{L}_{" + index + "} = " + String.fromCharCode(92) + "sum_{i=1}^{N} " + String.fromCharCode(92) + "frac{a_i}{b_i}",
+                    },
+              ),
+            }
+          : {
+              headings: ids((prompt.split("Paragraphs:")[0] ?? "")).map((id) => ({
+                id,
+                text: `【译】${id}`,
+              })),
+              paragraphs: ids((prompt.split("Paragraphs:")[1] ?? "")).map((id) => ({
+                id,
+                text: `【译】${id}`,
+              })),
+            };
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(JSON.stringify({
           id: "chatcmpl-stub", object: "chat.completion", created: 1, model: "stub-translator",
           choices: [{
             index: 0,
-            message: {
-              role: "assistant",
-              content: JSON.stringify({
-                headings: ids(headingPart).map((id) => ({ id, text: `【译】${id}` })),
-                paragraphs: ids(paragraphPart).map((id) => ({ id, text: `【译】${id}` })),
-              }),
-            },
+            message: { role: "assistant", content: JSON.stringify(answer) },
             finish_reason: "stop",
           }],
           usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
@@ -144,8 +181,13 @@ function startBackend(corsOrigin) {
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
+  // Keep the talkative logs out of the way, but keep the *errors*: a swallowed
+  // traceback is how a real defect looks like a silent timeout three steps later.
   child.stdout.on("data", () => {});
-  child.stderr.on("data", () => {});
+  child.stderr.on("data", (chunk) => {
+    const text = String(chunk);
+    if (/Traceback|Error|error:|Exception/i.test(text)) console.error("[backend]", text.slice(0, 600));
+  });
   return child;
 }
 
@@ -242,6 +284,24 @@ async function main() {
   // message this repository's filters can classify, so it is collected apart.
   page.on("pageerror", (error) => {
     consoleErrors.push(`UNCAUGHT ${error.message}`);
+  });
+
+  /* Offline-first is a claim this application makes in its README. A dependency
+     added for formula rendering is the first thing that could quietly break it,
+     so every request the page makes is inspected: loopback and blob/data URLs
+     only. */
+  const offsiteRequests = [];
+  page.on("request", (request) => {
+    const url = request.url();
+    if (url.startsWith("blob:") || url.startsWith("data:")) return;
+    try {
+      const { hostname, protocol } = new URL(url);
+      if (protocol === "file:") return;
+      if (hostname === "127.0.0.1" || hostname === "localhost") return;
+      offsiteRequests.push(url);
+    } catch {
+      offsiteRequests.push(url);
+    }
   });
 
   try {
@@ -438,6 +498,7 @@ async function main() {
         );
         return crop !== null && crop.width > 1;
       },
+      null,
       { timeout: 30000 },
     );
     const formula = await page.evaluate(() => {
@@ -525,6 +586,185 @@ async function main() {
       afterRoundTrip.crops > 0 && afterRoundTrip.painted === afterRoundTrip.crops,
       `${afterRoundTrip.painted}/${afterRoundTrip.crops} painted`);
 
+    // --- 3b4. formulas: offered, generated, typeset, and checkable ----------
+    const banner = await page
+      .locator('[data-testid="reflow-formulas-upgrade"]')
+      .count()
+      .catch(() => 0);
+    let formulaChecked = false;
+    if (banner > 0) {
+      const offer = await page.locator('[data-testid="reflow-formulas-upgrade"]').innerText();
+      check("a paper whose formulas were never reconstructed says so, and what it costs",
+        /\d+ 处公式/.test(offer) && /\d+ 次请求/.test(offer), offer.replace(/\s+/g, " ").slice(0, 70));
+
+      const beforeFormulas = await ledger();
+      await page.click('[data-testid="reflow-formulas-generate"]');
+      await page.waitForSelector('[data-testid="reflow-formula-item"]', { timeout: 180000 });
+      try {
+        await page.waitForFunction(
+          () => {
+            const item = document.querySelector('[data-testid="reflow-formula-item"]');
+            return item !== null && item.dataset.renderMode === "latex";
+          },
+          null,
+          { timeout: 60000 },
+        );
+      } catch (error) {
+        // Say which path it took: a fallback is silent by design, and "it never
+        // typeset" is not a diagnosis.
+        const postAgain = await page
+          .evaluate(async () => {
+            const docs = await (await fetch("http://127.0.0.1:8000/api/documents")).json();
+            const id = docs[0]?.document_id;
+            const profiles = await (await fetch("http://127.0.0.1:8000/api/profiles")).json();
+            const response = await fetch(
+              `http://127.0.0.1:8000/api/documents/${id}/formulas`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ profile_id: profiles[0]?.id ?? "", force: true }),
+              },
+            );
+            const artifact = await response.json();
+            return {
+              httpStatus: response.status,
+              status: artifact.status,
+              total: artifact.total_formulas,
+              ok: artifact.reconstructed_count,
+              refused: artifact.refused_count,
+              failed: artifact.failed_count,
+              reasons: (artifact.formulas ?? [])
+                .map((f) => `${f.status}:${f.error_reason ?? f.refusal_reason ?? "-"}`)
+                .slice(0, 2),
+              latex: (artifact.formulas ?? [])[0]?.latex?.slice(0, 40) ?? null,
+            };
+          })
+          .catch((error) => ({ error: String(error) }));
+        console.error("  the POST itself returns:", JSON.stringify(postAgain));
+        const fromBackend = await page
+          .evaluate(async () => {
+            const docs = await (await fetch("http://127.0.0.1:8000/api/documents")).json();
+            const listed = docs.map((doc) => `${doc.document_id}:${doc.name}`);
+            const id = docs[0]?.document_id;
+            const response = await fetch(`http://127.0.0.1:8000/api/documents/${id}/formulas`);
+            if (!response.ok) {
+              // Which papers the backend knows, and each one's artifact status:
+              // a 404 here is ambiguous between "never written" and "asked about
+              // the wrong document".
+              const perDocument = [];
+              for (const doc of docs) {
+                const probe = await fetch(
+                  `http://127.0.0.1:8000/api/documents/${doc.document_id}/formulas`,
+                );
+                perDocument.push(`${doc.name}: ${probe.status}`);
+              }
+              return { status: response.status, listed, perDocument };
+            }
+            const artifact = await response.json();
+            return {
+              listed,
+              status: artifact.status,
+              total: artifact.total_formulas,
+              ok: artifact.reconstructed_count,
+              refused: artifact.refused_count,
+              failed: artifact.failed_count,
+              first: artifact.formulas?.[0]?.block_id ?? null,
+              firstStatus: artifact.formulas?.[0]?.status ?? null,
+              reason:
+                artifact.formulas?.[0]?.error_reason ?? artifact.formulas?.[0]?.refusal_reason ?? null,
+            };
+          })
+          .catch((error) => ({ error: String(error) }));
+        console.error("  backend holds:", JSON.stringify(fromBackend));
+        const why = await page.evaluate(() => {
+          const item = document.querySelector('[data-testid="reflow-formula-item"]');
+          return {
+            mode: item?.dataset.renderMode ?? "(none)",
+            badge: item?.querySelector('[data-testid="reflow-formula-badge"]')?.textContent ?? "",
+            text: (item?.textContent ?? "").replace(/\s+/g, " ").slice(0, 160),
+            katexRequests: performance
+              .getEntriesByType("resource")
+              .map((entry) => entry.name)
+              .filter((name) => /katex/i.test(name)),
+            failures: window.__formulaDiag ?? null,
+          };
+        });
+        console.error("  formula diagnosis:", JSON.stringify(why));
+        console.error("  console:", consoleErrors.slice(0, 4).join(" | ") || "(none)");
+        throw error;
+      }
+
+      const afterFormulas = await ledger();
+      const reconstruction = afterFormulas.by_operation?.formula_latex ?? 0;
+      check("the reconstruction costs the disclosed number of calls, and no more",
+        reconstruction >= 1 && reconstruction <= 2,
+        `${reconstruction} call(s) for the paper's formulas (was ${beforeFormulas.calls} before)`);
+
+      const typeset = await page.evaluate(() => {
+        const item = document.querySelector('[data-testid="reflow-formula-item"]');
+        const math = item?.querySelector('[data-testid="reflow-formula-math"]');
+        const number = item?.querySelector('[data-testid="reflow-formula-number"]');
+        return {
+          katex: math ? math.querySelectorAll(".katex").length : 0,
+          badge: item?.querySelector('[data-testid="reflow-formula-badge"]')?.textContent ?? "",
+          number: number?.textContent ?? "",
+          // The container this application sizes — not a descendant KaTeX
+          // sizes itself, whose own rule is 1.21em of whatever it is given.
+          font: math
+            ? Number.parseFloat(
+                getComputedStyle(
+                  math.querySelector('[data-testid="reflow-formula-container"]') ?? math,
+                ).fontSize,
+              )
+            : 0,
+        };
+      });
+      check("the formula is typeset, not a picture of one",
+        typeset.katex > 0 && /AI 重建/.test(typeset.badge), JSON.stringify(typeset));
+      check("a typeset formula is set at the size the prose is set beside",
+        typeset.font >= 16 && typeset.font <= 20, `${typeset.font}px`);
+
+      // The reader can check it against the paper, which is the only real
+      // verification this feature has.
+      await page.click('[data-testid="reflow-formula-math"]');
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid="reflow-formula-item"]')?.dataset.renderMode ===
+          "crop",
+        null,
+        { timeout: 30000 },
+      );
+      const flipped = await page.evaluate(() => ({
+        badge:
+          document
+            .querySelector('[data-testid="reflow-formula-item"] [data-testid="reflow-formula-badge"]')
+            ?.textContent ?? "",
+        crop: document.querySelectorAll('[data-testid="reflow-formula-item"] canvas').length,
+      }));
+      check("one click shows the paper's own formula, and says which is which",
+        /原版/.test(flipped.badge) && flipped.crop > 0, JSON.stringify(flipped));
+      await page.click('[data-testid="reflow-formula-crop-toggle"]');
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid="reflow-formula-item"]')?.dataset.renderMode ===
+          "latex",
+        null,
+        { timeout: 30000 },
+      );
+      formulaChecked = true;
+    }
+    check("a formula run left the reading intact", formulaChecked || banner === 0,
+      formulaChecked ? "reconstruction exercised" : "no formulas on this paper");
+
+    // --- 3b5. a refused formula shows the paper, and says why ---------------
+    const refusals = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-testid="reflow-formula-item"]'))
+        .filter((item) => item.dataset.renderMode === "crop")
+        .map((item) => item.textContent ?? ""));
+    check("a formula the model would not answer for is shown as the paper's own",
+      refusals.every((text) => /原版|未重建|无法解析|过长/.test(text)),
+      `${refusals.length} fallback(s)`);
+
     // --- 3c. an outline click moves the reflowed column --------------------
     await page.click('[data-testid="assistant-tab-outline"]');
     await page.waitForSelector('[data-testid="outline-panel"]', { timeout: 30000 });
@@ -577,7 +817,7 @@ async function main() {
       JSON.stringify(reopenCalls));
 
     const designed = (text) =>
-      /status of 404/.test(text) && /\/(overview|analysis|bilingual-text)(\?|\s|$)/.test(text);
+      /status of 404/.test(text) && /\/(overview|analysis|bilingual-text|formulas)(\?|\s|$)/.test(text);
     // --- 5b. the column never scrolls sideways (AC-P0-10) ------------------
     for (const width of [768, 1280]) {
       await page.setViewportSize({ width, height: 900 });
@@ -611,6 +851,9 @@ async function main() {
       check(`the reading column does not scroll sideways at ${width}px`,
         fit.scrollWidth <= fit.clientWidth + 1, JSON.stringify(fit));
     }
+
+    check("nothing was fetched from outside this machine (offline-first, AC-P0-07)",
+      offsiteRequests.length === 0, offsiteRequests.slice(0, 3).join(" | ") || "loopback only");
 
     check("no uncaught console errors during the run",
       consoleErrors.filter((text) => !designed(text)).length === 0,

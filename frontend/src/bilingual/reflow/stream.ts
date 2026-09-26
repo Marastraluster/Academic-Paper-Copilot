@@ -72,6 +72,17 @@ export interface ReflowCrop {
   captionSide: "above" | "below" | "beside" | null;
   /** A table's footnotes, which belong directly under its crop. */
   footnote: string | null;
+  /**
+   * The number an equation is known by — `(1)` — when the paper printed one.
+   *
+   * Two ways to know it, and the second exists because the first is often
+   * absent: the extractor links a caption to its formula with `caption_of`, and
+   * **measured on the reader's own paper that link is null for all 6 equation
+   * numbers**. What survives is geometry — the number is set beside the formula
+   * it belongs to — so an unlinked number is claimed by the formula whose
+   * vertical middle it shares.
+   */
+  number: string | null;
 }
 
 /** Said once, where the references begin: they are not translated, on purpose. */
@@ -82,6 +93,9 @@ export interface ReflowNotice {
 }
 
 export type ReflowItem = ReflowHeading | ReflowPair | ReflowCrop | ReflowNotice;
+
+/** How close a number must sit to a formula to belong to it, in PDF points. */
+export const NUMBER_PAIRING_PT = 20;
 
 const FURNITURE = "abandon";
 const CROP_CLASSES = new Set(["figure", "table", "isolate_formula"]);
@@ -142,6 +156,8 @@ export function reflowStream(
   const footnotes = new Map<string, string[]>();
   const absorbed = new Set<string>();
 
+  /** Numbers already attached to a formula, so two cannot claim the same one. */
+  const claimed = new Set<string>();
   const items: ReflowItem[] = [];
   const emitted = new Set<string>();
   const noticeSections = new Set<string>();
@@ -175,7 +191,7 @@ export function reflowStream(
     });
   };
 
-  const emitCrop = (block: IrBlock): void => {
+  const emitCrop = (block: IrBlock, page: IrPage): void => {
     const own = captions.get(block.id) ?? [];
     const first = own[0];
     const side = captionSideOf(block.layout_class);
@@ -190,6 +206,7 @@ export function reflowStream(
       caption: first === undefined ? null : { text: first.text, translated: null },
       captionSide: side,
       footnote: notes.length > 0 ? notes.join(" ") : null,
+      number: numberFor(block, page),
     });
     for (const caption of own) absorbed.add(caption.id);
   };
@@ -205,6 +222,37 @@ export function reflowStream(
     }
   }
 
+  /** A page's equation numbers that no `caption_of` link claims. */
+  const unlinkedNumbers = (page: IrPage): IrBlock[] =>
+    page.blocks.filter(
+      (block) =>
+        (block.caption_of === null || block.caption_of === undefined) &&
+        (block.layout_class === "formula_caption" ||
+          /^\(\s*\d+\s*\)$/.test((block.text ?? "").trim())),
+    );
+
+  const midY = (box: Box): number => (box[1] + box[3]) / 2;
+
+  /** The number to print beside a formula, or null when the paper printed none. */
+  const numberFor = (block: IrBlock, page: IrPage): string | null => {
+    const linked = captions.get(block.id) ?? [];
+    if (linked.length > 0) return (linked[0]!.text ?? "").trim();
+    if (block.layout_class !== "isolate_formula") return null;
+    let best: IrBlock | null = null;
+    let bestDistance = NUMBER_PAIRING_PT;
+    for (const candidate of unlinkedNumbers(page)) {
+      if (claimed.has(candidate.id)) continue;
+      const distance = Math.abs(midY(candidate.bbox) - midY(block.bbox));
+      if (distance < bestDistance) {
+        best = candidate;
+        bestDistance = distance;
+      }
+    }
+    if (best === null) return null;
+    claimed.add(best.id);
+    return (best.text ?? "").trim();
+  };
+
   // --- the walk ---------------------------------------------------------------
   for (const page of ir.pages) {
     for (const block of page.blocks) {
@@ -219,7 +267,7 @@ export function reflowStream(
       }
 
       if (CROP_CLASSES.has(block.layout_class)) {
-        emitCrop(block);
+        emitCrop(block, page);
         continue;
       }
 
@@ -238,6 +286,8 @@ export function reflowStream(
       }
 
       if (Object.keys(CAPTION_SIDE).includes(block.layout_class)) continue;
+      // An unlinked `(1)` is not prose either; it belongs to its formula.
+      if (/^\(\s*\d+\s*\)$/.test((block.text ?? "").trim())) continue;
 
       const paragraph = paragraphByBlock.get(block.id);
       if (paragraph === undefined) continue;

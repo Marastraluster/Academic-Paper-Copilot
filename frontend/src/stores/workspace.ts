@@ -5,6 +5,7 @@ import type { ProviderProfile } from "@/api/profiles";
 import type { AnnotationView } from "@/api/annotations";
 import type { AnswerDiagnostics } from "@/api/qa";
 import type { BilingualPlan, BilingualView } from "@/api/bilingual";
+import type { FormulaPlan, FormulaView } from "@/api/formulas";
 import type { OverviewView } from "@/api/overview";
 import type { Citation } from "@/qa/parse";
 import type { MappingStatus, SelectionMapping } from "@/qa/selection";
@@ -415,6 +416,21 @@ interface WorkspaceState {
   bilingualError: string | null;
   bilingualStartedAt: number | null;
 
+  /**
+   * The reconstructed formulas of the open paper, when there are any.
+   *
+   * A separate artifact from the translation, with its own versions and its own
+   * cache file — so a paper whose paragraphs were translated before this
+   * tranche existed still reads, and its formulas fall back to the paper's own
+   * pixels until the reader asks for more.
+   */
+  formulas: FormulaView | null;
+  formulasPlan: FormulaPlan | null;
+  formulasFor: string | null;
+  formulasStatus: "idle" | "loading" | "generating" | "ready" | "failed";
+  formulasError: string | null;
+  formulasStartedAt: number | null;
+
   // ---- Sidebar (AC-05) ----
   sidebarOpen: boolean;
   toggleSidebar: () => void;
@@ -623,6 +639,12 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   bilingualPlan: null,
   bilingualFor: null,
   bilingualStatus: "idle",
+  formulas: null,
+  formulasPlan: null,
+  formulasFor: null,
+  formulasStatus: "idle",
+  formulasError: null,
+  formulasStartedAt: null,
   bilingualError: null,
   bilingualStartedAt: null,
 

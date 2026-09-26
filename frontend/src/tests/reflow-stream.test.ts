@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 
 import type { BilingualView } from "@/api/bilingual";
 import type { DocumentIr } from "@/api/ir";
-import { headingIndex, reflowStream, type ReflowItem } from "@/bilingual/reflow/stream";
+import { headingIndex, reflowStream, type Box, type ReflowItem } from "@/bilingual/reflow/stream";
 
 const fixture = JSON.parse(readFileSync("src/tests/__resnet_pages.json", "utf8")) as {
   pages: DocumentIr["pages"];
@@ -250,5 +250,67 @@ describe("DS-DOC-008 · the reading column", () => {
     // The references notice comes from the paper, not from the artifact: it is
     // true whether or not anything was ever translated.
     expect(kinds(items)).toContain("notice");
+  });
+});
+
+describe("DS-DOC-010 · equation numbers the extractor never linked", () => {
+  it("claims an unlinked number by the formula it sits beside (AC-P0-12)", () => {
+    // The reader's own paper is the case: `caption_of` is null for all 6 of its
+    // equation numbers, and what survives is geometry.
+    const page = {
+      page_number: 9,
+      width_pt: 612,
+      height_pt: 792,
+      rotation: 0,
+      blocks: [
+        {
+          id: "fx", page_number: 9, layout_class: "isolate_formula", text: "soup",
+          bbox: [80, 200, 300, 230] as Box, source_anchor_id: "",
+        },
+        {
+          id: "num", page_number: 9, layout_class: "formula_caption", text: "(7)",
+          bbox: [320, 208, 340, 220] as Box, source_anchor_id: "", caption_of: null,
+        },
+        // Far enough away that it belongs to nothing on this page.
+        {
+          id: "far", page_number: 9, layout_class: "plain text", text: "not prose",
+          bbox: [50, 700, 300, 740] as Box, source_anchor_id: "",
+        },
+      ],
+    };
+    const ir: DocumentIr = {
+      document_id: "doc_x", content_hash: "h", page_count: 1,
+      pages: [page], paragraphs: [], sections: [],
+    };
+    const items = reflowStream(ir, null);
+    const crop = items.find((item) => item.kind === "crop" && item.blockId === "fx");
+    expect(crop?.kind).toBe("crop");
+    if (crop?.kind === "crop") expect(crop.number).toBe("(7)");
+    // And the number is not also emitted as a block of its own.
+    expect(items.some((item) => item.kind === "crop" && item.blockId === "num")).toBe(false);
+  });
+
+  it("leaves a formula without a nearby number unnumbered", () => {
+    const page = {
+      page_number: 1, width_pt: 612, height_pt: 792, rotation: 0,
+      blocks: [
+        {
+          id: "fx", page_number: 1, layout_class: "isolate_formula", text: "soup",
+          bbox: [80, 100, 300, 130] as Box, source_anchor_id: "",
+        },
+        {
+          id: "num", page_number: 1, layout_class: "formula_caption", text: "(9)",
+          bbox: [320, 600, 340, 612] as Box, source_anchor_id: "", caption_of: null,
+        },
+      ],
+    };
+    const ir: DocumentIr = {
+      document_id: "doc_y", content_hash: "h", page_count: 1,
+      pages: [page], paragraphs: [], sections: [],
+    };
+    const crop = reflowStream(ir, null).find(
+      (item) => item.kind === "crop" && item.blockId === "fx",
+    );
+    if (crop?.kind === "crop") expect(crop.number).toBeNull();
   });
 });
