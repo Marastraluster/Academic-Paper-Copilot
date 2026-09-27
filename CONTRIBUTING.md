@@ -20,10 +20,10 @@ not measured, say it was not measured.
 ## Before you open a pull request
 
 ```bash
-# Backend: 1129 tests, offline by construction
+# Backend: 1198 tests, offline by construction
 cd backend && .venv/Scripts/python -m pytest          # .venv/bin/python on macOS/Linux
 
-# Frontend: types, 359 tests, production build
+# Frontend: types, 404 tests, production build
 cd frontend && npm run typecheck && npx vitest run && npm run build
 ```
 

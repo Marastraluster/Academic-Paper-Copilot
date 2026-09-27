@@ -4,8 +4,8 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-4f46e5"></a>
-  <img alt="Backend tests" src="https://img.shields.io/badge/backend%20tests-1129%20passing-2ea043">
-  <img alt="Frontend tests" src="https://img.shields.io/badge/frontend%20tests-359%20passing-2ea043">
+  <img alt="Backend tests" src="https://img.shields.io/badge/backend%20tests-1198%20passing-2ea043">
+  <img alt="Frontend tests" src="https://img.shields.io/badge/frontend%20tests-404%20passing-2ea043">
   <img alt="Python" src="https://img.shields.io/badge/python-3.12-3776ab">
   <img alt="React" src="https://img.shields.io/badge/react-18-61dafb">
   <img alt="Local-first" src="https://img.shields.io/badge/local--first-0f766e">
@@ -21,7 +21,7 @@
 
 ---
 
-Academic Paper Copilot 是一个本地优先的学术 PDF 阅读器。它让你始终面对**论文原文本身** —— 不是被重新录入的副本 —— 再围绕它把该有的东西建起来：抽取出的文档结构、能给出段落级引用的问答、你自己的笔记与高亮、整篇论文的翻译，以及一份写给**人**而不是写给机器看的阅读导览。
+Academic Paper Copilot 是一个本地优先的学术 PDF 阅读器。它让你始终面对**论文原文本身** —— 不是被重新录入的副本 —— 再围绕它把该有的东西建起来：抽取出的文档结构、能给出段落级引用的问答、你自己的笔记与高亮、整篇论文的翻译，一份把论文重排成单栏、逐段对照的阅读视图，以及一份写给**人**而不是写给机器看的阅读导览。
 
 除了你明确发起的那几次模型调用，什么都不离开这台机器。没有账号、没有遥测、没有云同步、没有 CDN：浏览器只跟本机回环上的后端说话，后端只跟你配置的那个端点说话 —— 这就是全部的对外网络行为。
 
@@ -56,6 +56,10 @@ Academic Paper Copilot 是一个本地优先的学术 PDF 阅读器。它让你�
 **设置 · 模型服务。** 在界面里新建、编辑、删除、探测模型服务配置。配置项是 SQLite 里的一行；**API Key 写进操作系统的凭据存储，永远不进数据库** —— 前端只会知道"有没有 key"以及一个掩码。key 是可选的，因为本地的 OpenAI 兼容服务本来就不需要。
 
 > **语言说明。** 界面以简体中文为主（Chinese-first）；Reader Overview 可以生成中文或英文，界面其余部分尚未做多语言。
+
+**逐段对照 · 重排阅读。** 论文重排成一栏可读的正文：按阅读尺度排版，每段正下方就是它的译文；而**像素本身就是内容**的东西 —— 图、表、行间公式、它们的题注 —— 以论文自己页面的裁切形式随流摆好，从矢量内容放大而不是拉伸。标题只来自抽取器派生的章节（绝不来自那个会把表格列头叫成 `title` 的版式分类），参考文献保留原文并说明原因，题注按排版惯例摆放（图题在下、表题在上）。译文每篇论文只生成一次，分批有界，按内容哈希缓存。
+
+**公式重建 · 公式排版。** PDF 里的行间公式本质是一张图：抽取出来的文字是字形流（`LInfoNCE = −1 / 2B / B / X / i=1` 其实是一个求和号，上下限被拍平到了下一行），所以本应用从这个字形流和它周围的正文**反推** LaTeX，再用**本地打包的 KaTeX** 排版。因为反推有可能"看着很像但其实错了"，每一条都标注 **AI 重建**，点一下立刻换成论文原版裁切（带标注），再点一下换回来。模型**可以拒答** —— 认不出的公式保留论文原样，而不是给你一个看着合理的猜测 —— 解析不过的字符串**根本不会被渲染**。每 15 条公式一次调用，按论文内容哈希缓存，花钱之前先披露。
 
 ## 截图
 
@@ -173,10 +177,10 @@ python backend/scripts/configure_provider.py --name Local \
 ## 测试
 
 ```bash
-# 后端 —— 1129 个测试，构造上完全离线
+# 后端 —— 1198 个测试，构造上完全离线
 cd backend && .venv/Scripts/python -m pytest
 
-# 前端 —— 359 个测试
+# 前端 —— 404 个测试
 cd frontend && npm run typecheck && npx vitest run && npm run build
 
 # 浏览器验收 —— 真实 Chromium、真实后端、真实 PDF
@@ -206,7 +210,7 @@ backend/            FastAPI 服务
   app/annotations/  笔记与高亮，锚定在内容上
   app/pdfkernel/    翻译内核适配层
   app/llm/          provider 解析、调用账本、脱敏
-  tests/            1129 个测试
+  tests/            1198 个测试
 frontend/           React + Vite 应用
   src/pdf/          阅读面板（PDF.js，窗口化渲染，文字层）
   src/qa/           划选捕获、范围、回答、引用
@@ -225,7 +229,8 @@ assets/             项目图形
 
 ## 路线图
 
-- **段落级双语对照阅读** —— 原文与译文按段落交错，像沉浸式阅读插件那样的呈现，作为**新增**的阅读模式，不动现有的几种。
+- **段内行内格式** —— 段落内部的加粗与斜体。抽取器目前会把文字片段拍平，所以像 **Abstract** 这样的小标题只能作为纯文本到达；实测这些论文里 22–57% 的行带样式，这正是"一堆文字"和"印出来的那一页"的差别。
+- **引用跳转** —— 在重排栏里把 `[24]` 解析到它指向的那条参考文献。
 - **落盘每次生成的用量** —— 记录 token 与耗时，让论文库的记录能说清一次翻译花了多少，而不是只能沉默。
 - **界面多语言** —— 目前以中文为主，英文及其他语言待做。
 - **英文界面的截图与文档。**

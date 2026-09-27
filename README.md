@@ -4,8 +4,8 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-4f46e5"></a>
-  <img alt="Backend tests" src="https://img.shields.io/badge/backend%20tests-1129%20passing-2ea043">
-  <img alt="Frontend tests" src="https://img.shields.io/badge/frontend%20tests-359%20passing-2ea043">
+  <img alt="Backend tests" src="https://img.shields.io/badge/backend%20tests-1198%20passing-2ea043">
+  <img alt="Frontend tests" src="https://img.shields.io/badge/frontend%20tests-404%20passing-2ea043">
   <img alt="Python" src="https://img.shields.io/badge/python-3.12-3776ab">
   <img alt="React" src="https://img.shields.io/badge/react-18-61dafb">
   <img alt="Local-first" src="https://img.shields.io/badge/local--first-no%20telemetry-0f766e">
@@ -24,8 +24,8 @@
 Academic Paper Copilot is a local-first reader for academic PDFs. It keeps the paper you are
 reading in front of you — the original, not a re-typed copy — and builds everything else
 around it: an extracted structure, an answer engine that cites the paragraphs it used, your
-own notes and highlights, a translation of the whole paper, and a short orientation written
-for a reader rather than for a machine.
+own notes and highlights, a translation of the whole paper, a paragraph-by-paragraph reading
+of it in one column, and a short orientation written for a reader rather than for a machine.
 
 Nothing leaves the machine except the model calls you explicitly ask for. There is no account,
 no telemetry, no cloud sync, and no CDN: the browser talks to a loopback backend, the backend
@@ -66,6 +66,25 @@ document's content rather than to a database row.
 **Translation.** Whole-paper translation through a local PDF translation kernel, producing a
 translated document, a 2N-page interleaved original/translation artifact for export, and a
 side-by-side bilingual reading mode with independent panes.
+
+**逐段对照 · Paragraph-aligned reading.** The paper reflowed into one readable column: the
+prose set at a reading measure with each paragraph's translation directly beneath it, and
+everything whose pixels *are* the content — figures, tables, display formulas, their captions —
+carried as crops of the paper's own pages, magnified from the vector source rather than
+stretched. Headings come from the sections the extractor derived (never from the layout class
+that calls a table sub-label a title), the bibliography is kept in the original and says so,
+and captions are placed by convention — figures below, tables above. The translation is
+generated once per paper, in bounded batches, and cached by content hash.
+
+**公式重建 · Formulas, typeset.** A display formula in a PDF is a picture: its extracted text
+is glyph soup (`LInfoNCE = −1 / 2B / B / X / i=1` is a sum with its bounds flattened onto the
+next line), so this application *reconstructs* the LaTeX from that soup and the prose around
+it, and typesets it with a locally bundled KaTeX. Because a reconstruction can be wrong in a
+way that looks right, every one is badged **AI 重建** and one click shows the paper's own crop,
+labelled, and one click returns. The model may refuse — a formula it cannot read keeps the
+paper's pixels rather than a plausible guess — and anything that does not parse is never
+rendered at all. One call per 15 formulas, cached by the paper's content hash, disclosed
+before it is spent.
 
 **论文库 · Library.** Every paper the application has registered, what each one has
 (a translation, an overview, notes), and the record of the last successful translation —
@@ -230,10 +249,10 @@ Two habits are worth naming, because they are the reason to trust the numbers:
 ## Testing
 
 ```bash
-# Backend — 1129 tests, offline by construction
+# Backend — 1198 tests, offline by construction
 cd backend && .venv/Scripts/python -m pytest
 
-# Frontend — 359 tests
+# Frontend — 404 tests
 cd frontend && npm run typecheck && npx vitest run && npm run build
 
 # Browser acceptance — real Chromium, real backend, real PDFs
@@ -247,6 +266,7 @@ node scripts/e2e-crosspage.mjs               # cross-page selection
 node scripts/e2e-nonprose.mjs                # captions and formulas
 node scripts/e2e-outline.mjs                 # outline navigation
 node scripts/e2e-translation.mjs             # translation and reader modes
+  node scripts/e2e-reflow-bilingual.mjs        # paragraph reading and formula typesetting
 ```
 
 The backend suite fails any test that opens a non-loopback socket, and every test runs against
@@ -254,7 +274,9 @@ a temporary database — your real library is never touched by a test run.
 
 The browser harnesses copy your data directory into a scratch directory and run against the
 copy. They also report the provider ledger, which is how "this cost nothing" is a measurement
-rather than a promise.
+rather than a promise. The formula harness runs against a loopback stub provider and fails the
+run if the page requests anything that is not loopback — offline-first is a checked property
+here, not a claim.
 
 ## Repository layout
 
@@ -262,15 +284,19 @@ rather than a promise.
 backend/            FastAPI service
   app/document/     PDF extraction → DocumentIR
   app/overview/     reader overview: packet, prompt, pipeline, content-addressed cache
+  app/bilingual/    paragraph translation: batching, validation, content-addressed cache
+  app/formulas/     LaTeX reconstruction from a formula's extracted glyph stream
   app/qa/           retrieval, expansion, answering
   app/annotations/  notes and highlights, anchored to content
   app/pdfkernel/    translation kernel adapter
   app/llm/          provider resolution, accounting ledger, sanitisation
-  tests/            1129 tests
+  tests/            1198 tests
 frontend/           React + Vite application
   src/pdf/          reader pane (PDF.js, windowed rendering, text layer)
   src/qa/           selection capture, scope, answers, citations
   src/overview/     reading entry, generated overview, session
+  src/bilingual/    the reflowed paragraph reading (stream assembly, crops, the column)
+  src/formulas/     KaTeX rendering, provenance badge, one-click comparison with the paper
   src/library/      the document library
   src/settings/     provider settings
   src/session/      reading continuity across reloads
@@ -285,8 +311,11 @@ assets/             project marks
 
 ## Roadmap
 
-- **Paragraph-level bilingual reading** — original and translation interleaved by paragraph,
-  the way immersion readers present a page, as a new reading mode beside the existing ones.
+- **Inline formatting runs** — the paper's own bold and italic inside a paragraph. The
+  extractor currently flattens text spans, so a run-in heading like **Abstract** arrives as
+  plain text; measured, 22–57 % of the lines of the papers here carry a styled span, which is
+  the difference between a text dump and the printed page.
+- **Citation linking** — `[24]` resolved to the reference it names, in the reflowed column.
 - **Persisted run telemetry** — tokens and latency per generation, so the library's record can
   say what a translation cost instead of staying silent about it.
 - **Localised interface** — the UI is Chinese-first today; English and others to follow.
