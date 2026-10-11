@@ -19,6 +19,7 @@ import {
   type OverviewView,
 } from "@/api/overview";
 import { isAbortError } from "@/api/client";
+import { profileIdFor } from "@/settings/taskModels";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 let activeRead: AbortController | null = null;
@@ -114,7 +115,8 @@ export async function generateOverview(): Promise<GenerateOutcome> {
   if (!document || document.documentId === null) {
     return { ok: false, reason: "请先打开一篇论文。" };
   }
-  if (!state.profileId) {
+  const profileId = profileIdFor("overview", state);
+  if (!profileId) {
     return { ok: false, reason: "请先配置可用的模型服务。" };
   }
 
@@ -130,7 +132,7 @@ export async function generateOverview(): Promise<GenerateOutcome> {
 
   try {
     const overview = await requestOverview(
-      documentId, state.profileId, OVERVIEW_LANGUAGE,
+      documentId, profileId, OVERVIEW_LANGUAGE,
       { signal: controller.signal, force: true },
     );
     if (

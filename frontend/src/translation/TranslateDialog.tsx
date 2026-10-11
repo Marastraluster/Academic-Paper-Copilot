@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Sparkles, TriangleAlert } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { readTaskModels } from "@/settings/taskModels";
 import { cn } from "@/lib/utils";
 import { listProfiles, type ProviderProfile } from "@/api/profiles";
 import { describeApiError } from "@/translation/errors";
@@ -106,7 +107,14 @@ export function TranslateDialog({ open, onClose, onSubmit }: TranslateDialogProp
         const loaded = await listProfiles(controller.signal);
         if (controller.signal.aborted) return;
         setProfiles(loaded);
-        setProfileId((current) => current || loaded[0]?.id || "");
+        // The reader's choice for translation, when it still exists; else the first.
+        const preferred = readTaskModels().translate;
+        setProfileId(
+          (current) =>
+            current ||
+            (loaded.some((profile) => profile.id === preferred) ? preferred : loaded[0]?.id) ||
+            "",
+        );
       } catch (cause) {
         if (controller.signal.aborted) return;
         setProfiles([]);
@@ -177,7 +185,7 @@ export function TranslateDialog({ open, onClose, onSubmit }: TranslateDialogProp
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(230,235,242,.45)] p-4 backdrop-blur-[6px]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -188,7 +196,7 @@ export function TranslateDialog({ open, onClose, onSubmit }: TranslateDialogProp
         aria-modal="true"
         aria-labelledby="translate-dialog-title"
         data-testid="translate-dialog"
-        className="w-full max-w-sm rounded-lg border bg-card p-4 shadow-lg"
+        className="glass glass-solid w-full max-w-sm animate-pop rounded-[26px] p-5"
       >
         <h2
           id="translate-dialog-title"

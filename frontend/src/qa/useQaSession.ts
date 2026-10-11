@@ -9,6 +9,7 @@
 import { useCallback, useMemo } from "react";
 
 import { askQa, retryTurn, scopeAvailability } from "@/qa/session";
+import { profileIdFor } from "@/settings/taskModels";
 import { activeSectionFor } from "@/stores/workspace";
 import type { MappingStatus, SelectionMapping } from "@/qa/selection";
 import {
@@ -69,7 +70,7 @@ export function useQaSession(): QaSession {
   const activeSectionId = useWorkspaceStore((s) => s.activeSectionId);
   const selectedSectionId = useWorkspaceStore((s) => s.selectedSectionId);
   const profilesError = useWorkspaceStore((s) => s.profilesError);
-  const profileId = useWorkspaceStore((s) => s.profileId);
+  const profileId = useWorkspaceStore((s) => profileIdFor("qa", s));
   // `selectActiveTurns` filters, so it returns a fresh array every call. Feeding
   // it to the store directly makes every render look like a state change and
   // React bails out with "maximum update depth exceeded". Selecting the raw list
@@ -115,7 +116,7 @@ export function useQaSession(): QaSession {
     async (questionOverride?: string) => {
       await askQa({
         question: questionOverride ?? useWorkspaceStore.getState().question,
-        profileId: useWorkspaceStore.getState().profileId,
+        profileId: profileIdFor("qa", useWorkspaceStore.getState()),
       });
     },
     [],
@@ -126,7 +127,7 @@ export function useQaSession(): QaSession {
       if (!action.enabled) return;
       await askQa({
         question: action.question,
-        profileId: useWorkspaceStore.getState().profileId,
+        profileId: profileIdFor("qa", useWorkspaceStore.getState()),
         // The action's own scope, or whatever is selected when it does not
         // prescribe one. Never a silently different scope: the badge on the
         // resulting turn records which one was used.
@@ -146,7 +147,7 @@ export function useQaSession(): QaSession {
     if (!turn) return;
     await askQa({
       question: turn.question,
-      profileId: useWorkspaceStore.getState().profileId,
+      profileId: profileIdFor("qa", useWorkspaceStore.getState()),
       scopeOverride: "whole_paper",
       fromComposer: false,
     });
