@@ -242,27 +242,8 @@ python backend/scripts/configure_provider.py --name Local \
 
 ## How it works
 
-```
-              ┌──────────────────────────── browser (React + Vite) ────────────────────────────┐
-              │  reader pane (PDF.js, windowed)   sidebar: 概览 · 目录 · 文献 · 笔记           │
-              │  Copilot column (问答)   settings · library · translation dialogs               │
-              └───────────────────────────────┬─────────────────────────────────────────────────┘
-                                              │  HTTP, loopback only
-              ┌───────────────────────────────┴─────────────────────────────────────────────────┐
-              │  FastAPI service                                                                 │
-              │                                                                                  │
-              │   extraction ──► DocumentIR ──► sections · paragraphs · anchors                  │
-              │       │  (built-in PyMuPDF + layout model, or an optional MinerU parse)          │
-              │       │                                                                          │
-              │       ├─► overview packet ─► one bounded synthesis ─► cached by hash             │
-              │       ├─► Paper QA retrieval ─► cited answer                                     │
-              │       ├─► bilingual job ─► batches ─► partial on disk ─► glossary ─► reading      │
-              │       └─► translation kernel ─► mono · dual (2N) artifacts                       │
-              │                                                                                  │
-              │   opt-in egress: MinerU endpoint · OpenAlex / Semantic Scholar / web-search model │
-              │   SQLite: documents · tasks · annotations · profiles    OS keyring: API keys      │
-              └──────────────────────────────────────────────────────────────────────────────────┘
-```
+
+![Academic Paper Copilot architecture overview](docs/architecture-overview.png)
 
 Five ideas carry most of the design:
 
