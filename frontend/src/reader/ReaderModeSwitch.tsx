@@ -9,10 +9,9 @@ import {
 /** AC-03's three labels, plus the paragraph-aligned column (DS-DOC-006). */
 const MODES: ReadonlyArray<{ value: ReaderMode; label: string; title: string }> =
   [
-    { value: "original", label: "原文", title: "只显示原文" },
-    { value: "bilingual", label: "双语", title: "原文与译文左右对照" },
-    { value: "translation", label: "译文", title: "只显示译文" },
     { value: "immersive", label: "逐段", title: "原文一段、译文一段，逐段对照" },
+    { value: "original", label: "原文", title: "只显示原文 PDF" },
+    { value: "translation", label: "译文", title: "版面翻译后的 PDF（pdf2zh，可选）" },
   ];
 
 /** The modes that need a translated PDF. `immersive` needs none: it is its own
@@ -36,12 +35,23 @@ export function ReaderModeSwitch() {
   const hasTranslation = useWorkspaceStore(selectHasTranslation);
   const effectiveMode = useWorkspaceStore(selectEffectiveMode);
 
+  const activeIndex = MODES.findIndex((mode) => mode.value === effectiveMode);
+
   return (
     <div
       role="tablist"
       aria-label="阅读模式"
-      className="inline-flex shrink-0 items-center gap-0.5 rounded-md border bg-muted/60 p-0.5"
+      className="glass-track relative inline-flex shrink-0 items-center rounded-full p-[3px]"
     >
+      {/* The glass thumb slides — with a little overshoot — to the active mode. */}
+      {activeIndex >= 0 && (
+        <span
+          aria-hidden="true"
+          data-testid="reader-mode-thumb"
+          className="glass-thumb absolute left-[3px] top-[3px] h-8 w-[60px] rounded-full"
+          style={{ transform: `translateX(${activeIndex * 60}px)` }}
+        />
+      )}
       {MODES.map(({ value, label, title }) => {
         const locked = NEEDS_A_PDF_TRANSLATION.has(value) && !hasTranslation;
         const active = effectiveMode === value;
@@ -59,11 +69,11 @@ export function ReaderModeSwitch() {
             data-locked={locked ? "true" : undefined}
             onClick={() => setReaderMode(value)}
             className={cn(
-              "rounded px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+              "relative z-[1] h-8 w-[60px] rounded-full text-[13px] transition-[color,transform] duration-300 ease-spring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[.92]",
               active
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-              locked && "cursor-not-allowed opacity-40 hover:text-muted-foreground",
+                ? "font-semibold text-foreground"
+                : "font-medium text-muted-foreground hover:text-foreground",
+              locked && "cursor-not-allowed opacity-40 hover:text-muted-foreground active:scale-100",
             )}
           >
             {label}

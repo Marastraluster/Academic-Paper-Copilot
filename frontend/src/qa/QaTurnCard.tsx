@@ -41,7 +41,7 @@ export function QaTurnCard({ turn, onJump, onRetry, onWiden }: QaTurnCardProps) 
     <article
       data-testid={`qa-turn-${turn.id}`}
       data-state={turn.result.state}
-      className="rounded-md border bg-card px-2.5 py-2"
+      className="animate-rise rounded-2xl border border-[var(--glass-line)] bg-[var(--glass-strong)] px-3 py-2.5 shadow-[var(--glass-highlight)]"
     >
       <header className="mb-1.5 flex items-start gap-2">
         <h3 className="min-w-0 flex-1 text-xs font-medium leading-snug text-foreground">

@@ -50,7 +50,7 @@ export function Composer() {
   };
 
   return (
-    <div className="shrink-0 border-t bg-card p-2">
+    <div className="shrink-0 border-t border-[var(--glass-line)] p-2">
       <div className="flex items-end gap-1.5">
         <textarea
           rows={1}

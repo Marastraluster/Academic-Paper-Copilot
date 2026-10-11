@@ -155,7 +155,7 @@ export function PdfPage({
       // `--scale-factor` would work and would depend on a library's internals;
       // this is the application's own contract with itself.
       data-page-scale={scale}
-      className="pdf-page relative mx-auto shrink-0 bg-page-surface shadow-sm"
+      className="pdf-page relative mx-auto shrink-0 rounded-[3px] bg-page-surface shadow-[0_24px_60px_rgba(18,28,50,.16),0_2px_6px_rgba(18,28,50,.08)]"
       style={{ width, height }}
     >
       {shouldRender && (

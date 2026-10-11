@@ -177,7 +177,7 @@ export function LibraryDialog({ open, onClose, initialQuery = "" }: LibraryDialo
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(230,235,242,.45)] p-4 backdrop-blur-[6px]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -188,7 +188,7 @@ export function LibraryDialog({ open, onClose, initialQuery = "" }: LibraryDialo
         aria-modal="true"
         aria-labelledby="library-dialog-title"
         data-testid="library-dialog"
-        className="flex max-h-[85vh] w-full max-w-lg flex-col gap-2 rounded-lg border bg-card p-4 shadow-lg"
+        className="glass glass-solid flex max-h-[85vh] w-full max-w-lg animate-pop flex-col gap-2 rounded-[26px] p-5"
       >
         <div className="flex items-center justify-between">
           <h2 id="library-dialog-title" className="flex items-center gap-1.5 text-sm font-semibold">
@@ -201,7 +201,7 @@ export function LibraryDialog({ open, onClose, initialQuery = "" }: LibraryDialo
         </div>
 
         <div className="relative">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 z-[1] h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
           <input
             type="search"
             data-testid="library-search-input"
@@ -209,7 +209,7 @@ export function LibraryDialog({ open, onClose, initialQuery = "" }: LibraryDialo
             aria-label="搜索论文"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="h-7 w-full rounded-md border bg-background pl-7 pr-2 text-xs"
+            className="h-9 w-full rounded-full pl-9 pr-3 text-[13px]"
           />
         </div>
 
@@ -236,8 +236,10 @@ export function LibraryDialog({ open, onClose, initialQuery = "" }: LibraryDialo
                   data-testid={`library-row-${row.document_id}`}
                   data-current={isCurrent}
                   className={cn(
-                    "rounded-sm border px-2 py-1.5",
-                    isCurrent ? "border-primary/40 bg-primary/5" : "border-transparent bg-accent/30",
+                    "animate-rise rounded-2xl border px-3 py-2.5 transition-[background-color,transform] duration-300 ease-spring hover:-translate-y-px",
+                    isCurrent
+                      ? "border-primary/30 bg-primary/[.07]"
+                      : "border-[var(--glass-line)] bg-white/60 hover:bg-white/85",
                   )}
                 >
                   <div className="flex items-start gap-2">

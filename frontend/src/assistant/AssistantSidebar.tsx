@@ -25,9 +25,8 @@ const OutlinePanel = lazy(() =>
 const NotesPanel = lazy(() =>
   import("@/notes/NotesPanel").then((module) => ({ default: module.NotesPanel })),
 );
-const QaPanel = lazy(() =>
-  import("@/assistant/QaPanel").then((module) => ({ default: module.QaPanel })),
-);
+/** The papers around this one — reaches an outside index, so never eager. */
+const RelatedPanel = lazy(() => import("@/related/RelatedPanel"));
 
 /**
  * What is on screen while a panel's code arrives.
@@ -66,16 +65,19 @@ function PanelLoading() {
  */
 export function AssistantSidebar() {
   const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen);
-  const panel = useWorkspaceStore((s) => s.outlinePanel);
+  /* 问答 moved to the Copilot column on the right. A stored "qa" (an older
+     session, or a caller that still names it) shows the overview here. */
+  const stored = useWorkspaceStore((s) => s.outlinePanel);
+  const panel = stored === "qa" ? "overview" : stored;
   const setPanel = useWorkspaceStore((s) => s.setOutlinePanel);
 
-  /* 概览 first, and it is where a paper opens. The order is the reading
-     order: what this paper is, where its parts are, what it says when asked,
-     what I thought of it. */
+  /* 概览 first, and it is where a paper opens: what this paper is, where its
+     parts are, what surrounds it, what I thought of it. Asking about it is the
+     Copilot column's job. */
   const tabs = [
     { id: "overview" as const, label: "概览" },
     { id: "outline" as const, label: "目录" },
-    { id: "qa" as const, label: "问答" },
+    { id: "related" as const, label: "文献" },
     { id: "notes" as const, label: "笔记" },
   ];
 
@@ -88,8 +90,8 @@ export function AssistantSidebar() {
       aria-hidden={!sidebarOpen}
       style={{ width: sidebarOpen ? SIDEBAR_WIDTH_PX : 0 }}
       className={cn(
-        "shrink-0 overflow-hidden border-r bg-card transition-[width] duration-200 ease-out",
-        !sidebarOpen && "border-r-0",
+        "glass shrink-0 overflow-hidden rounded-[26px] transition-[width,margin,opacity,filter] duration-500 ease-glass",
+        sidebarOpen ? "mr-2" : "mr-0 border-0 opacity-0 blur-sm",
       )}
     >
       {sidebarOpen && (
@@ -102,8 +104,16 @@ export function AssistantSidebar() {
             role="tablist"
             aria-label="侧边栏面板"
             data-testid="assistant-tabs"
-            className="flex shrink-0 gap-1 border-b px-2 py-1.5"
+            className="glass-track relative mx-2.5 mb-1.5 mt-2.5 grid shrink-0 grid-cols-4 rounded-[15px] p-[3px]"
           >
+            <span
+              aria-hidden="true"
+              className="glass-thumb absolute bottom-[3px] left-[3px] top-[3px] rounded-xl"
+              style={{
+                width: "calc((100% - 6px) / 4)",
+                transform: `translateX(${Math.max(0, tabs.findIndex((tab) => tab.id === panel)) * 100}%)`,
+              }}
+            />
             {tabs.map((tab) => (
               <button
                 key={tab.id}
@@ -115,11 +125,11 @@ export function AssistantSidebar() {
                 data-testid={`assistant-tab-${tab.id}`}
                 onClick={() => setPanel(tab.id)}
                 className={cn(
-                  "rounded-sm px-2.5 py-1 text-xs",
+                  "relative z-[1] h-8 rounded-xl text-xs transition-[color,transform] duration-300 ease-spring active:scale-[.94]",
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
                   panel === tab.id
-                    ? "bg-primary/10 font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-accent/60",
+                    ? "font-semibold text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {tab.label}
@@ -133,7 +143,7 @@ export function AssistantSidebar() {
               role="tabpanel"
               aria-labelledby="assistant-tab-overview"
               data-testid="assistant-tabpanel-overview"
-              className="flex min-h-0 flex-1 flex-col"
+              className="flex min-h-0 flex-1 animate-pane-in flex-col"
             >
               <OverviewPanel />
             </div>
@@ -143,10 +153,22 @@ export function AssistantSidebar() {
               role="tabpanel"
               aria-labelledby="assistant-tab-notes"
               data-testid="assistant-tabpanel-notes"
-              className="flex min-h-0 flex-1 flex-col"
+              className="flex min-h-0 flex-1 animate-pane-in flex-col"
             >
               <Suspense fallback={<PanelLoading />}>
                 <NotesPanel />
+              </Suspense>
+            </div>
+          ) : panel === "related" ? (
+            <div
+              id="assistant-tabpanel-related"
+              role="tabpanel"
+              aria-labelledby="assistant-tab-related"
+              data-testid="assistant-tabpanel-related"
+              className="flex min-h-0 flex-1 animate-pane-in flex-col"
+            >
+              <Suspense fallback={<PanelLoading />}>
+                <RelatedPanel />
               </Suspense>
             </div>
           ) : panel === "outline" ? (
@@ -155,26 +177,14 @@ export function AssistantSidebar() {
               role="tabpanel"
               aria-labelledby="assistant-tab-outline"
               data-testid="assistant-tabpanel-outline"
-              className="flex min-h-0 flex-1 flex-col"
+              className="flex min-h-0 flex-1 animate-pane-in flex-col"
             >
               <OutlineHeader />
               <Suspense fallback={<PanelLoading />}>
                 <OutlinePanel />
               </Suspense>
             </div>
-          ) : (
-            <div
-              id="assistant-tabpanel-qa"
-              role="tabpanel"
-              aria-labelledby="assistant-tab-qa"
-              data-testid="assistant-tabpanel-qa"
-              className="flex min-h-0 flex-1 flex-col"
-            >
-              <Suspense fallback={<PanelLoading />}>
-                <QaPanel />
-              </Suspense>
-            </div>
-          )}
+          ) : null}
         </div>
       )}
     </aside>

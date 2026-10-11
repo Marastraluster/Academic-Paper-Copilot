@@ -17,16 +17,19 @@
     --card: 0 0% 100%;
     --card-foreground: 222 15% 12%;
 
-    --primary: 222 47% 20%;
+    /* The glass design's accent blue (#3554D1). */
+    --primary: 229 61% 51%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 220 14% 96%;
     --secondary-foreground: 222 15% 18%;
 
     --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 42%;
+    /* 34%, not 42%: secondary text sits on translucent glass, and where a blue
+       orb drifts behind a panel 42% works out to 3.5–4.0:1 — under WCAG AA. */
+    --muted-foreground: 220 9% 34%;
 
-    --accent: 220 14% 94%;
+    --accent: 220 30% 95%;
     --accent-foreground: 222 15% 15%;
 
     --destructive: 0 72% 45%;
@@ -34,13 +37,31 @@
 
     --border: 220 13% 88%;
     --input: 220 13% 88%;
-    --ring: 222 47% 35%;
+    --ring: 229 61% 51%;
 
     /* Workspace surfaces */
     --workspace: 220 14% 96%;
     --page-surface: 0 0% 100%;
 
-    --radius: 0.375rem;
+    --radius: 0.5rem;
+
+    /* Liquid glass — the shell floats on a soft light field. */
+    --field: #e6ebf2;
+    --orb-1: #8db6ff;
+    --orb-2: #ffc6a6;
+    --orb-3: #a6e3cb;
+    --glass: rgba(255, 255, 255, 0.46);
+    --glass-strong: rgba(255, 255, 255, 0.74);
+    --glass-line: rgba(255, 255, 255, 0.62);
+    --glass-track: rgba(110, 122, 145, 0.14);
+    --glass-hover: rgba(255, 255, 255, 0.55);
+    --glass-blur: 24px;
+    --glass-shadow: 0 12px 32px rgba(22, 32, 56, 0.12), 0 1px 2px rgba(22, 32, 56, 0.07);
+    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.78), inset 0 -1px 0 rgba(255, 255, 255, 0.18);
+    --workspace-bg: rgba(255, 255, 255, 0.16);
+    --field-bg: rgba(255, 255, 255, 0.58);
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --ease-glass: cubic-bezier(0.32, 0.72, 0, 1);
   }
 }
 
@@ -61,7 +82,8 @@
    */
   html,
   body {
-    @apply overflow-hidden bg-background text-foreground;
+    @apply overflow-hidden text-foreground;
+    background: var(--field);
   }
 
   body {
@@ -78,6 +100,122 @@
   * {
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--border)) transparent;
+  }
+}
+
+@layer components {
+  /*
+   * Frosted glass. Translucent fill, a backdrop blur that also lifts saturation
+   * (what makes Apple's material read as glass rather than fog), a bright inner
+   * top edge, and a soft drop shadow. The ::after sheen is the light hitting
+   * the upper half.
+   */
+  .glass {
+    position: relative;
+    isolation: isolate;
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(185%);
+    backdrop-filter: blur(var(--glass-blur)) saturate(185%);
+    border: 1px solid var(--glass-line);
+    box-shadow: var(--glass-highlight), var(--glass-shadow);
+  }
+  .glass::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0) 45%);
+  }
+
+  /* For dialogs and menus over busy content: mostly opaque, still glass. */
+  .glass-solid {
+    background: rgba(255, 255, 255, 0.82);
+  }
+
+  /* The pill a segmented control's thumb is made of. */
+  .glass-thumb {
+    background: var(--glass-strong);
+    box-shadow: var(--glass-highlight), 0 4px 14px rgba(20, 30, 60, 0.14);
+    transition: transform 0.6s var(--ease-spring), width 0.6s var(--ease-spring);
+  }
+
+  .glass-track {
+    background: var(--glass-track);
+  }
+
+  /* A light sweep across a control on hover. */
+  .sheen {
+    overflow: hidden;
+  }
+  .sheen::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    pointer-events: none;
+    background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.55) 50%, transparent 62%);
+    transform: translateX(-130%);
+    transition: transform 0.8s var(--ease-glass);
+  }
+  .sheen:hover::before {
+    transform: translateX(130%);
+  }
+
+  /* Children rise in one after another. */
+  .stagger > * {
+    animation: rise 0.7s var(--ease-glass) backwards;
+  }
+  .stagger > *:nth-child(2) { animation-delay: 0.05s; }
+  .stagger > *:nth-child(3) { animation-delay: 0.1s; }
+  .stagger > *:nth-child(4) { animation-delay: 0.15s; }
+  .stagger > *:nth-child(5) { animation-delay: 0.2s; }
+  .stagger > *:nth-child(6) { animation-delay: 0.25s; }
+  .stagger > *:nth-child(n + 7) { animation-delay: 0.3s; }
+}
+
+/* The light field behind the shell: three blurred orbs, drifting slowly. */
+.light-field {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.light-field i {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.8;
+  animation: drift 28s ease-in-out infinite alternate;
+}
+@keyframes drift {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(90px, -50px) scale(1.18); }
+  100% { transform: translate(-70px, 60px) scale(0.94); }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  /* No blur available: an opaque-enough fill keeps text legible. */
+  .glass { background: rgba(250, 251, 253, 0.94); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .light-field i,
+  .stagger > * { animation: none !important; }
+  .glass-thumb,
+  .sheen::before { transition: none !important; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    /* Once, not forever: a looping animation cut to 0.01ms is a strobe (the
+       engine dot's pulse, a spinner), which is worse than the motion it replaced. */
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -130,4 +268,180 @@
 .pdf-page canvas {
   position: relative;
   z-index: 0;
+}
+
+/* --- Reflowed reading: what MinerU recovered, and work in progress ---------- */
+
+/* A paragraph whose translation is on its way: a shimmer, not a spinner, so
+   the column keeps its shape while it fills in. */
+.reflow-skeleton {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 25%,
+    hsl(var(--primary) / 0.16) 50%,
+    hsl(var(--muted)) 75%
+  );
+  background-size: 300% 100%;
+  animation: reflow-shimmer 1.4s linear infinite;
+}
+@keyframes reflow-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+/* A translation arriving fades in rather than popping. */
+.reflow-pair-translation {
+  animation: reflow-arrive 0.5s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+@keyframes reflow-arrive {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Tables as the paper set them: rules above and below, none between cells. */
+.reflow-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+.reflow-table th,
+.reflow-table td {
+  padding: 0.35rem 0.6rem;
+  text-align: center;
+  white-space: nowrap;
+}
+.reflow-table tr:first-child > * {
+  border-top: 1.5px solid hsl(var(--foreground) / 0.8);
+}
+.reflow-table tr:first-child > *,
+.reflow-table thead tr:last-child > * {
+  border-bottom: 1px solid hsl(var(--foreground) / 0.6);
+}
+.reflow-table tr:last-child > * {
+  border-bottom: 1.5px solid hsl(var(--foreground) / 0.8);
+}
+.reflow-table td:first-child,
+.reflow-table th:first-child {
+  text-align: left;
+}
+
+.reflow-display-math .katex-display {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reflow-skeleton,
+  .reflow-pair-translation {
+    animation: none;
+  }
+}
+
+/* Inline formulas at the size of the sentence around them — KaTeX's default
+   1.21em makes every formula shout over its paragraph. */
+.reflow-inline-math .katex {
+  font-size: 1em;
+}
+
+@keyframes engine-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45); }
+  70% { box-shadow: 0 0 0 6px rgba(22, 163, 74, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+}
+
+/*
+ * Form controls, everywhere. Text fields, selects and text areas are frosted
+ * wells: translucent fill, a hairline of light, a soft inner shadow, and an
+ * accent halo on focus. `:is()` with the :not() chain outranks a single utility
+ * class, so the dozens of hand-styled fields across settings, notes and
+ * dialogs pick this up without each being rewritten. `data-plain` opts out.
+ */
+:is(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([data-plain]),
+    select:not([data-plain]),
+    textarea:not([data-plain])
+  ) {
+  background-color: var(--field-bg);
+  border: 1px solid var(--glass-line);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 2px rgba(20, 30, 60, 0.06), 0 1px 0 rgba(255, 255, 255, 0.6);
+  color: hsl(var(--foreground));
+  transition: background-color 0.25s, border-color 0.25s, box-shadow 0.25s;
+}
+:is(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([data-plain]),
+    select:not([data-plain]),
+    textarea:not([data-plain])
+  ):hover {
+  background-color: var(--glass-strong);
+}
+:is(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([data-plain]),
+    select:not([data-plain]),
+    textarea:not([data-plain])
+  ):focus-visible {
+  outline: none;
+  background-color: rgba(255, 255, 255, 0.86);
+  border-color: hsl(var(--primary) / 0.45);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.18);
+}
+:is(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([data-plain]),
+    select:not([data-plain]),
+    textarea:not([data-plain])
+  ):disabled {
+  opacity: 0.55;
+}
+:is(input, select, textarea).rounded-full:not([data-plain]) {
+  border-radius: 9999px;
+}
+/* The pill search field in the top bar is its own well. */
+input.glass-track:not([data-plain]) {
+  border-color: transparent;
+  box-shadow: none;
+  background-color: var(--glass-track);
+}
+select:not([data-plain]) {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 1.9rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%234a5568' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.65rem center;
+  background-size: 12px;
+  cursor: pointer;
+}
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  accent-color: hsl(var(--primary));
+}
+::placeholder {
+  color: hsl(var(--muted-foreground) / 0.85);
+}
+
+/*
+ * Inside glass surfaces (the sidebar, dialogs, menus): the shell's hairline
+ * grey dividers become soft light, small radii grow to the design's, and the
+ * desktop-density 11 px text gains a point so it reads on a translucent field.
+ */
+.glass :is(.border, .border-b, .border-t, .border-l, .border-r):not(input):not(select):not(textarea) {
+  border-color: rgba(110, 122, 145, 0.16);
+}
+.glass .rounded-sm:not(input) { border-radius: 8px; }
+.glass .rounded:not(input) { border-radius: 10px; }
+.glass .rounded-md:not(input) { border-radius: 12px; }
+.glass .rounded-lg:not(input) { border-radius: 14px; }
+:is([data-testid="assistant-sidebar"], [data-testid="copilot-sidebar"]) .text-2xs { font-size: 12px; line-height: 1.55; }
+:is([data-testid="assistant-sidebar"], [data-testid="copilot-sidebar"]) .text-xs { font-size: 13px; line-height: 1.6; }
+.glass .hover\:bg-accent:hover,
+.glass .hover\:bg-accent\/60:hover,
+.glass .hover\:bg-muted:hover {
+  background-color: var(--glass-hover);
+}
+.glass .bg-muted,
+.glass .bg-muted\/40,
+.glass .bg-muted\/50,
+.glass .bg-muted\/60 {
+  background-color: var(--glass-track);
 }

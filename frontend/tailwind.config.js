@@ -37,7 +37,8 @@ export default {
           foreground: "hsl(var(--card-foreground))",
         },
         // Workspace-specific surface tokens
-        workspace: "hsl(var(--workspace))",
+        // Translucent so the shell's light field shows through the reading area.
+        workspace: "var(--workspace-bg)",
         "page-surface": "hsl(var(--page-surface))",
       },
       borderRadius: {
@@ -49,7 +50,24 @@ export default {
         // Desktop-tool density: nothing larger than text-lg in the shell.
         "2xs": ["0.6875rem", { lineHeight: "1rem" }],
       },
+      transitionTimingFunction: {
+        // iOS-style motion: a spring that overshoots a touch, and a long ease-out.
+        spring: "cubic-bezier(.34,1.56,.64,1)",
+        glass: "cubic-bezier(.32,.72,0,1)",
+      },
       keyframes: {
+        "pane-in": {
+          from: { opacity: "0", transform: "translateY(12px) scale(.985)", filter: "blur(6px)" },
+          to: { opacity: "1", transform: "none", filter: "none" },
+        },
+        rise: {
+          from: { opacity: "0", transform: "translateY(14px)" },
+          to: { opacity: "1", transform: "none" },
+        },
+        pop: {
+          from: { opacity: "0", transform: "translateY(8px) scale(.9)" },
+          to: { opacity: "1", transform: "none" },
+        },
         "accordion-down": {
           from: { height: "0" },
           to: { height: "var(--radix-accordion-content-height)" },
@@ -62,6 +80,9 @@ export default {
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "pane-in": "pane-in .55s cubic-bezier(.32,.72,0,1) backwards",
+        rise: "rise .7s cubic-bezier(.32,.72,0,1) backwards",
+        pop: "pop .55s cubic-bezier(.34,1.56,.64,1) backwards",
       },
     },
   },

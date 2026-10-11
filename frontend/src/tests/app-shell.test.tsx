@@ -53,9 +53,11 @@ describe("DS-FE-001 · AC-34 application shell, standalone", () => {
   it("renders the four semantic regions with no backend present", () => {
     render(<App />);
 
-    // header / aside / main / footer (AC-02)
+    // header / aside / main / footer (AC-02). Two asides now: reading aids on
+    // the left, the Copilot conversation on the right.
     expect(screen.getByRole("banner")).toBeInTheDocument();
-    expect(screen.getByRole("complementary")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "AI 论文助手" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Copilot 论文问答" })).toBeInTheDocument();
     expect(screen.getByRole("main")).toBeInTheDocument();
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
   });
@@ -82,7 +84,7 @@ describe("DS-FE-001 · AC-34 application shell, standalone", () => {
     expect(screen.getByTestId("engine-status")).toHaveTextContent(/Engine:/);
 
     // AC-08: footer height sits between 28px and 36px.
-    expect(footer).toHaveClass("h-7"); // 1.75rem = 28px
+    expect(footer).toHaveClass("h-9"); // 2.25rem = 36px, the floating status pill
   });
 
   /**

@@ -5,7 +5,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  "relative inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg text-sm font-medium transition-[color,background-color,box-shadow,transform,filter] duration-300 ease-spring active:scale-[.92] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -13,18 +13,21 @@ const buttonVariants = cva(
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         outline:
-          "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
-        subtle: "text-muted-foreground hover:bg-accent hover:text-foreground",
+          "border border-[var(--glass-line)] bg-[var(--glass)] shadow-[var(--glass-highlight)] hover:bg-[var(--glass-strong)]",
+        ghost: "hover:bg-[var(--glass-hover)]",
+        subtle: "text-muted-foreground hover:bg-[var(--glass-hover)] hover:text-foreground",
+        /* The one call to action in a bar: accent glass with a coloured glow. */
+        glow:
+          "rounded-full bg-primary/90 px-3.5 text-primary-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.4),0_6px_18px_hsl(var(--primary)/.38)] hover:brightness-110 disabled:saturate-50",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
       },
       size: {
         default: "h-8 px-3",
-        sm: "h-7 rounded px-2 text-xs",
+        sm: "h-7 rounded-lg px-2.5 text-xs",
         lg: "h-9 px-4",
-        icon: "h-8 w-8",
-        "icon-sm": "h-7 w-7",
+        icon: "h-9 w-9 rounded-xl [&_svg]:size-[18px]",
+        "icon-sm": "h-8 w-8 rounded-xl [&_svg]:size-4",
       },
     },
     defaultVariants: {

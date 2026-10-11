@@ -217,7 +217,7 @@ export function PdfViewer({
     <div
       ref={containerRef}
       data-testid="pdf-viewer"
-      className="min-h-0 flex-1 overflow-auto bg-workspace p-4"
+      className="min-h-0 flex-1 overflow-auto px-4 pb-28 pt-4"
     >
       <div className="flex flex-col items-center gap-4">
         {pages.map((page) => (

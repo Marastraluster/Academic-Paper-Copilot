@@ -79,12 +79,13 @@ export function readStoredSession(): StoredReadingSession | null {
       documentId: record.documentId,
       name: record.name,
       activePage: Number.isFinite(record.activePage) ? Number(record.activePage) : 1,
+      // 双语 is no longer offered; read an old record's 双语 as 译文.
       readerMode: record.readerMode === "bilingual" || record.readerMode === "translation"
-        ? record.readerMode
+        ? "translation"
         : "original",
       outlinePanel:
         record.outlinePanel === "outline" || record.outlinePanel === "qa" ||
-        record.outlinePanel === "notes"
+        record.outlinePanel === "notes" || record.outlinePanel === "related"
           ? record.outlinePanel
           : "overview",
       lastActiveAt: typeof record.lastActiveAt === "string" ? record.lastActiveAt : "",

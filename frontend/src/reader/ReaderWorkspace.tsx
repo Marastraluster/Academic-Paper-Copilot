@@ -103,7 +103,7 @@ export function ReaderWorkspace() {
     <main
       data-testid="reader-workspace"
       data-reader-mode={mode}
-      className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden bg-workspace p-2"
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden"
     >
       <TranslationNotice />
       <JumpNotice />

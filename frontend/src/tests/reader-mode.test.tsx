@@ -73,32 +73,26 @@ describe("DS-FE-003 · AC-32 reader mode switching", () => {
       "data-reader-mode",
       "original",
     );
-    expect(screen.getByTestId("reader-mode-bilingual")).toBeDisabled();
     expect(screen.getByTestId("reader-mode-translation")).toBeDisabled();
+    // 逐段 needs no translated PDF: it is generated from the paper's paragraphs.
+    expect(screen.getByTestId("reader-mode-immersive")).toBeEnabled();
     expect(screen.getByTestId("reader-mode-original")).toBeEnabled();
   });
 
-  it("unlocks both translated modes once a translation exists (AC-P0-09)", () => {
+  it("unlocks the translated PDF once a translation exists (AC-P0-09)", () => {
     seedTranslatedDocument();
     render(<App />);
 
-    expect(screen.getByTestId("reader-mode-bilingual")).toBeEnabled();
     expect(screen.getByTestId("reader-mode-translation")).toBeEnabled();
   });
 
-  it("renders both panels in 双语 mode (AC-P0-10)", async () => {
-    const user = userEvent.setup();
+  it("no longer offers 双语, the two PDFs side by side", () => {
     seedTranslatedDocument();
     render(<App />);
 
-    await user.click(screen.getByTestId("reader-mode-bilingual"));
-
-    expect(original()).toBeInTheDocument();
-    expect(translated()).toBeInTheDocument();
-    expect(screen.getByTestId("reader-workspace")).toHaveAttribute(
-      "data-reader-mode",
-      "bilingual",
-    );
+    // 逐段 is the paragraph-by-paragraph reading; the side-by-side mode is gone.
+    expect(screen.queryByTestId("reader-mode-bilingual")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("tab", { name: /^(逐段|原文|译文)$/ })).toHaveLength(3);
   });
 
   it("renders only the original panel in 原文 mode (AC-P0-10)", async () => {
@@ -106,7 +100,7 @@ describe("DS-FE-003 · AC-32 reader mode switching", () => {
     seedTranslatedDocument();
     render(<App />);
 
-    await user.click(screen.getByTestId("reader-mode-bilingual"));
+    await user.click(screen.getByTestId("reader-mode-translation"));
     await user.click(screen.getByTestId("reader-mode-original"));
 
     expect(original()).toBeInTheDocument();
@@ -132,7 +126,7 @@ describe("DS-FE-003 · AC-32 reader mode switching", () => {
     );
   });
 
-  it("restores both panels when switching back to 双语", async () => {
+  it("restores the original when switching back from 译文", async () => {
     const user = userEvent.setup();
     seedTranslatedDocument();
     render(<App />);
@@ -140,9 +134,9 @@ describe("DS-FE-003 · AC-32 reader mode switching", () => {
     await user.click(screen.getByTestId("reader-mode-translation"));
     expect(original()).not.toBeInTheDocument();
 
-    await user.click(screen.getByTestId("reader-mode-bilingual"));
+    await user.click(screen.getByTestId("reader-mode-original"));
     expect(original()).toBeInTheDocument();
-    expect(translated()).toBeInTheDocument();
+    expect(translated()).not.toBeInTheDocument();
   });
 
   it("marks exactly one mode as selected at a time (AC-30)", async () => {
@@ -172,17 +166,17 @@ describe("DS-FE-003 · AC-32 reader mode switching", () => {
     const sequence = [
       "reader-mode-original",
       "reader-mode-translation",
-      "reader-mode-bilingual",
       "reader-mode-original",
-      "reader-mode-bilingual",
+      "reader-mode-translation",
+      "reader-mode-original",
     ] as const;
 
     for (const id of sequence) {
       await user.click(screen.getByTestId(id));
     }
 
-    // Ends on bilingual → both panels, exactly one each (no orphans).
+    // Ends on 原文 → exactly one original viewer, no orphaned translated one.
     expect(screen.getAllByTestId("viewer-original")).toHaveLength(1);
-    expect(screen.getAllByTestId("viewer-translated")).toHaveLength(1);
+    expect(screen.queryByTestId("viewer-translated")).not.toBeInTheDocument();
   });
 });

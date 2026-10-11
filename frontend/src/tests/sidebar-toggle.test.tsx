@@ -31,8 +31,7 @@ describe("DS-FE-001 · AC-33 sidebar collapse", () => {
     expect(sidebar()).toHaveStyle({ width: "0px" });
 
     // Contents must be gone, so nothing invisible is focusable.
-    expect(screen.queryByTestId("conversation-area")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("scope-selector")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("assistant-tabs")).not.toBeInTheDocument();
   });
 
   it("keeps the workspace mounted so it absorbs the reclaimed width", async () => {

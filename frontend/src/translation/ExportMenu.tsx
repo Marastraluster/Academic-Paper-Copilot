@@ -82,7 +82,7 @@ export function ExportMenu() {
         <div
           role="menu"
           data-testid="export-menu"
-          className="absolute right-0 z-40 mt-1 w-52 rounded-md border bg-card p-1 shadow-md"
+          className="glass glass-solid absolute right-0 z-40 mt-1.5 w-52 origin-top-right animate-pop rounded-2xl p-1.5"
         >
           <a
             role="menuitem"

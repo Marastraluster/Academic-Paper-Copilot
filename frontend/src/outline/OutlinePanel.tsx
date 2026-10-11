@@ -142,7 +142,7 @@ export function OutlinePanel() {
       role="tree"
       aria-label="论文目录"
       onKeyDown={onKeyDown}
-      className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1 py-1"
+      className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2.5 py-1.5"
     >
       {flat.map(({ section, depth, hasChildren }) => {
         const isActive = section.id === activeSectionId;
@@ -162,10 +162,10 @@ export function OutlinePanel() {
             aria-expanded={hasChildren ? isOpen : undefined}
             style={{ paddingLeft: `${depth * 12 + 4}px` }}
             className={cn(
-              "group flex items-center gap-1 rounded-sm py-1 pr-1 text-xs",
+              "group flex items-center gap-1 rounded-xl py-1.5 pr-2 text-xs transition-[background-color,box-shadow] duration-200",
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-              isActive && "bg-primary/10 font-semibold",
-              !isActive && "hover:bg-accent/60",
+              isActive && "bg-[var(--glass-strong)] font-semibold shadow-[var(--glass-highlight)]",
+              !isActive && "hover:bg-[var(--glass-hover)]",
             )}
           >
             {hasChildren ? (

@@ -154,7 +154,9 @@ beforeEach(() => {
   // so it says so rather than depending on which tab happens to be the default —
   // a dependency that would silently retarget every assertion here the next time
   // the default moves.
-  useWorkspaceStore.setState({ outlinePanel: "qa", sidebarOpen: true });
+  // Paper QA is the Copilot column on the right. The left sidebar is
+  // closed so its panels make no requests of their own here.
+  useWorkspaceStore.setState({ copilotOpen: true, sidebarOpen: false });
 
   getDocument.mockReset();
   getDocument.mockReturnValue({
@@ -936,7 +938,7 @@ describe("DS-QA-015 · the overview does not disturb this panel", () => {
     const turnId = before[0].id;
 
     // The reader leaves for 概览 and spends a model call there.
-    useWorkspaceStore.setState({ outlinePanel: "overview" });
+    useWorkspaceStore.setState({ outlinePanel: "overview", sidebarOpen: true });
     await waitFor(() => expect(screen.getByTestId("overview-generate")).toBeInTheDocument());
     await user.click(screen.getByTestId("overview-generate"));
     await waitFor(() => expect(useWorkspaceStore.getState().overview).not.toBeNull());

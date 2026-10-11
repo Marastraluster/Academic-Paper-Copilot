@@ -89,7 +89,9 @@ beforeEach(() => {
   // so it says so rather than depending on which tab happens to be the default —
   // a dependency that would silently retarget every assertion here the next time
   // the default moves.
-  useWorkspaceStore.setState({ outlinePanel: "qa", sidebarOpen: true });
+  // Paper QA is the Copilot column on the right. The left sidebar is
+  // closed so its panels make no requests of their own here.
+  useWorkspaceStore.setState({ copilotOpen: true, sidebarOpen: false });
 
   getDocument.mockReset();
   getDocument.mockReturnValue({

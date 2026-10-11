@@ -286,7 +286,9 @@ describe("DS-QA-008 · outline panel", () => {
     const state = useWorkspaceStore.getState();
     expect(state.selectedSectionId).toBe("sec_9");
     expect(state.scope).toBe("section");
-    expect(state.outlinePanel).toBe("qa");
+    // The question goes to the Copilot column; the outline stays open beside it.
+    expect(state.copilotOpen).toBe(true);
+    expect(state.outlinePanel).not.toBe("qa");
     // AC-P0-14: selecting a section spends no model call.
     expect(fetchMock).not.toHaveBeenCalled();
   });

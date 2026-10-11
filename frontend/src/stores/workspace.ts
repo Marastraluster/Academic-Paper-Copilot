@@ -9,6 +9,7 @@ import type { FormulaPlan, FormulaView } from "@/api/formulas";
 import type { OverviewView } from "@/api/overview";
 import type { Citation } from "@/qa/parse";
 import type { MappingStatus, SelectionMapping } from "@/qa/selection";
+import { readTaskModels, writeTaskModels, type ModelTask, type TaskModels } from "@/settings/taskModels";
 import type { UserFacingError } from "@/translation/errors";
 
 /** AC-04: the reader modes — the original, two PDF views of a translation, and
@@ -17,7 +18,7 @@ import type { UserFacingError } from "@/translation/errors";
 export type ReaderMode = "original" | "bilingual" | "translation" | "immersive";
 
 /** The tabs the reader-side panel can show. */
-export type SidebarPanel = "overview" | "outline" | "qa" | "notes";
+export type SidebarPanel = "overview" | "outline" | "qa" | "notes" | "related";
 
 /* ------------------------------------------------------------------ *
  * Paper QA (DS-QA-003)
@@ -337,6 +338,13 @@ interface WorkspaceState {
   profileId: string;
   setProfiles: (profiles: ProviderProfile[] | null, error?: string | null) => void;
   setProfileId: (id: string) => void;
+  /**
+   * A profile per kind of work, where the reader chose one; see
+   * `settings/taskModels`. Read through `profileIdFor`, never directly.
+   */
+  taskModels: TaskModels;
+  /** `""` returns the task to the default profile. */
+  setTaskModel: (task: ModelTask, profileId: string) => void;
 
   /**
    * The canonical IR, fetched once per document.
@@ -434,6 +442,13 @@ interface WorkspaceState {
   // ---- Sidebar (AC-05) ----
   sidebarOpen: boolean;
   toggleSidebar: () => void;
+
+  /* ---- Copilot ----
+     The paper-QA conversation lives in its own column on the right, so asking
+     about a passage never hides the outline or the overview on the left. */
+  copilotOpen: boolean;
+  setCopilotOpen: (open: boolean) => void;
+  toggleCopilot: () => void;
 
   /* ---- Library (DS-DOC-005) ----
      State rather than local component state, because the library has two doors:
@@ -617,6 +632,15 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
           : (profiles?.[0]?.id ?? ""),
     })),
   setProfileId: (profileId) => set({ profileId }),
+  taskModels: readTaskModels(),
+  setTaskModel: (task, profileId) =>
+    set((state) => {
+      const taskModels = { ...state.taskModels };
+      if (profileId === "") delete taskModels[task];
+      else taskModels[task] = profileId;
+      writeTaskModels(taskModels);
+      return { taskModels };
+    }),
 
   ir: null,
   setIr: (ir) => set({ ir }),
@@ -651,6 +675,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   // AC-05: expanded by default.
   sidebarOpen: true,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+
+  copilotOpen: true,
+  setCopilotOpen: (open) => set({ copilotOpen: open }),
+  toggleCopilot: () => set((s) => ({ copilotOpen: !s.copilotOpen })),
 
   libraryOpen: false,
   libraryQuery: "",

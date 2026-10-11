@@ -234,7 +234,9 @@ beforeEach(() => {
   // so it says so rather than depending on which tab happens to be the default —
   // a dependency that would silently retarget every assertion here the next time
   // the default moves.
-  useWorkspaceStore.setState({ outlinePanel: "qa", sidebarOpen: true });
+  // Paper QA is the Copilot column on the right. The left sidebar is
+  // closed so its panels make no requests of their own here.
+  useWorkspaceStore.setState({ copilotOpen: true, sidebarOpen: false });
 
   calls = [];
   uploadCount = 0;
@@ -512,7 +514,6 @@ describe("DS-FE-003 · success", () => {
 
     // Before translation, neither translated mode is available.
     expect(screen.getByTestId("reader-mode-translation")).toBeDisabled();
-    expect(screen.getByTestId("reader-mode-bilingual")).toBeDisabled();
 
     await user.click(screen.getByTestId("ai-translate"));
     await screen.findByTestId("translate-profile");
@@ -534,7 +535,6 @@ describe("DS-FE-003 · success", () => {
     expect(calls.some((call) => call.url.endsWith("/bilingual"))).toBe(false);
 
     expect(screen.getByTestId("reader-mode-translation")).toBeEnabled();
-    expect(screen.getByTestId("reader-mode-bilingual")).toBeEnabled();
   });
 
   it("renders the translated document in the 译文 pane (AC-P0-10)", async () => {
@@ -654,7 +654,7 @@ describe("DS-FE-003 · document identity", () => {
     const state = useWorkspaceStore.getState();
     expect(state.translation).toBeNull();
     expect(screen.queryByTestId("translation-running")).not.toBeInTheDocument();
-    expect(screen.getByTestId("reader-mode-bilingual")).toBeDisabled();
+    expect(screen.getByTestId("reader-mode-translation")).toBeDisabled();
   });
 
   it("clears the previous translation and revokes its URL on switch (AC-P0-15)", async () => {

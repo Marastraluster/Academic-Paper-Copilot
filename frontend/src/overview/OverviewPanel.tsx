@@ -118,8 +118,8 @@ export function OverviewPanel() {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden" data-testid="overview-panel">
       {/* ---- Layer A: available on the first paint, from data already held ---- */}
-      <section className="border-b px-2 py-2" data-testid="overview-entry">
-        <h2 data-testid="overview-title" className="text-xs font-medium leading-snug text-foreground">
+      <section className="px-4 pb-3 pt-2" data-testid="overview-entry">
+        <h2 data-testid="overview-title" className="text-[15px] font-semibold leading-snug text-foreground">
           {ir?.metadata?.title ?? document_?.name ?? "未命名论文"}
         </h2>
         <p className="mt-0.5 text-2xs text-muted-foreground" data-testid="overview-metrics">
@@ -132,7 +132,7 @@ export function OverviewPanel() {
             type="button"
             data-testid="overview-start-reading"
             onClick={() => jumpToSection(target.section!)}
-            className="mt-2 flex w-full items-center gap-1 rounded-sm border px-2 py-1 text-left text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            className="mt-3 flex w-full items-center gap-2 rounded-2xl bg-primary/[.12] px-3.5 py-2.5 text-left text-xs font-semibold transition-[background-color,transform] duration-300 ease-spring hover:bg-primary/[.17] active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
             <MapPin className="h-3 w-3 shrink-0 text-primary" aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">{target.reason}</span>
@@ -140,8 +140,8 @@ export function OverviewPanel() {
           </button>
         )}
 
-        <div className="mt-2">
-          <p className="text-2xs font-medium text-muted-foreground">摘要</p>
+        <div className="mt-3 rounded-[18px] bg-[var(--glass-track)] px-3.5 py-3">
+          <p className="text-2xs font-semibold text-muted-foreground">摘要</p>
           {ir === null ? (
             /* The paper has not been read yet, and that is a different statement
                from "it has no abstract". Claiming the second while the first is
@@ -169,10 +169,10 @@ export function OverviewPanel() {
       </section>
 
       {/* ---- Layer B: read from the backend, never generated from here ---- */}
-      <section className="px-2 py-2" data-testid="overview-analysis">
+      <section className="px-4 pb-4 pt-1" data-testid="overview-analysis">
         <div className="flex items-center gap-1">
           <Sparkles className="h-3 w-3 text-primary" aria-hidden="true" />
-          <p className="text-2xs font-medium text-muted-foreground">AI 论文概览</p>
+          <p className="text-[13px] font-semibold text-foreground">AI 论文概览</p>
         </div>
 
         {status === "generating" ? (
@@ -215,7 +215,7 @@ export function OverviewPanel() {
                   if (!outcome.ok) setRefusal(outcome.reason);
                 });
               }}
-              className="mt-2 w-full rounded-sm border px-2 py-1 text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="sheen relative mt-2 h-9 w-full rounded-full bg-[var(--glass-track)] text-[13px] font-medium transition-[background-color,transform] duration-300 ease-spring hover:bg-[var(--glass-strong)] active:scale-[.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               生成 AI 概览
             </button>

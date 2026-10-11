@@ -50,6 +50,10 @@ import {
 } from "@/api/profiles";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { describeApiError } from "@/translation/errors";
+import { ParserSection } from "@/settings/ParserSection";
+import { SearchSection } from "@/settings/SearchSection";
+import { MODEL_TASKS } from "@/settings/taskModels";
+import { TaskModelsSection } from "@/settings/TaskModelsSection";
 
 /** What a probe failure means to a reader, by the code the backend mapped it to. */
 const PROBE_MESSAGE: Record<string, string> = {
@@ -201,6 +205,10 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // error about a profile they already removed.
       const store = useWorkspaceStore.getState();
       if (store.profileId === profileId) store.setProfileId("");
+      // The same for a task that had been given this profile: back to the default.
+      for (const { task } of MODEL_TASKS) {
+        if (store.taskModels[task] === profileId) store.setTaskModel(task, "");
+      }
       await load();
     } catch (caught) {
       setListError(describeApiError(caught).detail);
@@ -211,7 +219,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(230,235,242,.45)] p-4 backdrop-blur-[6px]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -222,7 +230,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         aria-modal="true"
         aria-labelledby="settings-dialog-title"
         data-testid="settings-dialog"
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col gap-3 rounded-lg border bg-card p-4 shadow-lg"
+        className="glass glass-solid flex max-h-[85vh] w-full max-w-2xl animate-pop flex-col gap-3 overflow-y-auto rounded-[26px] p-5"
       >
         <h2 id="settings-dialog-title" className="flex items-center gap-1.5 text-sm font-semibold">
           <ShieldCheck className="h-4 w-4 text-primary" aria-hidden="true" />
@@ -365,6 +373,10 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             )}
           </div>
         </div>
+
+        <TaskModelsSection profiles={profiles} />
+        <ParserSection />
+        <SearchSection />
       </div>
     </div>
   );

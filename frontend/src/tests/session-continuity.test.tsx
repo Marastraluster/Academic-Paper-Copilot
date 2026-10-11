@@ -346,6 +346,7 @@ describe("DS-DOC-004 · the translation", () => {
   });
 
   it("comes back into the mode the reader left (AC-P0-05)", async () => {
+    // 双语 is no longer offered, so a session saved in it reopens on 译文.
     seedSession({ readerMode: "bilingual" });
     backend({ summary: summary({ has_translation: true }), translated: "ok" });
     render(<App />);
@@ -353,8 +354,7 @@ describe("DS-DOC-004 · the translation", () => {
     await waitFor(() =>
       expect(useWorkspaceStore.getState().document?.registration).toBe("ready"),
     );
-    await waitFor(() => expect(useWorkspaceStore.getState().readerMode).toBe("bilingual"));
-    await screen.findByTestId("viewer-original");
+    await waitFor(() => expect(useWorkspaceStore.getState().readerMode).toBe("translation"));
     await screen.findByTestId("viewer-translated");
   });
 

@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { BookOpen, Library, PanelLeft, Search, Settings, Sparkles } from "lucide-react";
+import { BookOpen, Library, MessageSquare, PanelLeft, Search, Settings, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import {
   Tooltip,
   TooltipContent,
@@ -62,6 +61,8 @@ export function TopBar() {
   const document = useWorkspaceStore((s) => s.document);
   const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen);
   const toggleSidebar = useWorkspaceStore((s) => s.toggleSidebar);
+  const copilotOpen = useWorkspaceStore((s) => s.copilotOpen);
+  const toggleCopilot = useWorkspaceStore((s) => s.toggleCopilot);
   const { start, busy } = useTranslationSession();
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -85,13 +86,16 @@ export function TopBar() {
   };
 
   return (
-    <header className="flex h-11 shrink-0 items-center gap-2 border-b bg-card px-2.5">
+    <>
+    {/* z-30: `.glass` isolates its stacking, so without a level of its own the
+        panels after it in the tree paint over the menus that drop out of it. */}
+    <header className="glass z-30 flex h-14 shrink-0 items-center gap-2 rounded-[28px] px-2.5">
       {/* Sidebar toggle (AC-05: the expand trigger stays reachable when collapsed) */}
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="icon"
             aria-label={sidebarOpen ? "收起侧边栏" : "展开侧边栏"}
             aria-expanded={sidebarOpen}
             data-testid="sidebar-toggle"
@@ -105,28 +109,32 @@ export function TopBar() {
         </TooltipContent>
       </Tooltip>
 
-      {/* Product mark */}
-      <div className="flex shrink-0 items-center gap-1.5 pl-0.5 pr-1">
-        <BookOpen className="h-4 w-4 text-primary" aria-hidden="true" />
-        <span className="text-xs font-semibold tracking-tight">
-          Academic PDF Copilot
+      {/* Product mark, with the open paper's name beneath it. */}
+      <div className="flex min-w-0 shrink items-center gap-2 pr-1">
+        <span
+          aria-hidden="true"
+          className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[10px] bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.35),0_4px_12px_hsl(var(--primary)/.35)]"
+        >
+          <BookOpen className="h-4 w-4" />
         </span>
+        <div className="min-w-0 leading-[1.15]">
+          <div className="whitespace-nowrap text-[13px] font-bold tracking-tight">
+            Academic PDF Copilot
+          </div>
+          {/* Document name — truncates rather than pushing controls off-screen */}
+          <div
+            className="max-w-[22ch] truncate text-2xs text-muted-foreground"
+            title={document?.name ?? "未打开文档"}
+            data-testid="document-name"
+          >
+            {document?.name ?? "未打开文档"}
+          </div>
+        </div>
       </div>
 
-      <Separator orientation="vertical" className="h-5" />
-
-      {/* Document name — truncates rather than pushing controls off-screen */}
-      <span
-        className="min-w-0 max-w-[22ch] flex-1 truncate text-xs text-muted-foreground"
-        title={document?.name ?? "未打开文档"}
-        data-testid="document-name"
-      >
-        {document?.name ?? "未打开文档"}
-      </span>
-
+      <div className="min-w-2 flex-1" />
       <ReaderModeSwitch />
-
-      <Separator orientation="vertical" className="h-5" />
+      <div className="min-w-2 flex-1" />
 
       {/* Search — the library's other door. It was an inert field for four
           tasks; a reader who wants a different paper will reach for the control
@@ -134,7 +142,7 @@ export function TopBar() {
           whatever has been typed into it. */}
       <div className="relative hidden items-center md:flex">
         <Search
-          className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-muted-foreground"
+          className="pointer-events-none absolute left-3 z-[1] h-4 w-4 text-muted-foreground"
           aria-hidden="true"
         />
         <input
@@ -145,7 +153,7 @@ export function TopBar() {
           value={libraryQuery}
           onChange={(event) => openLibrary(event.target.value)}
           onClick={() => openLibrary()}
-          className="h-7 w-40 rounded-md border bg-background pl-7 pr-2 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background lg:w-52"
+          className="glass-track h-9 w-40 rounded-full border-0 pl-9 pr-3 text-[13px] transition-[width,background-color,box-shadow] duration-500 ease-spring placeholder:text-muted-foreground focus-visible:w-56 focus-visible:bg-[var(--glass-strong)] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-primary/30 lg:w-52 lg:focus-visible:w-60 xl:focus-visible:w-72"
         />
       </div>
 
@@ -154,9 +162,8 @@ export function TopBar() {
         <TooltipTrigger asChild>
           <span className="shrink-0">
             <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
+              variant="glow"
+              className="sheen h-9 gap-1.5 px-4 text-[13px] font-semibold"
               data-testid="ai-translate"
               aria-label="AI翻译"
               // Disabled while a translation runs, so the same work cannot be
@@ -189,7 +196,7 @@ export function TopBar() {
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="icon"
             aria-label="论文库"
             data-testid="library-open"
             className="shrink-0"
@@ -203,12 +210,30 @@ export function TopBar() {
         <TooltipContent>论文库</TooltipContent>
       </Tooltip>
 
+      {/* Copilot — the paper-QA column on the right. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={copilotOpen ? "收起 Copilot" : "打开 Copilot"}
+            aria-pressed={copilotOpen}
+            data-testid="copilot-toggle"
+            className={copilotOpen ? "shrink-0 bg-[var(--glass-strong)] text-primary shadow-[var(--glass-highlight)]" : "shrink-0"}
+            onClick={toggleCopilot}
+          >
+            <MessageSquare />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Copilot 论文问答</TooltipContent>
+      </Tooltip>
+
       {/* Settings */}
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="icon"
             aria-label="设置"
             data-testid="settings-open"
             className="shrink-0"
@@ -220,6 +245,10 @@ export function TopBar() {
         <TooltipContent>设置</TooltipContent>
       </Tooltip>
 
+    </header>
+
+      {/* Outside the header: its backdrop-filter would otherwise become the
+          containing block of these fixed overlays and clip them to the bar. */}
       {dialogOpen && (
         <Suspense fallback={null}>
           <TranslateDialog
@@ -245,6 +274,6 @@ export function TopBar() {
           />
         </Suspense>
       )}
-    </header>
+    </>
   );
 }

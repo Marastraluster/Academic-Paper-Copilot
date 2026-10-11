@@ -281,8 +281,10 @@ async function restoreTranslation(
         monoPageCount: summary.page_count,
         degraded: false,
       },
+      // 双语 (two PDFs side by side) is gone; a session saved in it reopens on
+      // the translated PDF it was showing.
       readerMode: adoption.readerMode === "bilingual" || adoption.readerMode === "translation"
-        ? adoption.readerMode
+        ? "translation"
         : "original",
     });
     return true;

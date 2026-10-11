@@ -14,7 +14,7 @@ export function OutlineHeader() {
   const sections = useWorkspaceStore((s) => s.sections);
   if (title === null) return null;
   return (
-    <div className="flex items-center gap-1.5 border-b px-3 py-2">
+    <div className="flex items-center gap-1.5 px-4 py-2">
       <FileText className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span className="min-w-0 truncate text-xs font-medium" title={title}>
         {title}

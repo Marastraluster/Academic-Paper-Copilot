@@ -93,7 +93,7 @@ export function TranslationNoticeBody() {
       data-testid="translation-running"
       role="status"
       aria-live="polite"
-      className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 text-xs text-muted-foreground"
+      className="glass flex animate-pop items-center gap-2 rounded-full px-4 py-2 text-xs text-muted-foreground"
     >
       <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />
       <span data-testid="translation-progress-label">

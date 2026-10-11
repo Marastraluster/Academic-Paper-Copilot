@@ -9,7 +9,7 @@ import {
 const ENGINE_DOT: Record<EngineState, string> = {
   offline: "bg-muted-foreground/50",
   connecting: "bg-amber-500",
-  ready: "bg-emerald-600",
+  ready: "bg-emerald-600 animate-[engine-pulse_2.4s_ease-out_infinite]",
   error: "bg-destructive",
 };
 
@@ -41,12 +41,14 @@ export function StatusBar() {
   const label = describeLabel(document !== null, translation?.status ?? null);
 
   return (
-    <footer className="flex h-7 shrink-0 items-center gap-3 border-t bg-card px-2.5 text-2xs text-muted-foreground">
+    <footer className="glass absolute bottom-5 right-5 z-20 flex h-9 max-w-[calc(100%-40px)] items-center gap-2.5 rounded-full px-3.5 text-xs text-muted-foreground">
       <span className="shrink-0" data-testid="status-label">
         {label}
       </span>
 
-      <span className="shrink-0 tabular-nums" data-testid="status-page">
+      {/* The page count lives in the dock; here it is read out, not shown,
+          except while a translation reports its progress. */}
+      <span className={cn("shrink-0 tabular-nums", !running && "sr-only")} data-testid="status-page">
         {progress ? `Page ${progress.page} / ${progress.pageCount}` : "Page — / —"}
       </span>
 
@@ -61,11 +63,11 @@ export function StatusBar() {
             aria-valuenow={percent ?? undefined}
             aria-valuemin={percent === null ? undefined : 0}
             aria-valuemax={percent === null ? undefined : 100}
-            className="h-1.5 max-w-md min-w-16 flex-1 overflow-hidden rounded-full bg-muted"
+            className="glass-track h-1.5 w-28 overflow-hidden rounded-full"
           >
             <div
               className={cn(
-                "h-full rounded-full bg-primary transition-[width] duration-300",
+                "h-full rounded-full bg-primary transition-[width] duration-700 ease-glass",
                 percent === null && "w-1/3 animate-pulse",
               )}
               style={percent === null ? undefined : { width: `${percent}%` }}
@@ -77,18 +79,17 @@ export function StatusBar() {
         </div>
       )}
 
-      {!running && <span className="min-w-0 flex-1" />}
-
       {/* Engine status (AC-08). Reports only what has actually been observed. */}
       <span
         className="flex shrink-0 items-center gap-1.5"
         data-testid="engine-status"
       >
         <span
-          className={cn("h-1.5 w-1.5 rounded-full", ENGINE_DOT[engine.state])}
+          className={cn("h-2 w-2 rounded-full", ENGINE_DOT[engine.state])}
           aria-hidden="true"
         />
-        Engine: {engine.label}
+        <span className="sr-only">Engine: </span>
+        {engine.label}
       </span>
     </footer>
   );

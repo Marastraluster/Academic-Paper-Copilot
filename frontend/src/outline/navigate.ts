@@ -59,7 +59,8 @@ export function askThisSection(section: QaSection): void {
   const state = useWorkspaceStore.getState();
   state.setSelectedSectionId(section.id);
   state.setScope("section");
-  state.setOutlinePanel("qa");
+  // The conversation is in the Copilot column; the outline stays where it is.
+  state.setCopilotOpen(true);
   // Focus rather than click: the composer owns its own focus behaviour.
   window.requestAnimationFrame(() => {
     document.querySelector<HTMLTextAreaElement>('[data-testid="qa-composer-input"]')?.focus();

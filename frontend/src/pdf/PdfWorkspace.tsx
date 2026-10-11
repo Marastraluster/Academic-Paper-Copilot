@@ -382,7 +382,7 @@ export function PdfWorkspace({
     <section
       aria-label={label}
       data-testid={testId}
-      className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-md border bg-workspace"
+      className="relative flex min-w-0 flex-1 animate-pane-in flex-col overflow-hidden"
       onDragOver={(event) => {
         if (!showPicker) return;
         event.preventDefault();
