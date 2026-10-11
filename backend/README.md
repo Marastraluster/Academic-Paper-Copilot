@@ -132,7 +132,82 @@ a `system` message vs `instructions`) are absorbed inside the adapters and never
 **The adapters are OpenAI-compatible, not OpenAI-only.** Endpoint, key, and model all come
 from configuration; nothing in the package branches on vendor names.
 
-## Translating a PDF
+## Parsing with MinerU (optional, off by default)
+
+The in-house extractor runs on first read so a paper is readable at once. For
+the reflowed bilingual reading — real LaTeX formulas, tables as tables, figures
+as images — parse it with [MinerU](https://github.com/opendatalab/MinerU)
+instead. MinerU is **called over HTTP, never installed into this backend**; the
+same v1 API is served by a local server, a lab machine, or mineru.net.
+
+1. Run a MinerU server (any machine), e.g. `pip install mineru` then
+   `mineru-api --port 8100 --tier basic` (CPU-friendly; MinerU's own default
+   port is 8000, which this backend already uses), or use mineru.net with an
+   API key.
+2. Create a *parser* profile. `model` is MinerU's tier: `flash` or `basic` for a
+   CPU-only machine, `standard`/`advanced` when the server has a GPU (empty lets
+   the server choose):
+
+   ```bash
+   curl -X POST http://127.0.0.1:8000/api/profiles -H "Content-Type: application/json" \
+     -d '{"name":"MinerU","kind":"parser","base_url":"http://127.0.0.1:8100","model":"basic"}'
+   ```
+3. `POST /api/documents/{id}/parse` with `{"profile_id": "..."}` starts a
+   background parse; `GET /api/documents/{id}/parse` reports it. When it
+   completes, `ir.json` is replaced (`pipeline_version` becomes `mineru-2`), and
+   the QA index, overview and paragraph translation rebuild on next use.
+4. Images are served from `GET /api/documents/{id}/assets/images/<file>`.
+
+What MinerU returned is kept in `<document dir>/mineru/` (`middle.json` plus
+`images/`), so the IR can be rebuilt without paying the service again.
+
+Paragraph translation runs as a background job:
+
+| Route | What it does |
+|---|---|
+| `POST /api/documents/{id}/bilingual-text/jobs` `{"profile_id"}` | start (or resume) translating; 202 |
+| `GET /api/documents/{id}/bilingual-text/jobs` | progress in batches |
+| `DELETE /api/documents/{id}/bilingual-text/jobs` | stop; what landed is kept |
+| `GET /api/documents/{id}/bilingual-text` | the reading — while a job runs, what it has so far (`pending` paragraphs fill in) |
+| `POST /api/documents/{id}/bilingual-text/paragraphs/{pid}/retranslate` | one paragraph again, one call |
+
+Each batch is saved as it lands (`_cache/bilingual/<hash>_<lang>.partial.json`),
+so a stopped or failed job resumes with only the missing batches. Up to
+`concurrency` batches (default 2, at most 4) run at once. The synchronous
+`POST /bilingual-text` still works and is unchanged.
+
+Inline formulas stay in paragraph text as `$…$`. The paragraph translator
+replaces them with placeholders before a model sees the text and rejects any
+translation that loses or duplicates one (`app/bilingual/mathguard.py`).
+
+## Related papers (opt-in, the only outbound network feature)
+
+Off by default. Adding a profile with `kind: "search"` turns it on; until then every
+related-paper endpoint answers `409 SEARCH_NOT_CONFIGURED` and nothing leaves the machine.
+
+- `protocol: "openalex"` — `base_url` `https://api.openalex.org`. Since Feb 2026 OpenAlex
+  expects an API key (free at openalex.org); without one the daily budget is very small.
+- `protocol: "semantic_scholar"` — `base_url` `https://api.semanticscholar.org`; key optional
+  (sent as `x-api-key`).
+
+- `protocol: "llm_web"` — no key of its own: `model` holds the id of a chat profile whose service
+  runs web search server-side (DeepSeek via its `/anthropic` endpoint, Anthropic, OpenAI Responses,
+  Qwen/DashScope `enable_search`, GLM `web_search`, OpenRouter `:online`).
+  `GET /api/related/web-models` lists which chat profiles qualify. A model can invent papers, so
+  references not in the paper's own bibliography are dropped, and each paper carries
+  `verified: true` only when its link/DOI was among the pages the search returned.
+
+What is sent: the paper's DOI (or arXiv id, else its title) and search terms the user types.
+Body text and notes are never sent. Results are cached in `_cache/related/`.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/documents/{id}/related[?refresh=1]` | identify the paper; references, citing works, similar works; references linked to the paper's own bibliography and citing sentence |
+| `GET /api/documents/{id}/related/search?q=` | free-text search |
+| `POST /api/documents/{id}/related/explain` `{profile_id, keys}` | one LLM sentence per paper on how it relates (abstracts only, ≤8 per call) |
+| `POST /api/documents/{id}/related/import` `{key}` | download a cached open-access PDF (public http(s) only, size-limited, PDF-validated) into the library |
+
+## Translating a PDF (PDFMathTranslate, layout-preserving)
 
 ```python
 from app.pdfkernel import translate_pdf
