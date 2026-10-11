@@ -35,12 +35,14 @@ import json
 import re
 from dataclasses import dataclass, field
 
+from app.bilingual.glossary import Term, terms_for
 from app.bilingual.models import (
     BilingualArtifact,
     BilingualBlock,
     BilingualParagraph,
     BilingualSection,
 )
+from app.bilingual.mathguard import protect, restore
 from app.bilingual.prompt import (
     MAX_BATCH_CHARS,
     MAX_PARAGRAPHS_PER_BATCH,
@@ -68,6 +70,17 @@ SHOWN_BLOCK_CLASSES = {
     "figure_caption": "图说明",
     "table_caption": "表说明",
     "formula_caption": "公式说明",
+}
+
+#: Shown only when a structural parser recovered them as something a reader can
+#: see — an image file or a table's cells. The in-house extractor's figure and
+#: table "text" is run-together labels (`identityweight layerrelu…`), which is
+#: why these were never shown before.
+RECOVERED_BLOCK_CLASSES = {
+    "figure": "图",
+    "table": "表",
+    "table_footnote": "表注",
+    "code": "代码",
 }
 
 
@@ -182,16 +195,32 @@ def non_prose_blocks(ir: DocumentIR) -> list[BilingualBlock]:
     blocks: list[BilingualBlock] = []
     for page in ir.pages:
         for block in page.blocks:
-            if block.layout_class not in SHOWN_BLOCK_CLASSES:
-                continue
-            if not (block.text or "").strip():
+            recovered = bool(block.latex or block.html or block.image_path)
+            if block.layout_class in SHOWN_BLOCK_CLASSES:
+                if not ((block.text or "").strip() or recovered):
+                    continue
+            elif block.layout_class in RECOVERED_BLOCK_CLASSES:
+                # A table footnote or a code listing is real text under MinerU;
+                # under the in-house extractor these classes are only fragments.
+                parsed_text = (
+                    ir.pipeline_version.startswith("mineru")
+                    and block.layout_class in ("table_footnote", "code")
+                    and bool((block.text or "").strip())
+                )
+                if not (recovered or parsed_text):
+                    continue
+            else:
                 continue
             blocks.append(BilingualBlock(
                 block_id=block.id,
                 page_number=block.page_number,
                 layout_class=block.layout_class,
-                text=block.text.strip(),
+                text=(block.text or "").strip(),
                 bbox=tuple(block.bbox) if getattr(block, "bbox", None) else None,
+                latex=block.latex,
+                html=block.html,
+                image_path=block.image_path,
+                caption_of=block.caption_of,
             ))
     return blocks
 
@@ -291,33 +320,22 @@ class GenerationOutcome:
     failed_batches: int = 0
 
 
-async def generate_bilingual(
-    ir: DocumentIR,
-    provider: LLMProvider,
-    *,
-    target_language: str,
-    provider_base_url: str = "",
-    created_at: str = "",
-    glossary: list[str] | None = None,
-) -> GenerationOutcome:
-    """Translate what the plan says, in the batches it says, and report the gaps.
+@dataclass
+class BatchResult:
+    """What one batch produced. A failed batch has no translations, not wrong ones."""
 
-    Bounded: one call per batch, one repair per batch, and the paper is never sent
-    in a single request — a model given a whole paper loses the thread, and one
-    malformed answer would cost everything.
-    """
-    work = plan(ir)
-    translated: dict[str, str] = {}
-    heading_text: dict[str, str] = {}
-    usages: list[LLMUsage | None] = []
-    calls = 0
-    repaired = 0
-    failed_batches = 0
-    #: The last provider answer, for its model name. `None` for a paper with
-    #: nothing to translate, which never reaches a provider at all.
-    result = None
+    translations: dict[str, str] = field(default_factory=dict)
+    headings: dict[str, str] = field(default_factory=dict)
+    usages: list[LLMUsage | None] = field(default_factory=list)
+    calls: int = 0
+    repaired: int = 0
+    failed: bool = False
+    model: str = ""
 
-    heading_views = [
+
+def heading_views_for(work: Plan) -> list[BilingualSection]:
+    """The section titles every batch carries, untranslated."""
+    return [
         BilingualSection(
             section_id=section.id,
             title=section.title,
@@ -329,56 +347,108 @@ async def generate_bilingual(
         for section in work.headings
     ]
 
-    for batch in work.batches:
-        rows = [
-            BilingualParagraph(
-                paragraph_id=paragraph.id,
-                page_number=paragraph.page_number,
-                source_text=paragraph.text,
-                section_id=paragraph.section_id,
-            )
-            for paragraph in batch.paragraphs
-        ]
-        messages = build_messages(
-            rows, heading_views, target_language=target_language, glossary=glossary
-        )
-        allowed = {paragraph.id for paragraph in batch.paragraphs}
-        allowed_headings = {section.section_id for section in heading_views}
 
-        result = await provider.generate(LLMRequest(messages=messages))
-        calls += 1
-        usages.append(result.usage)
+async def translate_batch(
+    batch: Batch,
+    heading_views: list[BilingualSection],
+    provider: LLMProvider,
+    *,
+    target_language: str,
+    glossary: list[str] | None = None,
+    terms: list[Term] | None = None,
+) -> BatchResult:
+    """One provider call (and at most one repair) for one batch.
+
+    Independent of every other batch, which is what lets a background run do
+    them in any order, keep each one as it lands, and resume after a restart
+    with only the batches that are still missing.
+    """
+    out = BatchResult()
+    # Inline formulas travel as placeholders and come back verbatim; the model
+    # never sees LaTeX it could rewrite (`mathguard`).
+    guarded = {paragraph.id: protect(paragraph.text) for paragraph in batch.paragraphs}
+    rows = [
+        BilingualParagraph(
+            paragraph_id=paragraph.id,
+            page_number=paragraph.page_number,
+            source_text=guarded[paragraph.id][0],
+            section_id=paragraph.section_id,
+        )
+        for paragraph in batch.paragraphs
+    ]
+    # Only the glossary entries this batch can use: the paper's whole glossary on
+    # every call is mostly noise, and "which paragraphs does an edit touch" has
+    # the same answer here as it has for the reader.
+    used = terms_for([paragraph.text for paragraph in batch.paragraphs], terms)
+    messages = build_messages(
+        rows, heading_views, target_language=target_language, glossary=glossary,
+        terms=[(term.source, term.target) for term in used],
+    )
+    allowed = {paragraph.id for paragraph in batch.paragraphs}
+    allowed_headings = {section.section_id for section in heading_views}
+
+    result = await provider.generate(LLMRequest(messages=messages))
+    out.calls += 1
+    out.usages.append(result.usage)
+    out.model = getattr(result, "model", "") or ""
+    payload = _parse(result.text)
+
+    if payload is None:
+        out.repaired += 1
+        retry = list(messages) + [
+            {"role": "assistant", "content": result.text[:2000]},
+            {
+                "role": "user",
+                "content": (
+                    "That was not valid JSON. Reply with the JSON object only, "
+                    "with no other text before or after it."
+                ),
+            },
+        ]
+        result = await provider.generate(LLMRequest(messages=retry))
+        out.calls += 1
+        out.usages.append(result.usage)
+        out.model = getattr(result, "model", "") or out.model
         payload = _parse(result.text)
 
-        if payload is None:
-            repaired += 1
-            retry = list(messages) + [
-                {"role": "assistant", "content": result.text[:2000]},
-                {
-                    "role": "user",
-                    "content": (
-                        "That was not valid JSON. Reply with the JSON object only, "
-                        "with no other text before or after it."
-                    ),
-                },
-            ]
-            result = await provider.generate(LLMRequest(messages=retry))
-            calls += 1
-            usages.append(result.usage)
-            payload = _parse(result.text)
+    if payload is None:
+        out.failed = True
+        return out
 
-        if payload is None:
-            failed_batches += 1
-            continue
+    for identifier, text in _translations(
+        payload, "paragraphs", allowed,
+        {paragraph.paragraph_id: len(paragraph.source_text) for paragraph in rows},
+    ).items():
+        restored = restore(text, guarded[identifier][1])
+        if restored is not None:
+            out.translations[identifier] = restored
+    for identifier, text in _translations(payload, "headings", allowed_headings).items():
+        out.headings.setdefault(identifier, text)
+    return out
 
-        translated.update(_translations(
-            payload, "paragraphs", allowed,
-            {paragraph.paragraph_id: len(paragraph.source_text) for paragraph in rows},
-        ))
-        for identifier, text in _translations(payload, "headings", allowed_headings).items():
-            heading_text.setdefault(identifier, text)
 
-    # --- assemble -------------------------------------------------------------
+def assemble(
+    ir: DocumentIR,
+    work: Plan,
+    heading_views: list[BilingualSection],
+    translated: dict[str, str],
+    heading_text: dict[str, str],
+    *,
+    target_language: str,
+    failed_batches: int = 0,
+    usages: list[LLMUsage | None] | None = None,
+    provider_model: str = "",
+    provider_base_url: str = "",
+    created_at: str = "",
+    pending: set[str] | None = None,
+) -> BilingualArtifact:
+    """The artifact the column renders, from whatever translations exist.
+
+    ``pending`` names paragraphs a running job has not reached yet: they are
+    carried as ``pending`` rather than ``untranslated``, so the column can show
+    a placeholder that will fill in instead of a failure that will not.
+    """
+    pending = pending or set()
     paragraphs: list[BilingualParagraph] = []
     for paragraph in ir.paragraphs:
         if not paragraph.text.strip():
@@ -395,6 +465,16 @@ async def generate_bilingual(
             ))
             continue
         text = translated.get(paragraph.id, "")
+        if not text and paragraph.id in pending:
+            paragraphs.append(BilingualParagraph(
+                paragraph_id=paragraph.id,
+                page_number=paragraph.page_number,
+                source_text=paragraph.text,
+                status="pending",
+                section_id=paragraph.section_id,
+                bboxes=tuple(paragraph.bboxes),
+            ))
+            continue
         paragraphs.append(BilingualParagraph(
             paragraph_id=paragraph.id,
             page_number=paragraph.page_number,
@@ -418,11 +498,7 @@ async def generate_bilingual(
         for section in heading_views
     ]
 
-    missing = [
-        paragraph.paragraph_id
-        for paragraph in paragraphs
-        if paragraph.status == "untranslated"
-    ]
+    missing = [p.paragraph_id for p in paragraphs if p.status == "untranslated"]
     notes: list[str] = []
     if failed_batches:
         notes.append(f"{failed_batches} 个批次未能翻译")
@@ -433,12 +509,12 @@ async def generate_bilingual(
 
     if not paragraphs:
         status = "FAILED"
-    elif missing:
+    elif missing or any(p.status == "pending" for p in paragraphs):
         status = "PARTIAL"
     else:
         status = "READY"
 
-    artifact = _with_usage(
+    return _with_usage(
         BilingualArtifact(
             content_hash=ir.content_hash,
             target_language=target_language,
@@ -447,12 +523,64 @@ async def generate_bilingual(
             sections=sections,
             blocks=non_prose_blocks(ir),
             ir_pipeline_version=ir.pipeline_version,
-            provider_model=getattr(result, "model", "") or "" if result is not None else "",
+            provider_model=provider_model,
             provider_base_url=provider_base_url,
             created_at=created_at,
             notes=notes,
         ),
-        usages,
+        list(usages or []),
+    )
+
+
+async def generate_bilingual(
+    ir: DocumentIR,
+    provider: LLMProvider,
+    *,
+    target_language: str,
+    provider_base_url: str = "",
+    created_at: str = "",
+    glossary: list[str] | None = None,
+    terms: list[Term] | None = None,
+) -> GenerationOutcome:
+    """Translate what the plan says, in the batches it says, and report the gaps.
+
+    Bounded: one call per batch, one repair per batch, and the paper is never sent
+    in a single request — a model given a whole paper loses the thread, and one
+    malformed answer would cost everything. The background job
+    (`app.bilingual.jobs`) runs the same two halves, batch by batch.
+    """
+    work = plan(ir)
+    heading_views = heading_views_for(work)
+    translated: dict[str, str] = {}
+    heading_text: dict[str, str] = {}
+    usages: list[LLMUsage | None] = []
+    calls = repaired = failed_batches = 0
+    model = ""
+
+    for batch in work.batches:
+        result = await translate_batch(
+            batch, heading_views, provider,
+            target_language=target_language, glossary=glossary, terms=terms,
+        )
+        calls += result.calls
+        repaired += result.repaired
+        usages.extend(result.usages)
+        model = result.model or model
+        if result.failed:
+            failed_batches += 1
+            continue
+        translated.update(result.translations)
+        for identifier, text in result.headings.items():
+            heading_text.setdefault(identifier, text)
+
+    artifact = assemble(
+        ir, work, heading_views, translated, heading_text,
+        target_language=target_language,
+        failed_batches=failed_batches,
+        usages=usages,
+        provider_model=model,
+        provider_base_url=provider_base_url,
+        created_at=created_at,
     )
     return GenerationOutcome(
         artifact=artifact,

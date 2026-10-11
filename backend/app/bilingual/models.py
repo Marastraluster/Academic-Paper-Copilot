@@ -37,10 +37,13 @@ BILINGUAL_ARTIFACT_KIND = "bilingual_reading"
 BILINGUAL_SCHEMA_VERSION = "1"
 
 #: The generation pipeline's version: this module, the batching, the repair.
-BILINGUAL_PIPELINE_VERSION = "1.0.0"
+#: 1.2.0: a glossary is extracted before the first batch, and a resumed run sends
+#: only the paragraphs still missing rather than their whole batches.
+BILINGUAL_PIPELINE_VERSION = "1.2.0"
 
 #: How the paragraphs are asked for. Bumped when the prompt changes materially.
-BILINGUAL_PROMPT_VERSION = "1.0.0"
+#: 1.2.0: each batch carries the paper's glossary entries that occur in it.
+BILINGUAL_PROMPT_VERSION = "1.2.0"
 
 BilingualStatus = Literal["READY", "PARTIAL", "FAILED"]
 
@@ -48,7 +51,9 @@ BilingualStatus = Literal["READY", "PARTIAL", "FAILED"]
 #: a real answer — a formula, a reference line, a title block — and the third is
 #: what a batch that could not be repaired leaves behind. Neither is ever shown
 #: as prose nobody wrote.
-ParagraphStatus = Literal["translated", "skipped", "untranslated"]
+#: `pending` exists only while a background job is still working through the
+#: paper: the column shows a placeholder that will fill in, not a failure.
+ParagraphStatus = Literal["translated", "skipped", "untranslated", "pending"]
 
 
 @dataclass(frozen=True)
@@ -108,6 +113,13 @@ class BilingualBlock:
     layout_class: str
     text: str
     bbox: tuple[float, float, float, float] | None = None
+    #: What a structural parser recovered (see `TextBlockIR`); ``None`` under
+    #: the in-house extractor.
+    latex: str | None = None
+    html: str | None = None
+    image_path: str | None = None
+    #: On a caption, the figure or table block it describes.
+    caption_of: str | None = None
 
 
 @dataclass

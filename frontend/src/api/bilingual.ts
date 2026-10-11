@@ -16,9 +16,11 @@
  * this view should not download it.
  */
 import { apiFetch, apiJson } from "@/api/client";
+import { apiUrl } from "@/api/config";
 
 export type BilingualStatus = "READY" | "PARTIAL" | "FAILED";
-export type ParagraphStatus = "translated" | "skipped" | "untranslated";
+/** `pending` only while a background job is still on its way to this paragraph. */
+export type ParagraphStatus = "translated" | "skipped" | "untranslated" | "pending";
 
 export interface BilingualSectionView {
   section_id: string;
@@ -49,6 +51,27 @@ export interface BilingualBlockView {
   layout_class: string;
   text: string;
   bbox: number[] | null;
+  /** What a structural parser (MinerU) recovered; absent under the in-house one. */
+  latex?: string | null;
+  html?: string | null;
+  image_path?: string | null;
+  caption_of?: string | null;
+}
+
+/** A background translation's progress, in batches — the unit the work is done in. */
+export interface BilingualJob {
+  status: "running" | "completed" | "failed" | "cancelled";
+  total_batches: number;
+  done_batches: number;
+  failed_batches: number;
+  total_paragraphs: number;
+  translated_paragraphs: number;
+  resumed_batches: number;
+  code: string | null;
+  message: string | null;
+  /** `glossary` while the paper's terms are being read, before the first batch. */
+  phase?: "glossary" | "translating";
+  glossary_terms?: number;
 }
 
 export interface BilingualView {
@@ -66,6 +89,10 @@ export interface BilingualView {
   sections: BilingualSectionView[];
   paragraphs: BilingualParagraphView[];
   blocks: BilingualBlockView[];
+  /** Present while (or after) a background job produced this reading. */
+  job?: BilingualJob | null;
+  /** A job stopped short: starting again resumes it. */
+  resumable?: boolean;
 }
 
 /** What a generation would cost, computed from the IR rather than estimated. */
@@ -126,4 +153,126 @@ export async function requestBilingual(
       signal,
     },
   );
+}
+
+/** What starting a job answered. */
+export type JobStart =
+  | { kind: "job"; job: BilingualJob }
+  | { kind: "cached" }
+  | { kind: "reading"; view: BilingualView }
+  | { kind: "unsupported" };
+
+/**
+ * Start (or resume) translating in the background. **Spends money.**
+ *
+ * An older backend has no job route; that answers `unsupported` and the caller
+ * falls back to the one-request generation.
+ */
+export async function startBilingualJob(
+  documentId: string,
+  profileId: string,
+  targetLanguage: string,
+  { signal, force = false }: { signal?: AbortSignal; force?: boolean } = {},
+): Promise<JobStart> {
+  let body: unknown;
+  try {
+    body = await apiJson<unknown>(
+      `/api/documents/${encodeURIComponent(documentId)}/bilingual-text/jobs`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile_id: profileId, target_language: targetLanguage, force }),
+        signal,
+      },
+    );
+  } catch (error) {
+    const status = (error as { status?: number })?.status;
+    if (status === 404 || status === 405) return { kind: "unsupported" };
+    throw error;
+  }
+  const record = body as Record<string, unknown>;
+  if (Array.isArray(record.paragraphs)) return { kind: "reading", view: body as BilingualView };
+  if (record.cached === true) return { kind: "cached" };
+  return { kind: "job", job: body as BilingualJob };
+}
+
+/** Stop a running job. What it translated stays, and starting again resumes. */
+export async function stopBilingualJob(documentId: string, targetLanguage: string): Promise<void> {
+  await apiFetch(
+    `/api/documents/${encodeURIComponent(documentId)}/bilingual-text/jobs` +
+      `?target_language=${encodeURIComponent(targetLanguage)}`,
+    { method: "DELETE" },
+  );
+}
+
+export interface RetranslatedParagraph {
+  paragraph_id: string;
+  translated_text: string;
+  status: ParagraphStatus;
+}
+
+/** Translate one paragraph again — one model call. */
+export async function retranslateParagraph(
+  documentId: string,
+  paragraphId: string,
+  profileId: string,
+  targetLanguage: string,
+): Promise<RetranslatedParagraph> {
+  return apiJson<RetranslatedParagraph>(
+    `/api/documents/${encodeURIComponent(documentId)}/bilingual-text/paragraphs/` +
+      `${encodeURIComponent(paragraphId)}/retranslate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile_id: profileId, target_language: targetLanguage }),
+    },
+  );
+}
+
+/** Where an image MinerU cut out of the paper is served. */
+export function assetUrl(documentId: string, imagePath: string): string {
+  const safe = imagePath.split("/").map(encodeURIComponent).join("/");
+  return apiUrl(`/api/documents/${encodeURIComponent(documentId)}/assets/${safe}`);
+}
+
+/** One entry of a paper's glossary: a term, and the translation to keep. */
+export interface GlossaryTerm {
+  source: string;
+  target: string;
+}
+
+export interface GlossaryView {
+  /** False until a translation (or the reader) has made one. */
+  exists: boolean;
+  terms: GlossaryTerm[];
+}
+
+const glossaryUrl = (documentId: string, targetLanguage: string) =>
+  `/api/documents/${encodeURIComponent(documentId)}/bilingual-text/glossary` +
+  `?target_language=${encodeURIComponent(targetLanguage)}`;
+
+/** The terms this paper is translated with. Reads only. */
+export async function fetchGlossary(
+  documentId: string,
+  targetLanguage: string,
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<GlossaryView> {
+  return apiJson<GlossaryView>(glossaryUrl(documentId, targetLanguage), { signal });
+}
+
+/**
+ * Save the reader's glossary. Spends nothing: the answer says how many
+ * paragraphs contain a changed term and so lost their translation — starting
+ * the job again translates those, and only those.
+ */
+export async function saveGlossary(
+  documentId: string,
+  targetLanguage: string,
+  terms: GlossaryTerm[],
+): Promise<GlossaryView & { affected_paragraphs: number }> {
+  return apiJson<GlossaryView & { affected_paragraphs: number }>(glossaryUrl(documentId, targetLanguage), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ terms, target_language: targetLanguage }),
+  });
 }

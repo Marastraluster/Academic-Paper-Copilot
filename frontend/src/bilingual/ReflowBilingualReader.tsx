@@ -36,11 +36,21 @@
  * under its ceiling.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Sparkles, TriangleAlert } from "lucide-react";
+import { Loader2, RotateCcw, Sparkles, Square, TriangleAlert } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { bilingualIsCurrent, generateBilingual, loadBilingual } from "@/bilingual/session";
+import {
+  bilingualIsCurrent,
+  generateBilingual,
+  loadBilingual,
+  retranslate,
+  stopBilingual,
+} from "@/bilingual/session";
+import { GlossaryPanel } from "@/bilingual/GlossaryPanel";
+import { MathText } from "@/bilingual/reflow/MathText";
+import { RecoveredFormula, RecoveredVisual } from "@/bilingual/reflow/Recovered";
+import { MinerUBanner } from "@/bilingual/reflow/MinerUBanner";
 import { CropCanvas, magnificationFor, usePageRasters } from "@/bilingual/reflow/crops";
 import { FormulaItem } from "@/formulas/FormulaItem";
 import { generateFormulas, loadFormulas } from "@/formulas/session";
@@ -53,13 +63,14 @@ import {
   type ReflowPair,
 } from "@/bilingual/reflow/stream";
 import type { PageSurfaceProps } from "@/pdf/pageSurface";
+import { profileIdFor } from "@/settings/taskModels";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 /** How the column shows the paper. */
 type ViewMode = "both" | "target" | "source";
 
 const VIEW_LABELS: ReadonlyArray<{ value: ViewMode; label: string }> = [
-  { value: "both", label: "双语" },
+  { value: "both", label: "对照" },
   { value: "target", label: "仅译文" },
   { value: "source", label: "仅原文" },
 ];
@@ -88,9 +99,9 @@ const HEADING_CLASS: Record<number, string> = {
   3: "mt-6 mb-2 text-[1.0625rem] font-semibold leading-[1.45]",
 };
 const HEADING_TRANSLATION_CLASS: Record<number, string> = {
-  1: "mt-1 text-[0.9375rem]",
-  2: "mt-1 text-[0.875rem]",
-  3: "mt-0.5 text-[0.8125rem]",
+  1: "text-[0.9375rem]",
+  2: "text-[0.875rem]",
+  3: "text-[0.8125rem]",
 };
 
 /** The number's own column, so a formula can be centred without it. */
@@ -109,7 +120,7 @@ export default function ReflowBilingualReader({
   const status = useWorkspaceStore((state) => state.bilingualStatus);
   const error = useWorkspaceStore((state) => state.bilingualError);
   const plan = useWorkspaceStore((state) => state.bilingualPlan);
-  const profileId = useWorkspaceStore((state) => state.profileId);
+  const profileId = useWorkspaceStore((state) => profileIdFor("translate", state));
   const profiles = useWorkspaceStore((state) => state.profiles);
   const documentId = useWorkspaceStore((state) => state.document?.documentId ?? null);
   const formulas = useWorkspaceStore((state) => state.formulas);
@@ -119,7 +130,10 @@ export default function ReflowBilingualReader({
   const [refusal, setRefusal] = useState<string | null>(null);
   const [mode, setMode] = useState<ViewMode>("both");
   const [columnWidth, setColumnWidth] = useState(680);
+  /* Reading down hides the controls; any scroll back up brings them back. */
+  const [chromeHidden, setChromeHidden] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const lastScrollTop = useRef(0);
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
 
   // The stored reading and the stored formulas. Both are **reads**: neither can
@@ -247,13 +261,34 @@ export default function ReflowBilingualReader({
       onContainerWidthChange(container.clientWidth);
       // The column is what a crop is clamped against: narrower than the box on a
       // wide screen, the box itself on a narrow one.
-      setColumnWidth(Math.min(680, Math.max(240, container.clientWidth - 32)));
+      // The sheet's own 40 px margins come out of it too.
+      setColumnWidth(Math.min(680, Math.max(240, container.clientWidth - 32 - 80)));
     };
     report();
     const observer = new ResizeObserver(report);
     observer.observe(container);
     return () => observer.disconnect();
   }, [onContainerWidthChange, usable]);
+
+  // Tell the page dock (in the PDF workspace) whether to step aside as well.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("reflow-chrome", { detail: { hidden: chromeHidden } }));
+  }, [chromeHidden]);
+  useEffect(
+    () => () => {
+      window.dispatchEvent(new CustomEvent("reflow-chrome", { detail: { hidden: false } }));
+    },
+    [],
+  );
+  const onScroll = useCallback(() => {
+    const container = containerRef.current;
+    if (container === null) return;
+    const top = container.scrollTop;
+    const delta = top - lastScrollTop.current;
+    if (Math.abs(delta) < 6) return;
+    lastScrollTop.current = top;
+    setChromeHidden(delta > 0 && top > 80);
+  }, []);
 
   const attach = useCallback((id: string, element: HTMLElement | null) => {
     if (element === null) itemRefs.current.delete(id);
@@ -265,7 +300,7 @@ export default function ReflowBilingualReader({
     const waiting = status === "loading" && view === null;
     return (
       <div
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-md border bg-background p-3"
+        className="glass glass-solid m-auto flex max-h-full w-full max-w-[560px] animate-pop flex-col overflow-y-auto rounded-[26px] p-6"
         data-testid="reflow-reader"
       >
         <h2 className="flex select-none items-center gap-1.5 text-sm font-medium">
@@ -281,6 +316,9 @@ export default function ReflowBilingualReader({
             <p data-testid="bilingual-not-generated" className="mt-2 text-xs text-muted-foreground">
               这篇论文还没有逐段对照。生成后，论文重排成单栏，每个段落下方直接给出它的译文，图表和公式保持原样。
             </p>
+            <div className="mt-2">
+              <MinerUBanner />
+            </div>
             {plan !== null && (
               <p data-testid="bilingual-plan" className="mt-1 text-2xs text-muted-foreground">
                 共 {plan.paragraphs} 个段落 · 预计 {plan.batches} 次模型请求 · 原文约{" "}
@@ -346,15 +384,60 @@ export default function ReflowBilingualReader({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border bg-background"
+      className="flex min-h-0 flex-1 animate-pane-in flex-col overflow-hidden"
       data-testid="reflow-reader"
     >
-      <div className="flex shrink-0 select-none flex-wrap items-center gap-1.5 border-b px-3 py-1.5">
+      <div
+        data-testid="reflow-toolbar"
+        data-hidden={chromeHidden ? "true" : undefined}
+        className={cn(
+          "glass relative z-10 mx-auto mt-1 flex w-full max-w-[760px] shrink-0 select-none flex-wrap items-center gap-2 rounded-full px-4 py-1.5 transition-[transform,opacity,margin] duration-500 ease-glass",
+          chromeHidden && "pointer-events-none -mb-11 -translate-y-[130%] opacity-0",
+        )}
+      >
         <span className="text-xs font-medium">逐段对照</span>
         <span data-testid="bilingual-counts" className="text-2xs text-muted-foreground">
           {view.translated_paragraphs} / {view.total_paragraphs} 段已译
         </span>
-        {view.status === "PARTIAL" && (
+        {view.job?.status === "running" && (
+          <span
+            data-testid="bilingual-job-progress"
+            className="flex items-center gap-1.5 text-2xs text-muted-foreground"
+          >
+            <span className="glass-track relative h-1.5 w-24 overflow-hidden rounded-full" aria-hidden="true">
+              <span
+                className="absolute inset-y-0 left-0 rounded-full bg-primary transition-[width] duration-700 ease-out"
+                style={{
+                  width: `${Math.round((100 * view.job.done_batches) / Math.max(1, view.job.total_batches))}%`,
+                }}
+              />
+            </span>
+            {view.job.phase === "glossary"
+              ? "正在整理术语表…"
+              : `翻译中 ${view.job.done_batches}/${view.job.total_batches} 批`}
+            <button
+              type="button"
+              data-testid="bilingual-stop"
+              onClick={() => void stopBilingual()}
+              className="flex items-center gap-0.5 rounded px-1 hover:bg-muted"
+            >
+              <Square className="h-2.5 w-2.5" aria-hidden="true" />
+              停止
+            </button>
+          </span>
+        )}
+        {view.job?.status !== "running" && view.resumable === true && (
+          <button
+            type="button"
+            data-testid="bilingual-resume"
+            disabled={status === "generating"}
+            onClick={() => void generateBilingual()}
+            className="rounded-sm bg-primary/10 px-1.5 text-2xs font-medium text-primary hover:bg-primary/15"
+          >
+            继续翻译剩余段落
+          </button>
+        )}
+        {view.status === "PARTIAL" && view.job?.status !== "running" && (
           <span
             data-testid="bilingual-partial"
             className="rounded-sm bg-amber-100 px-1 text-2xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
@@ -362,7 +445,14 @@ export default function ReflowBilingualReader({
             部分段落未翻译
           </span>
         )}
-        <div className="ml-auto flex items-center gap-0.5 rounded-md border bg-muted/60 p-0.5">
+        {documentId !== null && (
+          <GlossaryPanel
+            documentId={documentId}
+            disabled={view.job?.status === "running" || status === "generating"}
+            refreshKey={`${view.job?.status ?? "none"}:${view.translated_paragraphs}`}
+          />
+        )}
+        <div className="glass-track ml-auto flex items-center gap-0.5 rounded-full p-[3px]">
           {VIEW_LABELS.map((entry) => (
             <button
               key={entry.value}
@@ -371,9 +461,9 @@ export default function ReflowBilingualReader({
               aria-pressed={mode === entry.value}
               onClick={() => setMode(entry.value)}
               className={cn(
-                "rounded-sm px-1.5 py-0.5 text-2xs transition-colors",
+                "rounded-full px-2.5 py-1 text-2xs transition-[color,background-color,transform] duration-300 ease-spring active:scale-[.92]",
                 mode === entry.value
-                  ? "bg-background text-foreground shadow-sm"
+                  ? "bg-[var(--glass-strong)] font-semibold text-foreground shadow-[var(--glass-highlight),0_2px_8px_rgba(20,30,60,.12)]"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -387,15 +477,23 @@ export default function ReflowBilingualReader({
         ref={containerRef}
         data-testid="reflow-scroll"
         data-column-width={columnWidth}
+        onScroll={onScroll}
         className={cn(
           SANS_CLASS,
-          "min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-workspace px-4 py-8",
+          "min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-32 pt-4",
         )}
       >
-        {/* 28 px between pairs, 8 px inside one: the ratio is what makes a
+        {/* One sheet of paper, as a reflowed article: the paragraphs are
+            separated by space alone, never boxed, so it reads as one text. */}
+        <article
+          data-testid="reflow-sheet"
+          className="mx-auto w-full max-w-[760px] animate-pane-in rounded-md bg-page-surface px-10 pb-16 pt-12 shadow-[0_24px_60px_rgba(18,28,50,.14),0_2px_6px_rgba(18,28,50,.06)]"
+        >
+        {/* 24 px between pairs, 6 px inside one: the ratio is what makes a
             paragraph and its translation read as one thing rather than two. */}
-        <div className={cn(COLUMN_CLASS, "space-y-7")}>
-          {formulasPlan !== null && (
+        <div className={cn(COLUMN_CLASS, "space-y-6")}>
+          <MinerUBanner />
+          {formulasPlan !== null && !(ir.pipeline_version ?? "").startsWith("mineru") && (
             <div
               data-testid="reflow-formulas-upgrade"
               className="flex flex-wrap items-center gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground"
@@ -432,14 +530,18 @@ export default function ReflowBilingualReader({
                   data-testid="reflow-heading"
                   data-section-id={item.sectionId}
                   data-heading-level={level}
-                  className={cn("scroll-mt-4 select-none text-balance", HEADING_CLASS[level])}
+                  className={cn(
+                    "scroll-mt-4 select-none text-balance tracking-[-0.01em] [font-family:Charter,'Source_Serif_Pro','Iowan_Old_Style',Georgia,serif]",
+                    HEADING_CLASS[level],
+                  )}
                 >
                   {item.title}
                   {item.titleTranslated !== null && item.titleTranslated !== "" && (
                     <span
                       data-testid="reflow-heading-translated"
                       className={cn(
-                        "block font-normal text-muted-foreground",
+                        SANS_CLASS,
+                        "ml-2.5 inline-block align-baseline font-normal tracking-normal text-muted-foreground",
                         HEADING_TRANSLATION_CLASS[level],
                       )}
                     >
@@ -463,6 +565,58 @@ export default function ReflowBilingualReader({
             }
 
             if (item.kind === "crop") {
+              // What MinerU recovered is drawn as itself — LaTeX, cells, the
+              // figure's own image — with the page crop one click away.
+              const plainCrop = (
+                <CropItem
+                  crop={{ ...item, caption: null, captionSide: null, footnote: null }}
+                  rasterFor={rasterFor}
+                  request={request}
+                  scale={scale}
+                  magnification={magnification}
+                  columnWidth={columnWidth}
+                  attach={() => undefined}
+                />
+              );
+              if (item.layoutClass === "isolate_formula" && item.latex) {
+                return (
+                  <div
+                    key={item.id}
+                    ref={(element) => attach(item.id, element)}
+                    data-item-page={item.pageNumber}
+                    data-item-y0={item.box[1]}
+                  >
+                    <RecoveredFormula
+                      latex={item.latex}
+                      number={item.number ?? item.caption?.text ?? null}
+                      crop={plainCrop}
+                    />
+                  </div>
+                );
+              }
+              if (documentId !== null && (item.html || item.imagePath || item.code !== null)) {
+                return (
+                  <div
+                    key={item.id}
+                    ref={(element) => attach(item.id, element)}
+                    data-item-page={item.pageNumber}
+                    data-item-y0={item.box[1]}
+                  >
+                    <RecoveredVisual
+                      documentId={documentId}
+                      layoutClass={item.layoutClass}
+                      html={item.html}
+                      imagePath={item.imagePath}
+                      code={item.code}
+                      caption={item.caption?.text ?? null}
+                      captionTranslated={item.caption?.translated ?? null}
+                      footnote={item.footnote}
+                      crop={plainCrop}
+                    />
+                  </div>
+                );
+              }
+
               // A formula is the reconstruction component's to place — but only
               // when the paper *has* reconstructions. Without them the crop is
               // what the reader gets, equation number and all: diverting a
@@ -533,14 +687,15 @@ export default function ReflowBilingualReader({
             );
           })}
         </div>
+        <p
+          data-testid="bilingual-disclaimer"
+          className="mx-auto mt-14 max-w-[680px] select-none border-t pt-3 text-center text-2xs text-muted-foreground/70"
+        >
+          逐段对照为针对段落语义的沉浸式翻译，与版面翻译 PDF 的文字排版与用词可能存在细微差异。
+        </p>
+        </article>
       </div>
 
-      <p
-        data-testid="bilingual-disclaimer"
-        className="shrink-0 select-none border-t px-3 py-1 text-2xs text-muted-foreground/70"
-      >
-        逐段对照为针对段落语义的沉浸式翻译，与版面翻译 PDF 的文字排版与用词可能存在细微差异。
-      </p>
     </div>
   );
 }
@@ -559,6 +714,16 @@ function PairItem({
   onRetry: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const fix = () => {
+    setBusy(true);
+    setProblem(null);
+    void retranslate(pair.paragraphId).then((outcome) => {
+      setBusy(false);
+      if (!outcome.ok) setProblem(outcome.reason);
+    });
+  };
 
   return (
     <div
@@ -568,7 +733,10 @@ function PairItem({
       data-testid="reflow-pair"
       data-paragraph-id={pair.paragraphId}
       data-hovered={hovered ? "true" : undefined}
-      className={cn("reflow-pair rounded-md transition-colors", hovered && "bg-muted/40")}
+      className={cn(
+        "reflow-pair -mx-3 rounded-lg px-3 py-1 transition-colors duration-300",
+        hovered && "bg-primary/[.035]",
+      )}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -580,7 +748,7 @@ function PairItem({
           mode === "target" && "hidden",
         )}
       >
-        {pair.sourceText}
+        <MathText text={pair.sourceText} />
       </p>
 
       {pair.status === "translated" && pair.translatedText !== null && (
@@ -588,12 +756,36 @@ function PairItem({
           data-testid="reflow-translation"
           className={cn(
             SANS_CLASS,
-            "reflow-pair-translation mt-2 text-sm leading-[1.65] text-foreground/80",
+            "reflow-pair-translation mt-1.5 text-sm leading-[1.8] text-foreground/80",
             mode === "source" && "hidden",
           )}
         >
-          {pair.translatedText}
+          <MathText text={pair.translatedText} />
+          {hovered && (
+            <button
+              type="button"
+              data-testid="bilingual-retranslate"
+              disabled={busy}
+              onClick={fix}
+              className="ml-2 inline-flex translate-y-[1px] items-center gap-0.5 rounded px-1 align-baseline text-2xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              {busy ? (
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+              ) : (
+                <RotateCcw className="h-3 w-3" aria-hidden="true" />
+              )}
+              重译此段
+            </button>
+          )}
         </p>
+      )}
+
+      {pair.status === "pending" && mode !== "source" && (
+        <div data-testid="bilingual-pending" aria-label="正在翻译" className="mt-3 space-y-2">
+          <div className="reflow-skeleton h-2.5 w-[94%] rounded" />
+          <div className="reflow-skeleton h-2.5 w-[82%] rounded" />
+          <div className="reflow-skeleton h-2.5 w-[48%] rounded" />
+        </div>
       )}
 
       {pair.status === "untranslated" && (
@@ -602,9 +794,13 @@ function PairItem({
           <span data-testid="bilingual-gap-badge">
             此段未翻译{pair.note !== "" ? `（${pair.note}）` : ""}
           </span>
+          <button type="button" className="underline" disabled={busy} onClick={fix}>
+            重译此段
+          </button>
           <button type="button" className="underline" onClick={onRetry}>
             重新生成逐段对照
           </button>
+          {problem !== null && <span className="text-destructive">{problem}</span>}
         </p>
       )}
     </div>

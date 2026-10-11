@@ -244,6 +244,10 @@ def _to_payload(artifact: BilingualArtifact) -> dict:
                 "layout_class": block.layout_class,
                 "text": block.text,
                 "bbox": list(block.bbox) if block.bbox else None,
+                "latex": block.latex,
+                "html": block.html,
+                "image_path": block.image_path,
+                "caption_of": block.caption_of,
             }
             for block in artifact.blocks
         ],
@@ -286,6 +290,10 @@ def _from_payload(payload: dict) -> BilingualArtifact:
                 layout_class=block.get("layout_class", ""),
                 text=block.get("text", ""),
                 bbox=tuple(float(v) for v in block["bbox"]) if block.get("bbox") else None,
+                latex=block.get("latex"),
+                html=block.get("html"),
+                image_path=block.get("image_path"),
+                caption_of=block.get("caption_of"),
             )
             for block in payload.get("blocks", [])
         ],
@@ -320,3 +328,105 @@ def _from_payload(payload: dict) -> BilingualArtifact:
         output_tokens=payload.get("output_tokens"),
         notes=list(payload.get("notes", [])),
     )
+
+
+# --- work in progress ----------------------------------------------------------
+#
+# A background run keeps what it has translated so far beside the finished
+# artifact, so a paper is readable from its first batch, and a run that stops —
+# a closed app, a provider that failed half-way — resumes with only the batches
+# still missing instead of paying for the whole paper again. The same identity
+# rules as the artifact apply: a partial from another extraction, prompt or
+# pipeline is not about this paper and is ignored.
+
+
+def partial_path(documents_dir: Path, content_hash: str, target_language: str) -> Path:
+    safe_language = target_language.replace("/", "_")
+    return bilingual_dir(documents_dir) / f"{content_hash}_{safe_language}.partial.json"
+
+
+def read_partial(
+    documents_dir: Path,
+    *,
+    content_hash: str,
+    ir_pipeline_version: str,
+    target_language: str,
+) -> dict | None:
+    """``{"translated": {...}, "headings": {...}, ...}`` or ``None``."""
+    path = partial_path(documents_dir, content_hash, target_language)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    expected = {
+        "content_hash": content_hash,
+        "target_language": target_language,
+        "ir_pipeline_version": ir_pipeline_version,
+        "pipeline_version": BILINGUAL_PIPELINE_VERSION,
+        "prompt_version": BILINGUAL_PROMPT_VERSION,
+    }
+    if any(payload.get(key) != value for key, value in expected.items()):
+        return None
+    if not isinstance(payload.get("translated"), dict) or not isinstance(payload.get("headings"), dict):
+        return None
+    return payload
+
+
+def write_partial(
+    documents_dir: Path,
+    *,
+    content_hash: str,
+    ir_pipeline_version: str,
+    target_language: str,
+    translated: dict[str, str],
+    headings: dict[str, str],
+    provider_model: str = "",
+) -> Path:
+    directory = bilingual_dir(documents_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = partial_path(documents_dir, content_hash, target_language)
+    payload = {
+        "content_hash": content_hash,
+        "target_language": target_language,
+        "ir_pipeline_version": ir_pipeline_version,
+        "pipeline_version": BILINGUAL_PIPELINE_VERSION,
+        "prompt_version": BILINGUAL_PROMPT_VERSION,
+        "translated": translated,
+        "headings": headings,
+        "provider_model": provider_model,
+    }
+    handle, temporary = tempfile.mkstemp(prefix=TEMP_PREFIX, suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as file:
+            json.dump(payload, file, ensure_ascii=False)
+        _replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+    return path
+
+
+def _replace(temporary: str, path: Path) -> None:
+    """`os.replace`, patient with Windows.
+
+    There a file cannot be replaced during the instant another thread has it
+    open — and the column re-reads this one every second and a half while the
+    job rewrites it. The read is over in milliseconds, so the write waits for it
+    rather than failing a batch that was already paid for.
+    """
+    for attempt in range(5):
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+
+
+def delete_partial(documents_dir: Path, content_hash: str, target_language: str) -> None:
+    partial_path(documents_dir, content_hash, target_language).unlink(missing_ok=True)

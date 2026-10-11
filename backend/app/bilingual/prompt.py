@@ -54,6 +54,9 @@ is reading it beside the original, paragraph by paragraph.
    spelling.
 5. Keep the author's meaning exactly. Do not summarise, do not explain, do not add
    information the paragraph does not contain.
+6. Tokens like ⟦m1⟧, ⟦m2⟧ stand for mathematical formulas. Copy every one of
+   them into the translation exactly once, unchanged, where the formula belongs
+   in your sentence.
 
 Return JSON exactly in this shape, with no commentary around it:
 
@@ -79,8 +82,13 @@ def build_messages(
     *,
     target_language: str,
     glossary: list[str] | None = None,
+    terms: list[tuple[str, str]] | None = None,
 ) -> list[dict[str, str]]:
     """The two messages one batch is translated from.
+
+    `terms` is this paper's own glossary (`app.bilingual.glossary`), already
+    narrowed to the entries that occur in this batch. Unlike `glossary` below it
+    *is* an instruction: it is what makes every batch use the same word.
 
     The headings go with **every** batch rather than only the first: they are a
     few hundred characters, and a batch that fails should not be able to cost the
@@ -92,6 +100,12 @@ def build_messages(
     """
     system = _SYSTEM.format(language=_language_name(target_language))
     parts: list[str] = []
+    if terms:
+        parts.append(
+            "Glossary for this paper. Wherever one of these terms occurs, translate "
+            "it exactly as given, every time:\n"
+            + "\n".join(f"- {source} → {target}" for source, target in terms)
+        )
     if glossary:
         parts.append(
             "Terminology this project collected earlier (use it when it fits, and "

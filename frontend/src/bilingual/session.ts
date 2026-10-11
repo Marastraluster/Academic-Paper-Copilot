@@ -20,9 +20,13 @@
 import {
   fetchBilingual,
   requestBilingual,
+  retranslateParagraph,
+  startBilingualJob,
+  stopBilingualJob,
   type BilingualView,
 } from "@/api/bilingual";
 import { isAbortError } from "@/api/client";
+import { profileIdFor } from "@/settings/taskModels";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 // The column's own work is torn down by the column's own module — see below.
@@ -107,14 +111,17 @@ export type GenerateOutcome = { ok: true } | { ok: false; reason: string };
  * they left before it finished — and one message for all three teaches them
  * nothing about what to do.
  */
-export async function generateBilingual(): Promise<GenerateOutcome> {
+export async function generateBilingual(
+  { force = false }: { force?: boolean } = {},
+): Promise<GenerateOutcome> {
   watchTheDocument();
   const state = useWorkspaceStore.getState();
   const document = state.document;
   if (!document || document.documentId === null) {
     return { ok: false, reason: "请先打开一篇论文。" };
   }
-  if (!state.profileId) {
+  const profileId = profileIdFor("translate", state);
+  if (!profileId) {
     return { ok: false, reason: "请先配置可用的模型服务。" };
   }
 
@@ -128,26 +135,64 @@ export async function generateBilingual(): Promise<GenerateOutcome> {
     bilingualStartedAt: Date.now(),
   });
 
-  try {
-    const view = await requestBilingual(
-      documentId, state.profileId, BILINGUAL_LANGUAGE,
-      { signal: controller.signal, force: true },
-    );
-    if (
-      useWorkspaceStore.getState().document?.documentId !== documentId ||
-      useWorkspaceStore.getState().document?.sessionToken !== sessionToken
-    ) {
-      // The reader moved on. The answer is not theirs to see and is **not written
-      // into the store**; the backend has already cached it under the paper's own
-      // content hash, so nothing was wasted.
-      return { ok: false, reason: "已切换到其他文档，本次逐段对照未显示。" };
+  const stillHere = () =>
+    useWorkspaceStore.getState().document?.documentId === documentId &&
+    useWorkspaceStore.getState().document?.sessionToken === sessionToken;
+  const show = (view: BilingualView | null) => {
+    if (view !== null) {
+      useWorkspaceStore.setState({ bilingual: view, bilingualFor: documentId });
     }
-    useWorkspaceStore.setState({
-      bilingual: view,
-      bilingualFor: documentId,
-      bilingualStatus: "ready",
-      bilingualStartedAt: null,
+  };
+
+  try {
+    // A background job first: the reading fills in batch by batch and survives
+    // a closed window. An older backend without the route gets the one-request
+    // generation it always had.
+    const started = await startBilingualJob(documentId, profileId, BILINGUAL_LANGUAGE, {
+      signal: controller.signal,
+      force,
     });
+    if (!stillHere()) return { ok: false, reason: "已切换到其他文档，本次逐段对照未显示。" };
+
+    if (started.kind === "unsupported") {
+      const view = await requestBilingual(documentId, profileId, BILINGUAL_LANGUAGE, {
+        signal: controller.signal,
+        force: true,
+      });
+      if (!stillHere()) {
+        // The backend has already cached it under the paper's own content
+        // hash, so nothing was wasted.
+        return { ok: false, reason: "已切换到其他文档，本次逐段对照未显示。" };
+      }
+      show(view);
+    } else if (started.kind === "reading") {
+      show(started.view);
+    } else {
+      // A job (or a finished reading): read until it stops running.
+      for (;;) {
+        const read = await fetchBilingual(documentId, BILINGUAL_LANGUAGE, {
+          signal: controller.signal,
+        });
+        if (!stillHere()) return { ok: false, reason: "已切换到其他文档，本次逐段对照未显示。" };
+        if (read.state === "found") show(read.view);
+        const job = read.state === "found" ? read.view.job : null;
+        if (started.kind === "cached" || job === null || job === undefined || job.status !== "running") {
+          if (job?.status === "failed") {
+            const reason = job.message
+              ? `翻译中断：${job.message}。已完成的段落已保留，可继续翻译。`
+              : "翻译中断，已完成的段落已保留，可继续翻译。";
+            useWorkspaceStore.setState({
+              bilingualStatus: "failed", bilingualStartedAt: null, bilingualError: reason,
+            });
+            return { ok: false, reason };
+          }
+          break;
+        }
+        await sleep(POLL_MS, controller.signal);
+      }
+    }
+
+    useWorkspaceStore.setState({ bilingualStatus: "ready", bilingualStartedAt: null });
     return { ok: true };
   } catch (error) {
     if (isAbortError(error)) {
@@ -166,6 +211,76 @@ export async function generateBilingual(): Promise<GenerateOutcome> {
     return { ok: false, reason };
   } finally {
     if (activeGeneration === controller) activeGeneration = null;
+  }
+}
+
+/** How often a running job's reading is re-read. */
+const POLL_MS = 1500;
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException("Aborted", "AbortError"));
+      },
+      { once: true },
+    );
+  });
+}
+
+/** Stop the background job. What it translated stays; generating again resumes. */
+export async function stopBilingual(): Promise<void> {
+  const document = useWorkspaceStore.getState().document;
+  activeGeneration?.abort();
+  if (!document || document.documentId === null) return;
+  try {
+    await stopBilingualJob(document.documentId, BILINGUAL_LANGUAGE);
+  } catch {
+    // Nothing running, or an older backend: either way there is nothing to stop.
+  }
+  void loadBilingual();
+}
+
+/**
+ * Translate one paragraph again — one model call — and put the answer in place.
+ *
+ * Returns a reason on failure rather than throwing, like `generateBilingual`.
+ */
+export async function retranslate(paragraphId: string): Promise<GenerateOutcome> {
+  const state = useWorkspaceStore.getState();
+  const document = state.document;
+  if (!document || document.documentId === null) return { ok: false, reason: "请先打开一篇论文。" };
+  const profileId = profileIdFor("translate", state);
+  if (!profileId) return { ok: false, reason: "请先配置可用的模型服务。" };
+  const { documentId } = document;
+  try {
+    const fixed = await retranslateParagraph(
+      documentId, paragraphId, profileId, BILINGUAL_LANGUAGE,
+    );
+    const view = useWorkspaceStore.getState().bilingual;
+    if (useWorkspaceStore.getState().document?.documentId !== documentId || view === null) {
+      return { ok: true };
+    }
+    const paragraphs = view.paragraphs.map((paragraph) =>
+      paragraph.paragraph_id === paragraphId
+        ? { ...paragraph, translated_text: fixed.translated_text, status: fixed.status, note: "" }
+        : paragraph,
+    );
+    useWorkspaceStore.setState({
+      bilingual: {
+        ...view,
+        paragraphs,
+        translated_paragraphs: paragraphs.filter(
+          (p) => p.status === "translated" && p.translated_text.trim() !== "",
+        ).length,
+      },
+    });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: describeFailure(error) };
   }
 }
 
