@@ -20,15 +20,28 @@ not measured, say it was not measured.
 ## Before you open a pull request
 
 ```bash
-# Backend: 1198 tests, offline by construction
+# Backend: 1276 tests, offline by construction (measured on cb6a5c1: 233.93 s)
 cd backend && .venv/Scripts/python -m pytest          # .venv/bin/python on macOS/Linux
+# The summary line is already suppressed by addopts = "-q" in backend/pyproject.toml.
+# Adding another -q makes it -qq and swallows the "N passed" line entirely.
 
-# Frontend: types, 404 tests, production build
+# Frontend: types, 424 tests in 28 files, production build
 cd frontend && npm run typecheck && npx vitest run && npm run build
 ```
 
+One rule about running them: **never both at once.** Running both suites at once produced 13
+failures — `test_llm_responses`, `test_llm_detection`, `test_db`, `test_isolation`,
+`test_pdfkernel`, `test_context_analysis`, `test_context_translation`, `test_qa_retrieval`,
+`test_qa_answer` and `test_qa_expansion` — none of which reproduced when the same tests were run
+alone. They were resource contention; a failure that disappears on a quiet machine is not a
+regression, and treating it as one costs a day.
+
+`docs/development.md` documents each layer, the exact commands, and what each layer can see.
+
 If you touched the reader, the sidebar, the store, the session or the library, run the browser
-harnesses too — they are the only layer that sees the built application:
+harnesses too — they are the only layer that sees the built application. Every harness lives in
+`frontend/scripts/`, they all need `npm run build` first, and each one documents its own flags in
+its header comment:
 
 ```bash
 cd frontend && node scripts/e2e-overview.mjs       # add --generate to spend one real call
@@ -36,8 +49,13 @@ node scripts/e2e-session-continuity.mjs
 node scripts/e2e-document-library.mjs
 ```
 
-They copy your data directory into a scratch directory first, so a harness run never touches
-your library.
+Those three are the ones most changes need. The other eighteen `.mjs` files committed under
+`frontend/scripts/` — six more `e2e-` harnesses, the five `probe-` measurement scripts, the two
+fixture generators and `capture.mjs` — are listed with their flags and environment variables in
+[docs/development.md](docs/development.md).
+
+They point the backend at a scratch directory (`DATABASE_PATH` and `DOCUMENTS_DIR`), so a run
+never touches your library or your database.
 
 ## Non-negotiables
 
@@ -46,8 +64,13 @@ your library.
 - **No secrets outside the credential store.** API keys go to the operating system's keyring
   and nowhere else — not SQLite, not `localStorage`, not a log line, not an error envelope,
   not a screenshot. The client is only ever told *whether* a key is set, plus a mask.
-- **No telemetry, no external CDNs, no analytics.** The application talks to the loopback
-  backend and to the model endpoint the reader configured. Nothing else.
+- **No telemetry, no external CDNs, no analytics.** The application ships no analytics, no CDN
+  and no cloud sync. Three things can leave this machine, and never by themselves: the model
+  calls you press a button for; a paper you hand to a MinerU parser, if you configure one (a local
+  one keeps it on your machine); and the DOI or title of the paper you are reading, plus any
+  search terms you type, if you switch related-paper search on. The browser talks to a loopback
+  backend, the backend talks to the endpoints you configured — and the README states this the same
+  way, so the two files must keep agreeing.
 - **A measurement before a dependency.** A new package needs a reason that survives review:
   what it replaces, what it costs in the initial bundle (the ceiling and the current
   measurement are in `docs/acceptance/DS-QA-015.md`), and why the platform cannot do it.

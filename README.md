@@ -138,13 +138,29 @@ the default until you say otherwise; the choices persist as profile ids, never a
 
 ## Screenshots
 
-| Reader and instant orientation | Selection → question, with scope |
-|---|---|
-| ![Reader](docs/screenshots/reader.png) | ![Selection and QA](docs/screenshots/selection-qa.png) |
+Every shot below is the same paper — **Deep Residual Learning for Image Recognition**
+([arXiv:1512.03385](https://arxiv.org/abs/1512.03385)), a public one — read in the running
+application, with the interface in its Chinese-first default. They are taken by
+[`frontend/scripts/capture-readme.mjs`](frontend/scripts/capture-readme.mjs), which registers its own
+copy through the UI, photographs it, and deletes it again. The translation shot is taken **while the
+job is still running** (9 of 101 paragraphs, batch 1 of 9): a screenshot of a job that cannot be
+interrupted would be a claim rather than a picture.
 
-| Outline | Notes |
+| 逐段 · the paragraph reading | Copilot · a selection, answered where it came from |
+|---|---|
+| ![Paragraph reading](docs/screenshots/reader.png) | ![Selection and Copilot](docs/screenshots/copilot.png) |
+
+| 逐段翻译 · a translation job, mid-flight | 术语表 · the terms this paper translates once |
+|---|---|
+| ![Translation in progress](docs/screenshots/translation.png) | ![Glossary](docs/screenshots/glossary.png) |
+
+| 目录 · the table of contents, following the reading | 笔记 · a note anchored to a highlight |
 |---|---|
 | ![Outline](docs/screenshots/outline.png) | ![Notes](docs/screenshots/notes.png) |
+
+| 设置 · a profile per kind of work | 论文库 · the library and its search |
+|---|---|
+| ![Provider settings](docs/screenshots/settings.png) | ![Library](docs/screenshots/library.png) |
 
 ## Quick start
 
@@ -330,14 +346,22 @@ cd frontend
 node scripts/e2e-overview.mjs --generate     # reader overview lifecycle
 node scripts/e2e-session-continuity.mjs      # reload restores the paper
 node scripts/e2e-document-library.mjs        # library, switching, deletion
-node scripts/e2e-qa.mjs                      # Paper QA
+node scripts/e2e-qa.mjs                      # Paper QA — and the selection drag it drives
 node scripts/e2e-notes.mjs                   # notes and highlights
+node scripts/e2e-notes-search.mjs            # searching them
 node scripts/e2e-crosspage.mjs               # cross-page selection
 node scripts/e2e-nonprose.mjs                # captions and formulas
 node scripts/e2e-outline.mjs                 # outline navigation
 node scripts/e2e-translation.mjs             # translation and reader modes
-  node scripts/e2e-reflow-bilingual.mjs        # paragraph reading and formula typesetting
+node scripts/e2e-reflow-bilingual.mjs        # paragraph reading and formula typesetting
+node scripts/e2e-provider-settings.mjs       # profiles, probing, the credential store
 ```
+
+All twelve are `node --check`-clean and each one has a top-level driver of its own that exits 0 or 1.
+`scripts/e2e-selection.mjs` is deliberately absent: it is a module, not a harness — [`e2e-qa.mjs`](frontend/scripts/e2e-qa.mjs)
+drives its selection-drag checks. [`docs/development.md`](docs/development.md) lists every harness with
+the flags and environment variables it reads, the probes that measure rather than assert, and what each
+layer of the test suite can and cannot see.
 
 The backend suite fails any test that opens a non-loopback socket, and every test runs against
 a temporary database — your real library is never touched by a test run. The features that *can*
@@ -408,9 +432,10 @@ assets/             project marks
 
 ## Contributing
 
-Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Two house rules
-matter more than the rest: **write the acceptance criteria before the code**, and **report
-measurements, not adjectives**.
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the two house
+rules (**acceptance criteria before the code**, **measurements, not adjectives**) and
+[`docs/development.md`](docs/development.md) for the day to day: which layer of the test suite sees
+what, the exact commands, what counts as evidence, and when a decision needs an ADR.
 
 ## License
 

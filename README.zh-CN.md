@@ -69,13 +69,23 @@ Academic Paper Copilot 是一个本地优先的学术 PDF 阅读器。它让你�
 
 ## 截图
 
-| 阅读器与即时入口 | 划选 → 提问，带范围 |
-|---|---|
-| ![阅读器](docs/screenshots/reader.png) | ![划选与问答](docs/screenshots/selection-qa.png) |
+下面八张是同一篇论文 —— **Deep Residual Learning for Image Recognition**（[arXiv:1512.03385](https://arxiv.org/abs/1512.03385)，公开论文）—— 在运行中的应用里的真实界面。它们由 [`frontend/scripts/capture-readme.mjs`](frontend/scripts/capture-readme.mjs) 采集：脚本从界面里注册一份自己的副本、拍完再删掉。翻译那张是在任务**还在跑**的时候拍的（101 段里的 9 段、9 批里的第 1 批）—— 一张"无法中断的任务"的截图只是说法，不是画面。
 
-| 目录 | 笔记 |
+| 逐段 · 重排阅读 | Copilot · 划选一段，答在出处上 |
+|---|---|
+| ![逐段阅读](docs/screenshots/reader.png) | ![划选与 Copilot](docs/screenshots/copilot.png) |
+
+| 逐段翻译 · 任务进行中 | 术语表 · 这篇论文只用一种译法 |
+|---|---|
+| ![翻译进行中](docs/screenshots/translation.png) | ![术语表](docs/screenshots/glossary.png) |
+
+| 目录 · 跟着阅读走 | 笔记 · 锚在高亮上的笔记 |
 |---|---|
 | ![目录](docs/screenshots/outline.png) | ![笔记](docs/screenshots/notes.png) |
+
+| 设置 · 每种工作一个模型 | 论文库 · 文库与搜索 |
+|---|---|
+| ![模型服务设置](docs/screenshots/settings.png) | ![论文库](docs/screenshots/library.png) |
 
 ## 快速开始
 
@@ -209,14 +219,18 @@ cd frontend
 node scripts/e2e-overview.mjs --generate     # 概览生命周期
 node scripts/e2e-session-continuity.mjs      # 刷新后恢复论文
 node scripts/e2e-document-library.mjs        # 论文库、切换、删除
-node scripts/e2e-qa.mjs                      # 论文问答
+node scripts/e2e-qa.mjs                      # 论文问答 —— 以及它驱动的划选拖拽
 node scripts/e2e-notes.mjs                   # 笔记与高亮
+node scripts/e2e-notes-search.mjs            # 笔记检索
 node scripts/e2e-crosspage.mjs               # 跨页划选
 node scripts/e2e-nonprose.mjs                # 图注与公式
 node scripts/e2e-outline.mjs                 # 目录导航
 node scripts/e2e-translation.mjs             # 翻译与阅读模式
-  node scripts/e2e-reflow-bilingual.mjs        # 逐段阅读与公式排版
+node scripts/e2e-reflow-bilingual.mjs        # 逐段阅读与公式排版
+node scripts/e2e-provider-settings.mjs       # 模型配置、探测、凭据存储
 ```
+
+这十二个都通过 `node --check`，各自都有顶层驱动、以 0 或 1 退出。`scripts/e2e-selection.mjs` 是有意不列的：它是**模块**而不是 harness —— 它的划选拖拽检查由 [`e2e-qa.mjs`](frontend/scripts/e2e-qa.mjs) 驱动。[`docs/development.md`](docs/development.md) 逐个列出了每个 harness 读哪些参数与环境变量、哪些 probe 只测量不断言，以及测试套件的每一层各自看得见什么、看不见什么。
 
 后端测试套件会让任何尝试打开非回环 socket 的测试直接失败，而且每个测试都用临时数据库 —— 测试跑一百遍也不会碰你的论文库。能够出网的功能也受同一条规则约束：MinerU、OpenAlex、Semantic Scholar 与模型联网检索都在进程内的传输层上被测试，所以测试套件在覆盖它们的同时依然不会打开任何非回环 socket。
 
@@ -269,7 +283,7 @@ assets/             项目图形
 
 ## 参与贡献
 
-欢迎提 Issue 和 PR —— 详见 [CONTRIBUTING.md](CONTRIBUTING.md)。有两条项目规矩比其他都重要：**先写验收标准，再写代码**；**报告测量结果，而不是形容词**。
+欢迎提 Issue 和 PR —— 详见 [CONTRIBUTING.md](CONTRIBUTING.md) 的两条项目规矩（**先写验收标准，再写代码**、**报告测量结果，而不是形容词**），以及 [`docs/development.md`](docs/development.md) 讲日常怎么做：测试套件的每一层看得见什么、确切的命令、什么才算证据、什么时候需要写一份 ADR。
 
 ## 开源协议
 
