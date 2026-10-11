@@ -15,7 +15,7 @@ already enforces.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -71,8 +71,12 @@ class ProfileCreateRequest(BaseModel):
 
     name: str
     base_url: str
-    model: str
-    protocol: str = "auto"
+    #: Required for a chat model; for a parser profile it is MinerU's `tier`
+    #: (empty lets the server choose), and a search profile ignores it.
+    model: str = ""
+    #: Omitted means the kind's default (`auto`, `mineru_v1`, `openalex`).
+    protocol: str | None = None
+    kind: Literal["llm", "parser", "search"] = "llm"
     temperature: float | None = None
     max_output_tokens: int | None = None
     timeout_s: float = Field(default=60.0, gt=0)
@@ -136,6 +140,7 @@ class ProfileResponse(BaseModel):
     api_key_masked: str
     created_at: str
     updated_at: str
+    kind: str = "llm"
 
     @classmethod
     def from_profile(cls, profile: Profile) -> ProfileResponse:
@@ -153,6 +158,7 @@ class ProfileResponse(BaseModel):
             api_key_masked=profile.api_key_masked,
             created_at=profile.created_at,
             updated_at=profile.updated_at,
+            kind=profile.kind,
         )
 
 
@@ -231,9 +237,11 @@ def register_profile_error_handlers(app: Any) -> None:
 
 
 @router.get("", response_model=list[ProfileResponse])
-async def list_profiles(request: Request) -> list[ProfileResponse]:
+async def list_profiles(
+    request: Request, kind: Literal["llm", "parser", "search"] | None = None
+) -> list[ProfileResponse]:
     store = get_profile_store(request)
-    return [ProfileResponse.from_profile(p) for p in store.list_profiles()]
+    return [ProfileResponse.from_profile(p) for p in store.list_profiles(kind)]
 
 
 @router.post("", response_model=ProfileResponse, status_code=201)
@@ -245,6 +253,7 @@ async def create_profile(request: Request, payload: ProfileCreateRequest) -> Pro
         base_url=payload.base_url,
         model=payload.model,
         protocol=payload.protocol,
+        kind=payload.kind,
         temperature=payload.temperature,
         max_output_tokens=payload.max_output_tokens,
         timeout_s=payload.timeout_s,
@@ -301,6 +310,37 @@ async def test_profile(request: Request, profile_id: str) -> Any:
     store = get_profile_store(request)
     profile = store.get_profile(profile_id)
 
+    if profile.kind == "parser":
+        from app.mineru.client import probe_mineru
+
+        service = store.to_service_config(profile_id, kind="parser")
+        outcome = await probe_mineru(service)
+        if not outcome.ok:
+            return error_response(502, outcome.code, outcome.message)
+        return ConnectionTestResponse(
+            ok=True, protocol=profile.protocol, model=outcome.detail, latency_ms=outcome.latency_ms
+        )
+    if profile.kind == "search":
+        import time
+
+        from app.related.sources import SearchError, resolve_search_service, source_for
+
+        started = time.perf_counter()
+        try:
+            service = resolve_search_service(store, profile_id)
+            found = await source_for(service).search("deep residual learning", 1)
+        except SearchError as exc:
+            return error_response(502, exc.code, exc.message)
+        return ConnectionTestResponse(
+            ok=True, protocol=profile.protocol,
+            model=f"{len(found)} result" if found else "no results",
+            latency_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
+    if profile.kind != "llm":
+        return error_response(
+            400, "BAD_REQUEST", "Connection tests for this kind of profile are not available yet."
+        )
+
     config = store.to_provider_config(profile_id)
 
     try:
@@ -327,6 +367,37 @@ async def detect_protocol(request: Request, profile_id: str) -> Any:
     """
     store = get_profile_store(request)
     profile = store.get_profile(profile_id)
+
+    if profile.kind == "parser":
+        from app.mineru.client import probe_mineru
+
+        service = store.to_service_config(profile_id, kind="parser")
+        outcome = await probe_mineru(service)
+        if not outcome.ok:
+            return error_response(502, outcome.code, outcome.message)
+        return ConnectionTestResponse(
+            ok=True, protocol=profile.protocol, model=outcome.detail, latency_ms=outcome.latency_ms
+        )
+    if profile.kind == "search":
+        import time
+
+        from app.related.sources import SearchError, resolve_search_service, source_for
+
+        started = time.perf_counter()
+        try:
+            service = resolve_search_service(store, profile_id)
+            found = await source_for(service).search("deep residual learning", 1)
+        except SearchError as exc:
+            return error_response(502, exc.code, exc.message)
+        return ConnectionTestResponse(
+            ok=True, protocol=profile.protocol,
+            model=f"{len(found)} result" if found else "no results",
+            latency_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
+    if profile.kind != "llm":
+        return error_response(
+            400, "BAD_REQUEST", "Connection tests for this kind of profile are not available yet."
+        )
 
     config = store.to_provider_config(profile_id)
 

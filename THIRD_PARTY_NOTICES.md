@@ -39,6 +39,12 @@ listed in `backend/pyproject.toml` and `frontend/package.json`. Among them:
 | [keyring](https://github.com/jaraco/keyring) | MIT | The operating system credential store |
 | [OpenAI Python SDK](https://github.com/openai/openai-python) | Apache-2.0 | The OpenAI-compatible client used against any configured endpoint |
 
+## Services called over HTTP, never bundled
+
+| Service | Licence | How it is used here |
+|---|---|---|
+| [MinerU](https://github.com/opendatalab/MinerU) | MinerU Open Source License (Apache-2.0 with additional terms) | Optional structural parser. `backend/app/mineru/` calls a MinerU v1 API — a local `mineru-api`, a server the reader runs, or mineru.net — that the reader configures as a *parser* profile. No MinerU code or model is included in or linked into this application. Its additional terms require anyone offering an **online service** built on MinerU to say so prominently; this application uses MinerU and says so here. |
+
 ## A note on the model services
 
 This project ships **no** model, no weights and no keys. It talks to whatever OpenAI-compatible

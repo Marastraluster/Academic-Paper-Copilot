@@ -73,10 +73,15 @@ def is_reusable(cached: DocumentIR | None, document_id: str) -> bool:
     of sixteen owning no paragraphs, and nothing could tell. The same shape as
     `index.py`'s `SCHEMA_SIGNATURE` guard on the FTS index, applied to the IR.
     """
+    from app.mineru.convert import MINERU_PIPELINE_VERSION
+
+    # An IR MinerU produced is reused as well: it is the better parse, it was
+    # asked for explicitly, and re-running the in-house extractor over it would
+    # silently throw that work away. Only a forced extraction replaces it.
     return (
         cached is not None
         and cached.document_id == document_id
-        and cached.pipeline_version == IR_PIPELINE_VERSION
+        and cached.pipeline_version in (IR_PIPELINE_VERSION, MINERU_PIPELINE_VERSION)
     )
 
 

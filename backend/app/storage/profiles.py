@@ -32,6 +32,36 @@ VALID_PROTOCOLS = ("auto", "chat_completions", "responses")
 DEFAULT_PROTOCOL = "auto"
 DEFAULT_TIMEOUT_S = 60.0
 
+#: What a profile configures. A chat model was the only kind until document
+#: parsing and literature search arrived; both are an endpoint plus an optional
+#: key, so they live in the same table and the same credential store.
+KIND_LLM = "llm"
+KIND_PARSER = "parser"
+KIND_SEARCH = "search"
+VALID_KINDS = (KIND_LLM, KIND_PARSER, KIND_SEARCH)
+
+#: The protocols each kind understands. MinerU 4 serves one "v1" API whether it
+#: runs on this machine, on a lab server or as mineru.net, so the deployment is
+#: the URL, not the protocol.
+PROTOCOLS_BY_KIND: dict[str, tuple[str, ...]] = {
+    KIND_LLM: VALID_PROTOCOLS,
+    KIND_PARSER: ("mineru_v1",),
+    KIND_SEARCH: ("semantic_scholar", "openalex", "llm_web"),
+}
+DEFAULT_PROTOCOL_BY_KIND = {
+    KIND_LLM: DEFAULT_PROTOCOL,
+    KIND_PARSER: "mineru_v1",
+    KIND_SEARCH: "openalex",
+}
+
+#: For a parser profile `model` holds MinerU's `tier`. Empty lets the server
+#: decide — its default is `standard`, which needs a VLM; a CPU-only machine
+#: wants `flash` or `basic`.
+MINERU_TIERS = ("", "flash", "basic", "standard", "advanced")
+
+#: For an ``llm_web`` search profile `model` holds the id of the chat profile
+#: whose endpoint and key it borrows; `base_url` is display-only.
+
 PROFILE_ID_PREFIX = "prof_"
 
 
@@ -73,6 +103,25 @@ class Profile:
     updated_at: str
     has_key: bool
     api_key_masked: str
+    kind: str = KIND_LLM
+
+
+@dataclass(frozen=True)
+class ServiceConfig:
+    """Everything a non-LLM client needs, key included.
+
+    The counterpart of `ProviderConfig` for parsing and search profiles, built by
+    `ProfileStore.to_service_config` — the only other path by which a plaintext
+    key leaves this package.
+    """
+
+    kind: str
+    protocol: str
+    base_url: str
+    model: str
+    api_key: str
+    timeout_s: float
+    custom_headers: dict[str, str] | None
 
 
 def _utc_now_iso() -> str:
@@ -132,6 +181,7 @@ class ProfileStore:
             updated_at=row["updated_at"],
             has_key=has_key,
             api_key_masked=masked,
+            kind=row["kind"] if "kind" in row.keys() else KIND_LLM,
         )
 
     def _fetch_row(self, profile_id: str) -> sqlite3.Row:
@@ -143,13 +193,34 @@ class ProfileStore:
         return row
 
     @staticmethod
-    def _validate_protocol(protocol: str) -> str:
-        normalized = (protocol or "").strip().lower()
-        if normalized not in VALID_PROTOCOLS:
+    def _validate_kind(kind: str) -> str:
+        normalized = (kind or "").strip().lower()
+        if normalized not in VALID_KINDS:
             raise ProfileValidationError(
-                f"Unsupported protocol {protocol!r}; expected one of {VALID_PROTOCOLS}."
+                f"Unsupported kind {kind!r}; expected one of {VALID_KINDS}."
             )
         return normalized
+
+    @staticmethod
+    def _validate_protocol(protocol: str, kind: str = KIND_LLM) -> str:
+        allowed = PROTOCOLS_BY_KIND[kind]
+        normalized = (protocol or "").strip().lower()
+        if normalized not in allowed:
+            raise ProfileValidationError(
+                f"Unsupported protocol {protocol!r}; expected one of {allowed}."
+            )
+        return normalized
+
+    @staticmethod
+    def _validate_model(model: str, kind: str) -> str:
+        value = (model or "").strip()
+        if kind == KIND_LLM and not value:
+            raise ProfileValidationError("Model must not be blank.")
+        if kind == KIND_PARSER and value.lower() not in MINERU_TIERS:
+            raise ProfileValidationError(
+                f"Unsupported MinerU tier {model!r}; expected one of {MINERU_TIERS[1:]} or empty."
+            )
+        return value.lower() if kind == KIND_PARSER else value
 
     def _assert_name_available(self, name: str, *, excluding_id: str | None = None) -> None:
         row = self._connection.execute(
@@ -165,8 +236,9 @@ class ProfileStore:
         *,
         name: str,
         base_url: str,
-        model: str,
-        protocol: str = DEFAULT_PROTOCOL,
+        model: str = "",
+        protocol: str | None = None,
+        kind: str = KIND_LLM,
         temperature: float | None = None,
         max_output_tokens: int | None = None,
         timeout_s: float = DEFAULT_TIMEOUT_S,
@@ -183,11 +255,14 @@ class ProfileStore:
             raise ProfileValidationError("Profile name must not be blank.")
         if not (base_url or "").strip():
             raise ProfileValidationError("Base URL must not be blank.")
-        if not (model or "").strip():
-            raise ProfileValidationError("Model must not be blank.")
+        resolved_kind = self._validate_kind(kind)
+        model = self._validate_model(model, resolved_kind)
 
         self._assert_name_available(name)
-        resolved_protocol = self._validate_protocol(protocol)
+        resolved_protocol = self._validate_protocol(
+            protocol if protocol is not None else DEFAULT_PROTOCOL_BY_KIND[resolved_kind],
+            resolved_kind,
+        )
 
         credential_ref: str | None = None
         if api_key:
@@ -202,13 +277,13 @@ class ProfileStore:
                 INSERT INTO profiles (
                     id, name, base_url, model, protocol, temperature,
                     max_output_tokens, timeout_s, custom_headers, credential_ref,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, kind
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     profile_id, name, base_url, model, resolved_protocol, temperature,
                     max_output_tokens, timeout_s, _encode_headers(custom_headers),
-                    credential_ref, now, now,
+                    credential_ref, now, now, resolved_kind,
                 ),
             )
             self._connection.commit()
@@ -231,10 +306,16 @@ class ProfileStore:
             raise ProfileNotFoundError(f"No profile named {name!r}.")
         return self._row_to_profile(row)
 
-    def list_profiles(self) -> list[Profile]:
-        rows = self._connection.execute(
-            "SELECT * FROM profiles ORDER BY name COLLATE NOCASE"
-        ).fetchall()
+    def list_profiles(self, kind: str | None = None) -> list[Profile]:
+        if kind is None:
+            rows = self._connection.execute(
+                "SELECT * FROM profiles ORDER BY name COLLATE NOCASE"
+            ).fetchall()
+        else:
+            rows = self._connection.execute(
+                "SELECT * FROM profiles WHERE kind = ? ORDER BY name COLLATE NOCASE",
+                (self._validate_kind(kind),),
+            ).fetchall()
         return [self._row_to_profile(row) for row in rows]
 
     def update_profile(
@@ -267,8 +348,13 @@ class ProfileStore:
             if field in fields:
                 updates[field] = fields[field]
 
+        # A profile's kind is fixed at creation: a parser endpoint does not become
+        # a chat model by editing it, and every validation below depends on it.
+        kind = row["kind"] if "kind" in row.keys() else KIND_LLM
         if "protocol" in updates:
-            updates["protocol"] = self._validate_protocol(str(updates["protocol"]))
+            updates["protocol"] = self._validate_protocol(str(updates["protocol"]), kind)
+        if "model" in updates:
+            updates["model"] = self._validate_model(str(updates["model"] or ""), kind)
 
         if "custom_headers" in fields:
             headers = fields["custom_headers"]
@@ -345,5 +431,37 @@ class ProfileStore:
             timeout_s=profile.timeout_s,
             temperature=profile.temperature,
             max_output_tokens=profile.max_output_tokens,
+            custom_headers=profile.custom_headers,
+        )
+
+    def to_service_config(self, profile_id: str, *, kind: str | None = None) -> ServiceConfig:
+        """Build the config a parsing or search client consumes, key included.
+
+        ``kind`` asserts what the caller expects, so a chat profile handed to the
+        parser by mistake fails here with a clear message rather than as an HTTP
+        error from the wrong kind of server.
+        """
+        profile = self.get_profile(profile_id)
+        if kind is not None and profile.kind != kind:
+            raise ProfileValidationError(
+                f"Profile {profile.name!r} is a {profile.kind!r} profile, not {kind!r}."
+            )
+        api_key = ""
+        if profile.credential_ref is not None:
+            try:
+                api_key = get_credential(profile.credential_ref)
+            except Exception as exc:  # noqa: BLE001
+                raise ProfileStoreError(
+                    sanitize_message(
+                        f"Profile {profile.name!r} references a credential that could not be read: {exc}"
+                    )
+                ) from exc
+        return ServiceConfig(
+            kind=profile.kind,
+            protocol=profile.protocol,
+            base_url=profile.base_url,
+            model=profile.model,
+            api_key=api_key,
+            timeout_s=profile.timeout_s,
             custom_headers=profile.custom_headers,
         )

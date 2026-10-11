@@ -71,7 +71,7 @@ def test_migration_creates_the_profiles_table(db_path: Path) -> None:
     assert "profiles" in tables
     # DS-BE-007 added documents and translation_tasks (3); DS-QA-010 added the
     # annotation tables (4); DS-QA-013 added annotation_targets.source_class (5).
-    assert versions[-1] == SCHEMA_VERSION == 5
+    assert versions[-1] == SCHEMA_VERSION == 6
 
 
 def test_migration_preserves_existing_v1_data(tmp_path: Path) -> None:
@@ -95,7 +95,7 @@ def test_migration_preserves_existing_v1_data(tmp_path: Path) -> None:
     # Every migration in order, one row each: v1 was stamped at creation and each
     # later step appended its own. DS-QA-010 added the fourth, DS-QA-013 the
     # fifth.
-    assert [row["version"] for row in rows] == [1, 2, 3, 4, 5]
+    assert [row["version"] for row in rows] == [1, 2, 3, 4, 5, 6]
     assert rows[0]["applied_at"] == "2026-01-01T00:00:00+00:00", "the original v1 row was altered"
     assert "profiles" in tables
 
@@ -210,7 +210,7 @@ def test_profiles_table_has_the_expected_columns(store: ProfileStore, db_path: P
     assert columns == {
         "id", "name", "base_url", "model", "protocol", "temperature",
         "max_output_tokens", "timeout_s", "custom_headers", "credential_ref",
-        "created_at", "updated_at",
+        "created_at", "updated_at", "kind",
     }
 
 

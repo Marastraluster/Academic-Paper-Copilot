@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 #: Current schema version. Bump when adding a migration below.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 #: The version every database starts at, before any migration runs.
 BASELINE_VERSION = 1
@@ -215,12 +215,32 @@ def _migration_005_add_target_source_class(connection: sqlite3.Connection) -> No
     )
 
 
+def _migration_006_add_profile_kind(connection: sqlite3.Connection) -> None:
+    """Record which *kind* of service a profile configures.
+
+    Until now every profile was a chat model. Document parsing (MinerU) and
+    literature search are configured the same way — an endpoint, an optional key
+    in the OS credential store, a few settings — so they share the table rather
+    than each growing its own. Every existing row is a chat model, so the default
+    is the only value those rows could have had.
+    """
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(profiles)")}
+    if "kind" in columns:
+        # Already there: a database whose version stamp was rewound replays this
+        # migration, and replaying must converge rather than fail.
+        return
+    connection.execute(
+        "ALTER TABLE profiles ADD COLUMN kind TEXT NOT NULL DEFAULT 'llm'"
+    )
+
+
 #: version -> migration. Each entry upgrades the database *to* that version.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migration_002_create_profiles,
     3: _migration_003_create_documents_and_tasks,
     4: _migration_004_create_annotations,
     5: _migration_005_add_target_source_class,
+    6: _migration_006_add_profile_kind,
 }
 
 

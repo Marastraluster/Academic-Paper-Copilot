@@ -366,7 +366,10 @@ class TestMigration:
         finally:
             connection.close()
 
-        assert version == 5
+        # Upgrades run to the newest schema; 005 is the one under test here.
+        from app.db import SCHEMA_VERSION
+
+        assert version == SCHEMA_VERSION >= 5
         assert count == 1
         assert row["source_anchor_id"] == "anchor"
         assert row["page_number"] == 3

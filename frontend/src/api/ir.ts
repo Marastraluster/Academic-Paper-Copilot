@@ -85,6 +85,14 @@ export interface IrBlock {
    * happen whose symptom would be a caption note that silently never resolves.
    */
   source_anchor_id: string;
+  /**
+   * What a structural parser (MinerU) recovered beyond the text: a display
+   * formula's LaTeX, a table's HTML, the figure as an image file. Absent under
+   * the in-house extractor — not empty.
+   */
+  latex?: string | null;
+  html?: string | null;
+  image_path?: string | null;
 }
 
 export interface IrPage {

@@ -56,7 +56,7 @@ export interface ReflowPair {
   y0: number;
   sourceText: string;
   translatedText: string | null;
-  status: "translated" | "untranslated" | "skipped";
+  status: "translated" | "untranslated" | "skipped" | "pending";
   note: string;
 }
 
@@ -83,6 +83,16 @@ export interface ReflowCrop {
    * vertical middle it shares.
    */
   number: string | null;
+  /**
+   * What a structural parser recovered, when one produced this IR: the formula
+   * as LaTeX, the table as cells, the figure as an image file. The column draws
+   * these instead of a crop of the page; absent, the crop is what it draws.
+   */
+  latex: string | null;
+  html: string | null;
+  imagePath: string | null;
+  /** A code listing's text, shown as code rather than as a picture of it. */
+  code: string | null;
 }
 
 /** Said once, where the references begin: they are not translated, on purpose. */
@@ -98,7 +108,7 @@ export type ReflowItem = ReflowHeading | ReflowPair | ReflowCrop | ReflowNotice;
 export const NUMBER_PAIRING_PT = 20;
 
 const FURNITURE = "abandon";
-const CROP_CLASSES = new Set(["figure", "table", "isolate_formula"]);
+const CROP_CLASSES = new Set(["figure", "table", "isolate_formula", "code"]);
 const CAPTION_SIDE: Record<string, "above" | "below" | "beside"> = {
   figure_caption: "below",
   table_caption: "above",
@@ -207,6 +217,10 @@ export function reflowStream(
       captionSide: side,
       footnote: notes.length > 0 ? notes.join(" ") : null,
       number: numberFor(block, page),
+      latex: block.latex ?? null,
+      html: block.html ?? null,
+      imagePath: block.image_path ?? null,
+      code: block.layout_class === "code" ? block.text : null,
     });
     for (const caption of own) absorbed.add(caption.id);
   };

@@ -23,6 +23,11 @@ export interface ProviderProfile {
   has_key: boolean;
   /** Already masked by the server, e.g. `sk-••••••••ab12`. Never the real key. */
   api_key_masked: string;
+  /**
+   * What the profile configures. Absent on an older backend, where every
+   * profile was a chat model.
+   */
+  kind?: "llm" | "parser" | "search";
 }
 
 /** True when the profile can be used without an API key. */
@@ -49,6 +54,8 @@ export interface ProfileDraft {
   protocol?: string;
   timeout_s?: number;
   api_key?: string;
+  /** Fixed at creation. `parser` stores MinerU's tier in `model`. */
+  kind?: "llm" | "parser" | "search";
 }
 
 export interface ProfileTestResult {
@@ -118,6 +125,21 @@ export async function testProfile(
   );
 }
 
+/**
+ * The **chat-model** profiles — the ones a question, an overview or a
+ * translation may use. A parsing or search profile is an endpoint too, but
+ * handing one to the QA panel would fail at the moment the reader asked.
+ */
 export async function listProfiles(signal?: AbortSignal): Promise<ProviderProfile[]> {
-  return apiJson<ProviderProfile[]>("/api/profiles", { signal });
+  const all = await apiJson<ProviderProfile[]>("/api/profiles", { signal });
+  return all.filter((profile) => (profile.kind ?? "llm") === "llm");
+}
+
+/** Profiles of one non-chat kind, e.g. the MinerU parsers. */
+export async function listProfilesOfKind(
+  kind: "parser" | "search",
+  signal?: AbortSignal,
+): Promise<ProviderProfile[]> {
+  const all = await apiJson<ProviderProfile[]>("/api/profiles", { signal });
+  return all.filter((profile) => profile.kind === kind);
 }

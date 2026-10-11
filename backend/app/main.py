@@ -20,7 +20,17 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import annotations, bilingual, documents, formulas, health, overview, profiles
+from app.api import (
+    annotations,
+    bilingual,
+    documents,
+    formulas,
+    health,
+    overview,
+    parsing,
+    profiles,
+    related,
+)
 from app.api.documents import register_document_error_handlers
 from app.api.profiles import register_profile_error_handlers
 from app.config import Settings
@@ -92,6 +102,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             # Ask any in-flight translation to stop before the connection closes.
             await task_runner.shutdown()
+            from app.mineru import jobs as mineru_jobs
+
+            await mineru_jobs.cancel_all()
+            from app.bilingual import jobs as bilingual_jobs
+
+            await bilingual_jobs.cancel_all()
             connection.close()
             logger.info("Backend stopped")
 
@@ -155,6 +171,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(overview.router, prefix="/api")
     app.include_router(bilingual.router, prefix="/api")
     app.include_router(formulas.router, prefix="/api")
+    app.include_router(parsing.router, prefix="/api")
+    app.include_router(related.router, prefix="/api")
 
     # Provider-call accounting, for a harness that has to prove a reader action
     # cost nothing. Registered only when the environment asks for it: a default

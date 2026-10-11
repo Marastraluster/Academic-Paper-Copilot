@@ -24,6 +24,11 @@ dependencies = [
     "pymupdf~=1.25.2",
     "onnxruntime~=1.30.0",
     "numpy~=2.5",
+    # Declared explicitly as of the MinerU integration: `app/mineru/client.py`
+    # talks to MinerU's v1 API with it. It was already installed (the `openai`
+    # SDK depends on it), but a library we program against is named, not
+    # inherited. MinerU itself is never a dependency — it is called over HTTP.
+    "httpx~=0.28.1",
 ]
 
 [project.optional-dependencies]

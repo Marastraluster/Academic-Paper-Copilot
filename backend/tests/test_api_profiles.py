@@ -62,7 +62,7 @@ def test_create_returns_201_and_the_documented_shape(client: TestClient) -> None
     assert set(body) == {
         "id", "name", "base_url", "model", "protocol", "temperature",
         "max_output_tokens", "timeout_s", "custom_headers", "has_key",
-        "api_key_masked", "created_at", "updated_at",
+        "api_key_masked", "created_at", "updated_at", "kind",
     }
     assert body["has_key"] is True
     assert body["api_key_masked"] == "sk-••••••••3456"

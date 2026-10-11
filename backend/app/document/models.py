@@ -44,6 +44,9 @@ LAYOUT_TABLE_CAPTION = "table_caption"
 LAYOUT_TABLE_FOOTNOTE = "table_footnote"
 LAYOUT_ISOLATE_FORMULA = "isolate_formula"
 LAYOUT_FORMULA_CAPTION = "formula_caption"
+#: Code listings and algorithms. Only MinerU distinguishes them; the in-house
+#: layout model folds them into `plain text` or `figure`.
+LAYOUT_CODE = "code"
 
 #: Classes that are *not* prose. None of these may be merged into a paragraph:
 #: figures and tables are not sentences, captions belong with their element, and
@@ -58,6 +61,7 @@ NON_PROSE_CLASSES = frozenset(
         LAYOUT_TABLE_FOOTNOTE,
         LAYOUT_ISOLATE_FORMULA,
         LAYOUT_FORMULA_CAPTION,
+        LAYOUT_CODE,
     }
 )
 
@@ -114,6 +118,18 @@ class TextBlockIR(BaseModel):
 
     #: Set on a caption, naming the figure/table block it belongs to.
     caption_of: str | None = None
+
+    #: What a structural parser recovered beyond the text, when one was used.
+    #:
+    #: `latex` is a display formula's source (MinerU reads it off the page image,
+    #: so it is the formula as printed, not a reconstruction from glyphs);
+    #: `html` is a table's cell structure; `image_path` is the figure, table or
+    #: formula as an image file, relative to the document's `mineru/` directory.
+    #: All three stay ``None`` under the in-house extractor, which has none of
+    #: them — absent, not empty.
+    latex: str | None = None
+    html: str | None = None
+    image_path: str | None = None
 
     #: **Persistent** identity for the classes a reader may annotate.
     #:
