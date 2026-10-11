@@ -45,6 +45,13 @@ data/
 .agent/results/*
 !.agent/results/.gitkeep
 
+# --- Local scratch that is not part of this product ---
+# A separate desktop-pet toy, and page renders of an unrelated deck. Kept on disk,
+# never published.
+desktop_pet_angelina/
+ppt_preview/
+ppt_analysis.json
+
 # --- OS / editor ---
 .DS_Store
 Thumbs.db
