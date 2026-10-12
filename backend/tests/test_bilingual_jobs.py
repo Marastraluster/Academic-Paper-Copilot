@@ -37,11 +37,13 @@ class Translator(LLMProvider):
     protocol = "scripted"
 
     def __init__(self, *, fail_after: int | None = None, garble_ids: set[str] | None = None,
-                 delay: float = 0.0, glossary: list[dict] | str | None = None) -> None:
+                 delay: float = 0.0, glossary: list[dict] | str | None = None,
+                 glossary_delay: float = 0.0) -> None:
         #: Translation calls only; a glossary request is counted on its own.
         self.calls = 0
         self.glossary = glossary if glossary is not None else []
         self.glossary_calls = 0
+        self.glossary_delay = glossary_delay
         self.prompts: list[str] = []
         self.fail_after = fail_after
         self.garble_ids = garble_ids or set()
@@ -53,6 +55,8 @@ class Translator(LLMProvider):
     async def generate(self, request: LLMRequest) -> LLMResult:
         if any(GLOSSARY_REQUEST_MARKER in m.content for m in request.messages):
             self.glossary_calls += 1
+            if self.glossary_delay:
+                await asyncio.sleep(self.glossary_delay)
             if self.fail_after is not None and self.fail_after < 0:
                 raise LLMAuthenticationError("key refused")
             text = self.glossary if isinstance(self.glossary, str) else json.dumps({"terms": self.glossary})

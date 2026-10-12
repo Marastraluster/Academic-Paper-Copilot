@@ -85,6 +85,47 @@ def is_reusable(cached: DocumentIR | None, document_id: str) -> bool:
     )
 
 
+def rebuild_from_stored_mineru(
+    document_dir: Path, source_path: Path, document_id: str, cached: DocumentIR | None
+) -> DocumentIR | None:
+    """A MinerU IR from an older converter, rebuilt from the result kept on disk.
+
+    `mineru/middle.json` is stored for exactly this: when the converter
+    improves, the paper is converted again from what MinerU already returned —
+    no upload, no parse, no waiting. Before this existed a converter upgrade
+    silently *replaced* a MinerU parse with the in-house extractor's, and the
+    reader's translation, which is tied to the parse, went with it.
+
+    ``None`` when this is not that case: no stored IR, an IR that is not
+    MinerU's, one that is already current, or no readable result to rebuild from.
+    """
+    import json
+
+    from app.mineru.convert import MINERU_PIPELINE_VERSION, MinerUConversionError
+    from app.mineru.jobs import MIDDLE_FILENAME, build_ir_from_result, mineru_dir
+
+    if cached is None or cached.document_id != document_id:
+        return None
+    version = cached.pipeline_version or ""
+    if not version.startswith("mineru") or version == MINERU_PIPELINE_VERSION:
+        return None
+    stored = mineru_dir(document_dir) / MIDDLE_FILENAME
+    if not stored.is_file():
+        return None
+    try:
+        middle = json.loads(stored.read_text(encoding="utf-8"))
+        return build_ir_from_result(
+            middle, source=Path(source_path), document_id=document_id,
+            source_filename=cached.source_filename,
+        )
+    except (OSError, ValueError, MinerUConversionError) as error:
+        logger.warning(
+            "stored MinerU result could not be converted again",
+            extra={"document_id": document_id, "reason": type(error).__name__},
+        )
+        return None
+
+
 def extract_and_store(
     document_dir: Path,
     source_path: Path,
@@ -124,7 +165,8 @@ def extract_and_store(
                 )
 
         started = time.perf_counter()
-        ir = extract_document_ir(source_path, document_id)
+        rebuilt = None if force else rebuild_from_stored_mineru(directory, source_path, document_id, cached)
+        ir = rebuilt if rebuilt is not None else extract_document_ir(source_path, document_id)
         write_ir(directory, ir)
         duration = time.perf_counter() - started
 

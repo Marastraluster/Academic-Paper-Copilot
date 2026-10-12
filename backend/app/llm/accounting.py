@@ -189,5 +189,19 @@ class CountingProvider(LLMProvider):
         return await self._inner.test_connection()
 
     async def generate_stream(self, request: LLMRequest) -> AsyncIterator[str]:
-        async for chunk in self._inner.generate_stream(request):
-            yield chunk
+        """Counted like any other call. A streamed call reports no usage, so the
+        ledger records that it happened and leaves the tokens unknown rather than
+        estimating them."""
+        label = _operation.get()
+        try:
+            async for chunk in self._inner.generate_stream(request):
+                yield chunk
+        except NotImplementedError:
+            raise  # nothing left the process: the adapter cannot stream
+        except BaseException as error:  # noqa: BLE001 - recorded, then re-raised
+            record(ProviderCall(
+                operation=label, model=self.model,
+                protocol=self.protocol, ok=False, error=type(error).__name__,
+            ))
+            raise
+        record(ProviderCall(operation=label, model=self.model, protocol=self.protocol, ok=True))

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,8 @@ logger = get_logger(__name__)
 
 DEFAULT_CONCURRENCY = 2
 MAX_CONCURRENCY = 4
+#: While batches stream, the partial reading is rewritten at most this often.
+PARTIAL_WRITE_INTERVAL_S = 0.8
 
 ACTIVE = frozenset({"running"})
 
@@ -71,10 +74,12 @@ class TranslationJob:
     message: str | None = None
     #: Batches already done by an earlier run of this paper; not paid for again.
     resumed_batches: int = 0
-    #: ``glossary`` while the paper's terms are being read (one call, before the
-    #: first batch), then ``translating``.
+    #: ``translating``, then ``terms`` while the paragraphs translated before the
+    #: glossary had been read are brought into line with it.
     phase: str = "translating"
     glossary_terms: int = 0
+    #: How many paragraphs that last pass translated again.
+    restated_paragraphs: int = 0
 
     def payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -152,9 +157,10 @@ async def run(
 ) -> TranslationJob:
     """Translate what is still missing, batch by batch.
 
-    ``make_glossary`` reads the paper's terms first when it has no glossary yet
-    — one more call, once per paper. A glossary that exists (the reader may have
-    corrected it) is used as it is and never regenerated here.
+    ``make_glossary`` reads the paper's terms when it has no glossary yet — one
+    more call, once per paper, made *alongside* the translation rather than
+    ahead of it. A glossary that exists (the reader may have corrected it) is
+    used as it is and never regenerated here.
     """
     work = plan(ir)
     heading_views = heading_views_for(work)
@@ -199,40 +205,54 @@ async def run(
             )
 
     terms = paper_glossary.read_terms(documents_dir, ir.content_hash, job.target_language)
-    if terms is None and make_glossary and todo:
-        job.phase = "glossary"
-        try:
-            terms = await paper_glossary.extract(work, provider, target_language=job.target_language)
-        except asyncio.CancelledError:
-            job.status, job.code, job.message = "cancelled", "CANCELLED", "翻译已停止，已完成的段落会保留。"
-            job.finished_at = _now()
-            raise
-        except LLMError as failure:
-            # A refused key or an unreachable endpoint would fail every batch too.
-            job.status, job.finished_at = "failed", _now()
-            job.code, job.message = failure.code, sanitize_message(failure.message)
-            return job
-        await asyncio.to_thread(
-            paper_glossary.write_terms, documents_dir, ir.content_hash, job.target_language, terms
-        )
-    job.phase = "translating"
-    job.glossary_terms = len(terms or [])
+    need_glossary = terms is None and make_glossary and bool(todo)
 
     lock = asyncio.Lock()
     gate = asyncio.Semaphore(max(1, min(MAX_CONCURRENCY, concurrency)))
 
-    async def one(batch) -> None:
+    written_at = 0.0
+
+    async def landed(identifier: str, text: str) -> None:
+        """One paragraph, translated and checked, while its batch is still arriving.
+
+        Counted at once and written within a second, so the column — which reads
+        the partial file — shows it without waiting for the other fourteen.
+        Written at most that often: the file is the whole reading so far, and
+        rewriting it for every paragraph of two concurrent batches would be all
+        the job did.
+        """
+        nonlocal written_at
+        async with lock:
+            translated[identifier] = text
+            job.translated_paragraphs = sum(
+                1 for b in work.batches for p in b.paragraphs if p.id in translated
+            )
+            if time.monotonic() - written_at >= PARTIAL_WRITE_INTERVAL_S:
+                written_at = time.monotonic()
+                await asyncio.shield(asyncio.to_thread(persist))
+
+    #: Paragraphs translated before the glossary had been read.
+    unglossed: set[str] = set()
+
+    async def one(batch, *, counted: bool = True) -> None:
         nonlocal model
         async with gate:
+            # Whatever glossary exists at the moment this batch is sent.
+            using = terms
+            if using is None and need_glossary:
+                unglossed.update(paragraph.id for paragraph in batch.paragraphs)
             result = await translate_batch(
                 batch, heading_views, provider,
-                target_language=job.target_language, glossary=glossary, terms=terms,
+                target_language=job.target_language, glossary=glossary, terms=using,
+                on_paragraph=landed,
             )
         async with lock:
-            job.done_batches += 1
+            if counted:
+                job.done_batches += 1
             model = result.model or model
             if result.failed:
-                job.failed_batches += 1
+                if counted:
+                    job.failed_batches += 1
                 return
             translated.update(result.translations)
             for identifier, text in result.headings.items():
@@ -244,11 +264,68 @@ async def run(
             # that has already been paid for must still reach the disk.
             await asyncio.shield(asyncio.to_thread(persist))
 
+    async def read_glossary() -> None:
+        """Read the paper's terms — beside the translation, not before it.
+
+        This is the longest call of a run (measured: 58 s on a two-page paper
+        with a reasoning model), and while it came first nothing else moved. It
+        now runs outside the batch gate: batches sent before it returns go
+        without a glossary, batches sent after use it.
+        """
+        nonlocal terms
+        found = await paper_glossary.extract(work, provider, target_language=job.target_language)
+        terms = found
+        job.glossary_terms = len(found)
+        await asyncio.to_thread(
+            paper_glossary.write_terms, documents_dir, ir.content_hash, job.target_language, found
+        )
+
+    def disagreeing() -> list[Batch]:
+        """Early paragraphs that contain a term and did not use its translation.
+
+        Only those: a paragraph with no term in it, or one where the model
+        happened to choose the glossary's word, is already right and is not paid
+        for twice. Grouped as the plan grouped them.
+        """
+        if not terms:
+            return []
+        stale = {
+            paragraph.id
+            for batch in work.batches
+            for paragraph in batch.paragraphs
+            if paragraph.id in unglossed
+            and paragraph.id in translated
+            and any(
+                term.target not in translated[paragraph.id]
+                for term in paper_glossary.terms_for([paragraph.text], terms)
+            )
+        }
+        return [
+            Batch(paragraphs=again)
+            for batch in work.batches
+            if (again := [paragraph for paragraph in batch.paragraphs if paragraph.id in stale])
+        ]
+
     failure: BaseException | None = None
     try:
+        job.glossary_terms = len(terms or [])
         async with asyncio.TaskGroup() as group:
+            if need_glossary:
+                group.create_task(read_glossary())
             for batch in todo:
                 group.create_task(one(batch))
+        if need_glossary:
+            # One word per term: the early paragraphs that disagree are
+            # translated again. Their first translation stays on the page until
+            # the new one replaces it, so the reader never sees a gap open up.
+            again = disagreeing()
+            if again:
+                job.phase = "terms"
+                job.restated_paragraphs = sum(len(batch.paragraphs) for batch in again)
+                async with asyncio.TaskGroup() as group:
+                    for batch in again:
+                        group.create_task(one(batch, counted=False))
+            job.phase = "translating"
     except asyncio.CancelledError:
         job.status, job.code, job.message = "cancelled", "CANCELLED", "翻译已停止，已完成的段落会保留。"
         job.finished_at = _now()

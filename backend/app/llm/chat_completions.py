@@ -22,6 +22,7 @@ Design decisions worth knowing:
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -92,6 +93,32 @@ class OpenAIChatCompletionsProvider(LLMProvider):
             ) from exc
 
         return self._to_result(response)
+
+    async def generate_stream(self, request: LLMRequest) -> AsyncIterator[str]:
+        """The same completion, as text deltas in the order they are written.
+
+        Plain ``stream=True`` and nothing else: no ``stream_options``, which only
+        some vendors accept, so usage is not reported for a streamed call — a
+        caller that needs token counts uses `generate`. Reasoning deltas are not
+        text and are not yielded.
+        """
+        payload = self._build_payload(request)
+        payload["stream"] = True
+        try:
+            stream = await self._client.chat.completions.create(**payload)
+            async for chunk in stream:
+                choices = getattr(chunk, "choices", None)
+                if not choices:
+                    continue
+                text = getattr(getattr(choices[0], "delta", None), "content", None)
+                if isinstance(text, str) and text:
+                    yield text
+        except LLMError:
+            raise
+        except Exception as exc:
+            raise normalize_exception(
+                exc, api_key=self._config.api_key.get_secret_value()
+            ) from exc
 
     async def test_connection(self) -> ConnectionReport:
         """Cheap probe: does this endpoint accept our key and model?

@@ -871,12 +871,21 @@ async def test_connection_probe_does_not_swallow_cancellation() -> None:
 # --- AC-32: streaming hook --------------------------------------------------
 
 
-async def test_streaming_hook_is_declared_but_unimplemented() -> None:
-    """AC-32 — the contract is complete; no streaming subsystem was built."""
-    provider, _ = provider_with()
+async def test_an_adapter_without_streaming_says_so() -> None:
+    """AC-32 — the hook is part of the contract, and an adapter that has not
+    implemented it raises rather than pretending. Chat Completions does
+    implement it now (`test_bilingual_streaming.py`); the default is what a
+    caller falls back from."""
+
+    class NoStreaming(LLMProvider):
+        async def generate(self, request: LLMRequest) -> LLMResult:  # pragma: no cover
+            raise AssertionError("not called")
+
+        async def test_connection(self):  # pragma: no cover
+            raise AssertionError("not called")
 
     with pytest.raises(NotImplementedError):
-        async for _ in provider.generate_stream(
+        async for _ in NoStreaming().generate_stream(
             LLMRequest(messages=[{"role": "user", "content": "hi"}])
         ):
             pass

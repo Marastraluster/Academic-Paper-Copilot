@@ -129,6 +129,12 @@ async def get_bilingual_text(request: Request, document_id: str) -> Any:
     target_language = request.query_params.get("target_language", "zh-CN")
     directory = request.app.state.settings.documents_dir
     job = jobs.get(ir.content_hash, target_language)
+    if job is None or job.status not in jobs.ACTIVE:
+        # A reading made from another extraction of this paper is not lost:
+        # the paragraphs whose text is unchanged keep their translations.
+        from app.bilingual.carry import carry_over
+
+        await asyncio.to_thread(carry_over, ir, directory, target_language)
     # While a background job runs, what it has so far is the reading: the
     # column fills in batch by batch instead of waiting for the whole paper.
     if job is not None and job.status in jobs.ACTIVE:
@@ -158,6 +164,7 @@ async def get_bilingual_text(request: Request, document_id: str) -> Any:
         # AC-P0-15), and the numbers come from the same `plan()` the pipeline
         # runs — the work itself, not an estimate of it.
         work = plan(ir)
+        has_glossary = paper_glossary.read_terms(directory, ir.content_hash, target_language) is not None
         return error_response(
             404,
             "BILINGUAL_TEXT_NOT_FOUND",
@@ -166,6 +173,9 @@ async def get_bilingual_text(request: Request, document_id: str) -> Any:
                 "plan": {
                     "paragraphs": work.paragraph_count,
                     "batches": work.batch_count,
+                    # One more call the first time: the paper is read once for
+                    # its terms. Disclosed, like every other call that is made.
+                    "glossary_calls": 0 if has_glossary or work.batch_count == 0 else 1,
                     "characters": work.character_count,
                     "sections": len(work.headings),
                     "skipped": len(work.skipped),
@@ -366,6 +376,9 @@ async def start_bilingual_job(request: Request, document_id: str, payload: Start
     if payload.force:
         delete_partial(directory, ir.content_hash, payload.target_language)
     else:
+        from app.bilingual.carry import carry_over
+
+        await asyncio.to_thread(carry_over, ir, directory, payload.target_language)
         cached = read_bilingual(
             directory, content_hash=ir.content_hash,
             ir_pipeline_version=ir.pipeline_version, target_language=payload.target_language,
@@ -621,4 +634,49 @@ async def save_bilingual_glossary(request: Request, document_id: str, payload: S
         "target_language": language,
         "terms": [term.payload() for term in new],
         "affected_paragraphs": len(stale),
+    }
+
+
+class ExtractGlossary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    profile_id: str
+    target_language: str = "zh-CN"
+
+
+@router.post("/documents/{document_id}/bilingual-text/glossary/extract")
+async def extract_bilingual_glossary(
+    request: Request, document_id: str, payload: ExtractGlossary
+) -> Any:
+    """Read the paper's terms again — one model call — and hand them back.
+
+    A proposal, not a replacement: nothing is stored and no translation is
+    touched. The reader looks at what came back, keeps what they want of their
+    own corrections, and saves — which is where "what does this change" is
+    answered, by the same rule as any other edit.
+    """
+    from app.api.documents import _require_ir
+    from app.bilingual import jobs
+    from app.llm.errors import LLMError, sanitize_message
+
+    result, failure = await _require_ir(request, document_id)
+    if failure is not None:
+        return failure
+    ir, _summary = result
+    if jobs.is_running(ir.content_hash, payload.target_language):
+        return error_response(
+            409, "GENERATION_ALREADY_IN_PROGRESS", "Wait for the running translation to finish."
+        )
+    resolved, failure = await _provider_for(request, payload.profile_id)
+    if failure is not None:
+        return failure
+    provider, _profile = resolved
+    try:
+        terms = await paper_glossary.extract(
+            plan(ir), provider, target_language=payload.target_language
+        )
+    except LLMError as exc:
+        return error_response(_STATUS.get(exc.code, 502), exc.code, sanitize_message(exc.message))
+    return {
+        "target_language": payload.target_language,
+        "terms": [term.payload() for term in terms],
     }
