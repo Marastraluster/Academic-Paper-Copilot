@@ -402,7 +402,7 @@ function NoteRow({
       {warning !== null && (
         <p
           data-testid={`note-state-${annotation.id}`}
-          className="mt-1 text-2xs text-amber-600 dark:text-amber-500"
+          className="mt-1 text-2xs text-warning dark:text-amber-500"
         >
           {warning}
         </p>

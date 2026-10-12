@@ -185,7 +185,7 @@ export function TranslateDialog({ open, onClose, onSubmit }: TranslateDialogProp
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(230,235,242,.45)] p-4 backdrop-blur-[6px]"
+      className="fixed inset-0 z-50 flex items-center justify-center dialog-scrim p-4 backdrop-blur-[6px]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -266,7 +266,7 @@ export function TranslateDialog({ open, onClose, onSubmit }: TranslateDialogProp
                   <span className="flex items-center gap-1.5 text-xs font-medium">
                     {label}
                     {experimental && (
-                      <span className="rounded-sm bg-amber-500/15 px-1 py-px text-2xs font-normal text-amber-700">
+                      <span className="rounded-sm bg-amber-500/15 px-1 py-px text-2xs font-normal text-warning">
                         实验性
                       </span>
                     )}

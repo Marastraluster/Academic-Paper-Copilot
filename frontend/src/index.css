@@ -60,8 +60,77 @@
     --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.78), inset 0 -1px 0 rgba(255, 255, 255, 0.18);
     --workspace-bg: rgba(255, 255, 255, 0.16);
     --field-bg: rgba(255, 255, 255, 0.58);
+    --glass-solid: rgba(255, 255, 255, 0.82);
+    --glass-sheen: rgba(255, 255, 255, 0.32);
+    --glass-thumb-shadow: 0 4px 14px rgba(20, 30, 60, 0.14);
+    /* What a dialog dims the shell with. */
+    --scrim: rgba(230, 235, 242, 0.45);
+    --orb-opacity: 0.8;
+    /* Status colours as text: warning, success. Tokens, so each theme can
+       choose values that clear AA on its own surfaces. */
+    --warning-text: 28 92% 28%;
+    --success-text: 162 94% 19%;
     --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
     --ease-glass: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  /*
+   * Dark. The same tokens, other values — no component is told. Chosen on the
+   * `<html>` element by `settings/theme` (explicitly, or from the system).
+   * The glass stays glass: dark, low-alpha fills over a dim light field, with
+   * a faint top edge instead of a bright one.
+   */
+  .dark {
+    --background: 222 18% 10%;
+    --foreground: 220 16% 92%;
+
+    --card: 222 16% 13%;
+    --card-foreground: 220 16% 92%;
+
+    /* Lifted so it clears AA as text on the dark surfaces. */
+    --primary: 226 90% 72%;
+    --primary-foreground: 224 40% 10%;
+
+    --secondary: 222 14% 18%;
+    --secondary-foreground: 220 14% 88%;
+
+    --muted: 222 14% 18%;
+    --muted-foreground: 220 12% 70%;
+
+    --accent: 222 14% 21%;
+    --accent-foreground: 220 16% 94%;
+
+    --destructive: 0 78% 66%;
+    --destructive-foreground: 0 0% 8%;
+
+    --border: 222 12% 26%;
+    --input: 222 12% 26%;
+    --ring: 226 90% 72%;
+
+    --workspace: 222 18% 8%;
+    /* The reflowed reading's sheet. A PDF page is drawn on its own white. */
+    --page-surface: 222 16% 13%;
+
+    --field: #0e1219;
+    --orb-1: #1f3f8f;
+    --orb-2: #6b3a22;
+    --orb-3: #1c5443;
+    --glass: rgba(30, 36, 49, 0.58);
+    --glass-strong: rgba(44, 52, 69, 0.82);
+    --glass-line: rgba(255, 255, 255, 0.1);
+    --glass-track: rgba(255, 255, 255, 0.07);
+    --glass-hover: rgba(255, 255, 255, 0.09);
+    --glass-shadow: 0 12px 32px rgba(0, 0, 0, 0.42), 0 1px 2px rgba(0, 0, 0, 0.3);
+    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(255, 255, 255, 0.03);
+    --workspace-bg: rgba(0, 0, 0, 0.2);
+    --field-bg: rgba(255, 255, 255, 0.07);
+    --glass-solid: rgba(27, 32, 43, 0.94);
+    --glass-sheen: rgba(255, 255, 255, 0.05);
+    --glass-thumb-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    --scrim: rgba(6, 8, 12, 0.6);
+    --orb-opacity: 0.55;
+    --warning-text: 40 96% 66%;
+    --success-text: 158 64% 62%;
   }
 }
 
@@ -126,18 +195,23 @@
     z-index: -1;
     border-radius: inherit;
     pointer-events: none;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0) 45%);
+    background: linear-gradient(180deg, var(--glass-sheen), transparent 45%);
   }
 
   /* For dialogs and menus over busy content: mostly opaque, still glass. */
   .glass-solid {
-    background: rgba(255, 255, 255, 0.82);
+    background: var(--glass-solid);
+  }
+
+  /* The dimmed, blurred shell behind a dialog. */
+  .dialog-scrim {
+    background: var(--scrim);
   }
 
   /* The pill a segmented control's thumb is made of. */
   .glass-thumb {
     background: var(--glass-strong);
-    box-shadow: var(--glass-highlight), 0 4px 14px rgba(20, 30, 60, 0.14);
+    box-shadow: var(--glass-highlight), var(--glass-thumb-shadow);
     transition: transform 0.6s var(--ease-spring), width 0.6s var(--ease-spring);
   }
 
@@ -186,7 +260,7 @@
   position: absolute;
   border-radius: 50%;
   filter: blur(80px);
-  opacity: 0.8;
+  opacity: var(--orb-opacity);
   animation: drift 28s ease-in-out infinite alternate;
 }
 @keyframes drift {
@@ -302,14 +376,34 @@
 .reflow-table table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8125rem;
+  /* `--table-scale` is set by the fit rule: 1, or down to 0.7 for a table a
+     little wider than the column. Padding is in em so it shrinks with the text. */
+  font-size: calc(0.8125rem * var(--table-scale, 1));
   font-variant-numeric: tabular-nums;
 }
 .reflow-table th,
 .reflow-table td {
-  padding: 0.35rem 0.6rem;
+  padding: 0.43em 0.74em;
   text-align: center;
   white-space: nowrap;
+}
+/* A table too wide on one line per cell lets its prose cells wrap (the fit rule
+   sets this before it considers shrinking or scrolling). Numbers never break. */
+[data-wrap] > .reflow-table th,
+[data-wrap] > .reflow-table td {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+[data-wrap] > .reflow-table [data-num] {
+  white-space: nowrap;
+}
+/* A column of nothing but numbers: digits under digits. */
+.reflow-table [data-num] {
+  text-align: right;
+}
+/* Reading across a wide row: the row under the pointer, tinted. */
+.reflow-table tr:not(:first-child):hover > * {
+  background-color: hsl(var(--primary) / 0.06);
 }
 .reflow-table tr:first-child > * {
   border-top: 1.5px solid hsl(var(--foreground) / 0.8);
@@ -444,4 +538,14 @@ input[type="range"] {
 .glass .bg-muted\/50,
 .glass .bg-muted\/60 {
   background-color: var(--glass-track);
+}
+
+/* A bibliography entry the reader just followed a citation to: a wash of the
+   accent that fades, so the eye lands on the right entry among fifty. */
+.reflow-cited {
+  animation: reflow-cited 2.4s ease-out both;
+}
+@keyframes reflow-cited {
+  0%, 35% { background-color: hsl(var(--primary) / 0.16); box-shadow: 0 0 0 6px hsl(var(--primary) / 0.16); }
+  100% { background-color: transparent; box-shadow: 0 0 0 6px transparent; }
 }

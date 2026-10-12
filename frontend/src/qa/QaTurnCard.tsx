@@ -85,7 +85,7 @@ function Body({ turn, onJump, onRetry, onWiden }: QaTurnCardProps) {
     case "unknown_status":
       return (
         <div data-testid="qa-unknown-status" className="space-y-1.5">
-          <p className="flex items-center gap-1.5 text-2xs text-amber-700">
+          <p className="flex items-center gap-1.5 text-2xs text-warning">
             <CircleHelp className="h-3 w-3 shrink-0" aria-hidden="true" />
             应答状态异常：{result.status}
             <span className="text-muted-foreground">（本版本无法识别，以下内容未经确认）</span>
@@ -173,7 +173,7 @@ function Grounded({
           data-testid="qa-partial-notice"
           className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5"
         >
-          <p className="text-2xs font-medium text-amber-700">部分回答（以下方面文献缺乏依据）</p>
+          <p className="text-2xs font-medium text-warning">部分回答（以下方面文献缺乏依据）</p>
           <ul className={cn("mt-0.5 list-disc space-y-0.5 pl-4 text-2xs text-muted-foreground")}>
             {result.unansweredAspects.map((aspect, index) => (
               <li key={index}>{aspect}</li>

@@ -48,6 +48,18 @@ export interface IrParagraph {
   page_range: [number, number];
   block_ids: string[];
   bboxes: Bbox[];
+  /**
+   * The paper's own bold, italic and superscript inside `text`, as character
+   * ranges (end exclusive). Present after a MinerU parse; the in-house
+   * extractor flattens spans and sends none.
+   */
+  runs?: InlineRun[];
+}
+
+export interface InlineRun {
+  start: number;
+  end: number;
+  styles: string[];
 }
 
 export interface IrBlock {

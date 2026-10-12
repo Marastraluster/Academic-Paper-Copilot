@@ -197,7 +197,7 @@ export function OverviewPanel() {
               <p
                 role="alert"
                 data-testid="overview-error"
-                className="mt-1 flex items-start gap-1 text-2xs text-amber-600 dark:text-amber-500"
+                className="mt-1 flex items-start gap-1 text-2xs text-warning dark:text-amber-500"
               >
                 <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
                 {/* The reader's most recent action speaks last: a read that

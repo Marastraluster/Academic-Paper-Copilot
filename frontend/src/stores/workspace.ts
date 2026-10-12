@@ -481,12 +481,13 @@ export const QUICK_ACTIONS: ReadonlyArray<{
     enabled: true,
   },
   {
-    // DS-QA-003 §Decision D: there is no selection → paragraph mapping, so this
-    // is disabled rather than answering about something the user did not select.
+    // Available only while a selection is mapped to paragraphs (DS-QA-005); the
+    // button says so otherwise, rather than answering about something the
+    // reader did not select.
     label: "解释选中内容",
     scope: "selection",
     question: "请解释选中内容的含义。",
-    enabled: false,
+    enabled: true,
   },
   {
     label: "解释公式",

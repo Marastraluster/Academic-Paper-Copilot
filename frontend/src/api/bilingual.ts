@@ -69,9 +69,10 @@ export interface BilingualJob {
   resumed_batches: number;
   code: string | null;
   message: string | null;
-  /** `glossary` while the paper's terms are being read, before the first batch. */
-  phase?: "glossary" | "translating";
+  /** `terms` while early paragraphs are brought into line with the glossary. */
+  phase?: "translating" | "terms";
   glossary_terms?: number;
+  restated_paragraphs?: number;
 }
 
 export interface BilingualView {
@@ -99,6 +100,8 @@ export interface BilingualView {
 export interface BilingualPlan {
   paragraphs: number;
   batches: number;
+  /** 1 when the paper has no glossary yet: it is read once for its terms. */
+  glossary_calls?: number;
   characters: number;
   sections: number;
   skipped: number;
@@ -275,4 +278,24 @@ export async function saveGlossary(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ terms, target_language: targetLanguage }),
   });
+}
+
+/**
+ * Read the paper's terms again. **Spends one model call**, stores nothing: the
+ * answer is a proposal for the reader to look over and save.
+ */
+export async function extractGlossary(
+  documentId: string,
+  targetLanguage: string,
+  profileId: string,
+): Promise<GlossaryTerm[]> {
+  const body = await apiJson<{ terms: GlossaryTerm[] }>(
+    `/api/documents/${encodeURIComponent(documentId)}/bilingual-text/glossary/extract`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile_id: profileId, target_language: targetLanguage }),
+    },
+  );
+  return Array.isArray(body?.terms) ? body.terms : [];
 }

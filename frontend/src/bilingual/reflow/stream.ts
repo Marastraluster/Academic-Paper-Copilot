@@ -28,7 +28,7 @@
  *    case, a sentence fragment ("greatly benefited from very deep models.").
  *    Headings come from `sections`, placed by each section's `heading_block_id`.
  */
-import type { DocumentIr, IrBlock, IrPage, IrParagraph, IrSection } from "@/api/ir";
+import type { DocumentIr, InlineRun, IrBlock, IrPage, IrParagraph, IrSection } from "@/api/ir";
 import type { BilingualParagraphView, BilingualSectionView, BilingualView } from "@/api/bilingual";
 
 /** A rectangle in PDF points, top-left origin — the IR's own space. */
@@ -55,6 +55,8 @@ export interface ReflowPair {
   /** The paragraph's own first rectangle's top edge, in PDF points. */
   y0: number;
   sourceText: string;
+  /** Styled stretches of `sourceText`, when the extraction recovered them. */
+  sourceRuns: InlineRun[];
   translatedText: string | null;
   status: "translated" | "untranslated" | "skipped" | "pending";
   note: string;
@@ -195,6 +197,7 @@ export function reflowStream(
       pageNumber: paragraph.page_number,
       y0: paragraph.bboxes.length > 0 ? Math.min(...paragraph.bboxes.map((box) => box[1])) : 0,
       sourceText: paragraph.text,
+      sourceRuns: paragraph.runs ?? [],
       translatedText: entry?.translated_text ?? null,
       status: entry?.status ?? "untranslated",
       note: entry?.note ?? "",

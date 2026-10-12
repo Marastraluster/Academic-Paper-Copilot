@@ -40,6 +40,10 @@ export default {
         // Translucent so the shell's light field shows through the reading area.
         workspace: "var(--workspace-bg)",
         "page-surface": "hsl(var(--page-surface))",
+        // Status colours used as text. Tokens rather than a fixed amber/emerald
+        // step, because the step that reads on white does not read on dark.
+        warning: "hsl(var(--warning-text))",
+        success: "hsl(var(--success-text))",
       },
       borderRadius: {
         lg: "var(--radius)",

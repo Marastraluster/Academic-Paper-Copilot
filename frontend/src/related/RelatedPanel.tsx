@@ -265,9 +265,9 @@ export function RelatedPanel() {
           </div>
         )}
         {load.state === "failed" && (
-          <p role="alert" className="text-xs text-amber-600">{load.reason}</p>
+          <p role="alert" className="text-xs text-warning">{load.reason}</p>
         )}
-        {notice !== null && <p role="alert" className="text-xs text-amber-600">{notice}</p>}
+        {notice !== null && <p role="alert" className="text-xs text-warning">{notice}</p>}
 
         {load.state === "ok" && papers.length > 0 && searchHits === null && (
           <Button
@@ -359,7 +359,7 @@ function PaperCard({
           <span
             data-testid="related-unverified"
             title="由模型联网检索得到，但它的链接不在搜索返回的网页中，请打开原文页面核对"
-            className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-700"
+            className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-warning"
           >
             待核对
           </span>

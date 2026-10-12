@@ -11,7 +11,7 @@
  * formatting tags and `colspan`/`rowspan` survive. Anything else — scripts,
  * event handlers, links, images, styles — is dropped.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { assetUrl } from "@/api/bilingual";
 import { MathText, loadKatex } from "@/bilingual/reflow/MathText";
@@ -31,7 +31,10 @@ export function sanitizeTableHtml(html: string): string {
   const copy = (node: Node, into: Node): void => {
     for (const child of Array.from(node.childNodes)) {
       if (child.nodeType === Node.TEXT_NODE) {
-        into.appendChild(out.createTextNode(child.textContent ?? ""));
+        // Private-use code points are a PDF font's own glyph slots (the tall
+        // brackets of a stacked cell, typically). Outside that font they are
+        // empty boxes, and they say nothing a reader can use.
+        into.appendChild(out.createTextNode((child.textContent ?? "").replace(PRIVATE_USE, "")));
         continue;
       }
       if (child.nodeType !== Node.ELEMENT_NODE) continue;
@@ -57,7 +60,136 @@ export function sanitizeTableHtml(html: string): string {
 
   const holder = out.createElement("div");
   copy(parsed.body, holder);
+  markNumericColumns(holder);
   return holder.innerHTML;
+}
+
+const PRIVATE_USE = /[\uE000-\uF8FF]/g;
+const NUMERIC = /^[-+−–]?\s?[\d.,]+\s?(?:%|×\d*|[kKmMbB])?(?:\s?[±/]\s?[\d.,]+%?)?$/;
+
+/**
+ * Right-align the columns that hold only numbers, so the digits line up.
+ *
+ * Decided per column, never per cell — a column that mixes a number with a word
+ * stays as it was. A table with merged cells is left alone: its columns cannot
+ * be counted by position without reproducing the browser's own span layout.
+ */
+function markNumericColumns(holder: Element): void {
+  for (const table of Array.from(holder.querySelectorAll("table"))) {
+    const rows = Array.from(table.querySelectorAll("tr")).map((row) => Array.from(row.children));
+    if (rows.length < 3) continue;
+    if (rows.some((cells) => cells.some((cell) => cell.hasAttribute("colspan") || cell.hasAttribute("rowspan")))) {
+      continue;
+    }
+    const width = Math.max(...rows.map((cells) => cells.length));
+    // The first row is the header, and the first column names the rows.
+    for (let column = 1; column < width; column += 1) {
+      const body = rows.slice(1).map((cells) => cells[column]).filter((cell) => cell !== undefined);
+      const filled = body.filter((cell) => (cell.textContent ?? "").trim() !== "");
+      if (filled.length < 2) continue;
+      if (!filled.every((cell) => NUMERIC.test((cell.textContent ?? "").trim()))) continue;
+      for (const cells of rows) cells[column]?.setAttribute("data-num", "");
+    }
+  }
+}
+
+/** The table as text a spreadsheet will take: one row per line, cells tab-separated. */
+export function tableToText(html: string): string {
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  return Array.from(parsed.querySelectorAll("tr"))
+    .map((row) =>
+      Array.from(row.children)
+        .map((cell) => (cell.textContent ?? "").replace(/\s+/g, " ").trim())
+        .join("\t"),
+    )
+    .join("\n");
+}
+
+/** Below this a table's text is no longer text a reader should be asked to read. */
+const MIN_TABLE_TEXT_PX = 11;
+const MIN_TABLE_FIT = 0.7;
+
+/**
+ * A table sized to the column when that is honest, and scrolled when it is not.
+ *
+ * Measured in the browser, not estimated: the table is laid out at full size,
+ * and if it is wider than the column it is set smaller — but only down to 70 %
+ * and never below 11 px text. A table that would need more than that (a
+ * 25-column one, say) keeps its natural size inside its own scroller; shrinking
+ * it to fit would produce a table nobody can read. The reading column itself
+ * never scrolls sideways either way.
+ */
+function FittedTable({ html }: { html: string }) {
+  const wrapper = useRef<HTMLDivElement | null>(null);
+  const [fit, setFit] = useState<{ mode: "fits" | "wrapped" | "scaled" | "scroll"; scale: number }>({
+    mode: "fits",
+    scale: 1,
+  });
+
+  useLayoutEffect(() => {
+    const element = wrapper.current;
+    if (element === null) return;
+    const measure = () => {
+      element.style.setProperty("--table-scale", "1");
+      element.removeAttribute("data-wrap");
+      const available = element.clientWidth;
+      if (element.scrollWidth === 0 || available === 0 || element.scrollWidth <= available + 1) {
+        setFit({ mode: "fits", scale: 1 });
+        return;
+      }
+      // Too wide on one line per cell. A table of sentences (a comparison of
+      // methods, say) only needs its cells to wrap; a table of numbers does not
+      // get narrower that way, and goes on to be scaled or scrolled.
+      element.setAttribute("data-wrap", "");
+      if (element.scrollWidth <= available + 1) {
+        setFit({ mode: "wrapped", scale: 1 });
+        return;
+      }
+      const natural = element.scrollWidth;
+      const scale = available / natural;
+      const base = Number.parseFloat(getComputedStyle(element.querySelector("table") ?? element).fontSize) || 13;
+      if (scale >= MIN_TABLE_FIT && base * scale >= MIN_TABLE_TEXT_PX) {
+        // A hair under, so rounding never leaves a one-pixel scrollbar.
+        setFit({ mode: "scaled", scale: Math.floor(scale * 1000 - 2) / 1000 });
+      } else {
+        setFit({ mode: "scroll", scale: 1 });
+      }
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    let width = element.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (element.clientWidth === width) return;
+      width = element.clientWidth;
+      measure();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [html]);
+
+  return (
+    <>
+      <div
+        ref={wrapper}
+        data-testid="recovered-table-scroller"
+        data-fit={fit.mode}
+        data-wrap={fit.mode === "fits" ? undefined : ""}
+        className="overflow-x-auto"
+        style={{ ["--table-scale" as string]: String(fit.scale) }}
+        // A scroller that cannot be focused cannot be scrolled from the keyboard.
+        tabIndex={fit.mode === "scroll" ? 0 : undefined}
+        role={fit.mode === "scroll" ? "region" : undefined}
+        aria-label={fit.mode === "scroll" ? "宽表格，可横向滚动" : undefined}
+      >
+        <div data-testid="recovered-table" className="reflow-table" dangerouslySetInnerHTML={{ __html: html }} />
+      </div>
+      {fit.mode === "scroll" && (
+        <p data-testid="recovered-table-wide" className="select-none text-center text-2xs text-muted-foreground">
+          表格较宽，按原尺寸显示，可横向滚动
+        </p>
+      )}
+    </>
+  );
 }
 
 function ShowOriginal({
@@ -163,6 +295,7 @@ export function RecoveredVisual({
 }) {
   const [original, setOriginal] = useState(false);
   const [zoomed, setZoomed] = useState(false);
+  const [copied, setCopied] = useState(false);
   const isTable = layoutClass === "table";
   const cleanTable = isTable && html ? sanitizeTableHtml(html) : null;
   const captionAbove = isTable;
@@ -189,15 +322,7 @@ export function RecoveredVisual({
       </pre>
     );
   } else if (cleanTable) {
-    body = (
-      <div className="overflow-x-auto">
-        <div
-          data-testid="recovered-table"
-          className="reflow-table"
-          dangerouslySetInnerHTML={{ __html: cleanTable }}
-        />
-      </div>
-    );
+    body = <FittedTable html={cleanTable} />;
   } else if (imagePath) {
     body = (
       <button
@@ -233,8 +358,26 @@ export function RecoveredVisual({
         </p>
       )}
       {(cleanTable || imagePath || code !== null) && (
-        <div className="flex justify-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <div className="flex justify-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           <ShowOriginal showing={original} onToggle={() => setOriginal((v) => !v)} label="MinerU 识别" />
+          {cleanTable && !original && (
+            <button
+              type="button"
+              data-testid="recovered-table-copy"
+              onClick={() => {
+                void navigator.clipboard
+                  ?.writeText(tableToText(cleanTable))
+                  .then(() => {
+                    setCopied(true);
+                    window.setTimeout(() => setCopied(false), 1600);
+                  })
+                  .catch(() => undefined);
+              }}
+              className="select-none rounded-full bg-muted px-2 py-0.5 text-2xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {copied ? "已复制" : "复制表格"}
+            </button>
+          )}
         </div>
       )}
     </figure>

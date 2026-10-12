@@ -50,6 +50,7 @@ import {
 } from "@/api/profiles";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { describeApiError } from "@/translation/errors";
+import { AppearanceSection } from "@/settings/AppearanceSection";
 import { ParserSection } from "@/settings/ParserSection";
 import { SearchSection } from "@/settings/SearchSection";
 import { MODEL_TASKS } from "@/settings/taskModels";
@@ -219,7 +220,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(230,235,242,.45)] p-4 backdrop-blur-[6px]"
+      className="fixed inset-0 z-50 flex items-center justify-center dialog-scrim p-4 backdrop-blur-[6px]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -237,7 +238,10 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           设置 · 模型服务
         </h2>
 
-        <div className="flex min-h-0 flex-1 gap-3">
+        {/* Never shrinks: the dialog scrolls as a whole. As a flexible child it
+            was squeezed to nothing once the sections below filled the dialog,
+            and the list of configured services vanished. */}
+        <div className="flex shrink-0 gap-3">
           {/* ---- the list ---- */}
           <div className="flex w-56 shrink-0 flex-col gap-1 border-r pr-3">
             <div className="flex items-center justify-between">
@@ -265,7 +269,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 还没有配置任何模型服务。点击右上角「+」添加一个。
               </p>
             ) : (
-              <ul data-testid="settings-profile-list" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+              <ul data-testid="settings-profile-list" className="max-h-56 space-y-0.5 overflow-y-auto">
                 {profiles.map((profile) => (
                   <li key={profile.id}>
                     <button
@@ -306,7 +310,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             )}
 
             {listError !== null && (
-              <p role="alert" data-testid="settings-list-error" className="text-2xs text-amber-600">
+              <p role="alert" data-testid="settings-list-error" className="text-2xs text-warning">
                 {listError}
               </p>
             )}
@@ -375,6 +379,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         </div>
 
         <TaskModelsSection profiles={profiles} />
+        <AppearanceSection />
         <ParserSection />
         <SearchSection />
       </div>
@@ -553,7 +558,7 @@ function ProfileForm({
             清除密钥
           </Button>
           {clearKey && (
-            <span data-testid="settings-clear-pending" className="text-2xs text-amber-600">
+            <span data-testid="settings-clear-pending" className="text-2xs text-warning">
               保存后将清除已存储的密钥。
             </span>
           )}
@@ -561,13 +566,13 @@ function ProfileForm({
       )}
 
       {nameError !== null && (
-        <p role="alert" data-testid="settings-name-error" className="text-2xs text-amber-600">
+        <p role="alert" data-testid="settings-name-error" className="text-2xs text-warning">
           {nameError}
         </p>
       )}
       {error !== null && (
         <p role="alert" data-testid="settings-error"
-          className="flex items-start gap-1 text-2xs text-amber-600">
+          className="flex items-start gap-1 text-2xs text-warning">
           <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
           <span>{error}</span>
         </p>
@@ -591,7 +596,7 @@ function ProfileForm({
 
       {probe !== null && (
         <p data-testid="settings-probe-result"
-          className={cn("text-2xs", probe.ok ? "text-emerald-600" : "text-amber-600")}>
+          className={cn("text-2xs", probe.ok ? "text-success" : "text-warning")}>
           {probe.text}
         </p>
       )}

@@ -7,13 +7,48 @@
  * contain a term they changed, and only those are translated again.
  */
 import { useCallback, useEffect, useState } from "react";
-import { BookA, Loader2, Plus, X } from "lucide-react";
+import { BookA, Loader2, Plus, RefreshCw, X } from "lucide-react";
 
-import { fetchGlossary, saveGlossary, type GlossaryTerm } from "@/api/bilingual";
+import { extractGlossary, fetchGlossary, saveGlossary, type GlossaryTerm } from "@/api/bilingual";
 import { Button } from "@/components/ui/button";
 import { BILINGUAL_LANGUAGE, generateBilingual } from "@/bilingual/session";
+import { profileIdFor } from "@/settings/taskModels";
+import { useWorkspaceStore } from "@/stores/workspace";
 
 type Load = "loading" | "ready" | "failed";
+
+/**
+ * Terms that were built on one the reader just changed.
+ *
+ * A paper's terms come in families — "shortcut connection", "identity shortcut",
+ * "projection shortcut" — and their translations share a stem. Changing one and
+ * leaving the others is how a paper ends up with two words for one thing again,
+ * so the others are pointed out, with the same substitution offered for them.
+ */
+export function relatedEdits(
+  saved: GlossaryTerm[],
+  draft: GlossaryTerm[],
+): Array<{ from: string; to: string; sources: string[] }> {
+  const before = new Map(saved.map((term) => [term.source, term.target]));
+  const out: Array<{ from: string; to: string; sources: string[] }> = [];
+  for (const term of draft) {
+    const from = before.get(term.source);
+    const to = term.target.trim();
+    if (from === undefined || to === "" || from === to || from.length < 2) continue;
+    const sources = draft
+      .filter(
+        (other) =>
+          other.source !== term.source &&
+          other.target.includes(from) &&
+          // Its own translation must not already be what the edit would make it.
+          !other.target.includes(to) &&
+          before.get(other.source) === other.target,
+      )
+      .map((other) => other.source);
+    if (sources.length > 0) out.push({ from, to, sources });
+  }
+  return out;
+}
 
 function sameTerms(a: GlossaryTerm[], b: GlossaryTerm[]): boolean {
   return a.length === b.length && a.every((term, i) => term.source === b[i]!.source && term.target === b[i]!.target);
@@ -35,6 +70,8 @@ export function GlossaryPanel({
   const [saved, setSaved] = useState<GlossaryTerm[]>([]);
   const [draft, setDraft] = useState<GlossaryTerm[]>([]);
   const [busy, setBusy] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const profileId = useWorkspaceStore((state) => profileIdFor("translate", state));
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const read = useCallback(
@@ -73,6 +110,44 @@ export function GlossaryPanel({
   const edit = (index: number, field: keyof GlossaryTerm, value: string) => {
     setMessage(null);
     setDraft((rows) => rows.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
+  };
+
+  const related = relatedEdits(saved, draft);
+
+  const applyRelated = (edit: { from: string; to: string; sources: string[] }) => {
+    setMessage(null);
+    setDraft((rows) =>
+      rows.map((row) =>
+        edit.sources.includes(row.source) ? { ...row, target: row.target.split(edit.from).join(edit.to) } : row,
+      ),
+    );
+  };
+
+  /** One model call. The answer replaces the *draft*; nothing is saved until the reader saves. */
+  const extractAgain = async () => {
+    if (!profileId) {
+      setMessage({ ok: false, text: "请先配置可用的模型服务。" });
+      return;
+    }
+    setExtracting(true);
+    setMessage(null);
+    try {
+      const terms = await extractGlossary(documentId, BILINGUAL_LANGUAGE, profileId);
+      if (terms.length === 0) {
+        setMessage({ ok: false, text: "模型没有返回可用的术语，术语表保持不变。" });
+      } else {
+        setDraft(terms);
+        setMessage({ ok: true, text: `抽取到 ${terms.length} 个术语，检查后点「保存」才会生效。` });
+      }
+    } catch (error) {
+      const status = (error as { status?: number })?.status;
+      setMessage({
+        ok: false,
+        text: status === 409 ? "翻译正在进行，请等它结束后再抽取。" : "重新抽取失败，请检查模型服务后重试。",
+      });
+    } finally {
+      setExtracting(false);
+    }
   };
 
   const save = async () => {
@@ -124,7 +199,7 @@ export function GlossaryPanel({
 
           {load === "loading" && <p className="text-2xs text-muted-foreground">正在读取…</p>}
           {load === "failed" && (
-            <p role="alert" className="text-2xs text-amber-600">未能读取术语表。</p>
+            <p role="alert" className="text-2xs text-warning">未能读取术语表。</p>
           )}
           {load === "ready" && draft.length === 0 && (
             <p data-testid="glossary-empty" className="text-2xs text-muted-foreground">
@@ -170,6 +245,28 @@ export function GlossaryPanel({
             </ul>
           )}
 
+          {load === "ready" &&
+            related.map((edit) => (
+              <p
+                key={`${edit.from}→${edit.to}`}
+                data-testid="glossary-related"
+                className="flex flex-wrap items-center gap-1.5 rounded-md bg-primary/5 px-2 py-1.5 text-2xs leading-relaxed text-muted-foreground"
+              >
+                <span>
+                  {edit.sources.map((source) => `「${source}」`).join("")}的译法里也含有「{edit.from}」。
+                </span>
+                <button
+                  type="button"
+                  data-testid="glossary-related-apply"
+                  disabled={disabled || busy}
+                  onClick={() => applyRelated(edit)}
+                  className="rounded px-1.5 py-0.5 font-medium text-primary hover:bg-primary/10"
+                >
+                  一并改为「{edit.to}」
+                </button>
+              </p>
+            ))}
+
           {load === "ready" && (
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -184,8 +281,23 @@ export function GlossaryPanel({
               </Button>
               <Button
                 size="sm"
+                variant="outline"
+                data-testid="glossary-extract"
+                title="让模型重读全文、重新整理术语表：1 次模型请求。结果先放进下面的列表，保存后才生效。"
+                disabled={disabled || busy || extracting}
+                onClick={() => void extractAgain()}
+              >
+                {extracting ? (
+                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                ) : (
+                  <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                )}
+                重新抽取
+              </Button>
+              <Button
+                size="sm"
                 data-testid="glossary-save"
-                disabled={disabled || busy || !dirty}
+                disabled={disabled || busy || extracting || !dirty}
                 onClick={() => void save()}
               >
                 {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
@@ -198,7 +310,7 @@ export function GlossaryPanel({
                 <span
                   role={message.ok ? "status" : "alert"}
                   data-testid="glossary-message"
-                  className={message.ok ? "text-2xs text-emerald-700" : "text-2xs text-amber-600"}
+                  className={message.ok ? "text-2xs text-success" : "text-2xs text-warning"}
                 >
                   {message.text}
                 </span>
