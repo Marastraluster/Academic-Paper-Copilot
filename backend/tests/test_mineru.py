@@ -178,6 +178,54 @@ class TestConversion:
         assert f"{cut} 34-layer plain net has higher training error." in texts
         assert "A paragraph right below an unfinished one is not joined to it." in texts
 
+    def test_the_papers_own_emphasis_rides_beside_the_text(self) -> None:
+        # Real spans (ResNet, MinerU 4.0.7): a bold run-in heading, a superscript
+        # footnote mark. The text stays plain; the runs say where they were.
+        middle = middle_v4()
+        middle["pages"][0]["blocks"][5] = {"type": "text", "index": 5, "bbox": [0.1, 0.35, 0.9, 0.6], "content": [
+            {"type": "text", "content": "Residual  Representations.", "styles": ["bold"]},
+            span(" In image recognition, VLAD"), {"type": "text", "content": "1", "styles": ["superscript"]},
+            span(" is a representation of"), math("x_1"), span("and 1 more."),
+        ]}
+        middle["pages"][1]["blocks"][0] = {
+            "type": "text", "index": 0, "bbox": [0.1, 0.05, 0.9, 0.1], "continues_prev": True,
+            "content": [span("It is "), {"type": "text", "content": "shallow", "styles": ["italic", "blink"]},
+                        span(".")]}
+        paragraph = next(p for p in convert(middle).paragraphs if p.text.startswith("Residual"))
+        assert "**" not in paragraph.text and paragraph.text.startswith("Residual Representations. In image")
+        found = [(paragraph.text[r.start:r.end], r.styles) for r in paragraph.runs]
+        assert found == [
+            ("Residual Representations.", ["bold"]),
+            ("1", ["superscript"]),  # the mark itself, not the "1" in "1 more"
+            ("shallow", ["italic"]),  # after the join across the page; an unknown style is dropped
+        ]
+        assert paragraph.text[paragraph.runs[1].start - 4:paragraph.runs[1].end] == "VLAD1"
+        # Styles never reach the identity a note is anchored to.
+        plain = convert(middle_v4())
+        assert all(p.runs == [] for p in plain.paragraphs)
+
+    def test_a_label_printed_inside_a_figure_is_not_a_paragraph(self) -> None:
+        # Real case: "VGG-19" / "34-layer plain" head the columns of an
+        # architecture diagram and came back as three one-word paragraphs.
+        middle = middle_v4()
+        middle["pages"][1]["blocks"] = [
+            {"type": "text", "index": 0, "bbox": [0.14, 0.215, 0.2, 0.235], "content": [span("VGG-19")]},
+            {"type": "image", "index": 1, "bbox": [0.1, 0.22, 0.9, 0.4], "content": [
+                {"type": "image_body", "index": 1, "bbox": [0.1, 0.22, 0.9, 0.4], "content": "",
+                 "image_path": "images/fig3.jpg"},
+                {"type": "image_caption", "bbox": [0.1, 0.41, 0.9, 0.43], "content": [span("Figure 3. Networks.")]},
+            ]},
+            # Short, but a sentence, and beside the figure rather than in it.
+            {"type": "text", "index": 2, "bbox": [0.1, 0.5, 0.4, 0.52], "content": [span("See Fig. 3.")]},
+            {"type": "text", "index": 3, "bbox": [0.1, 0.55, 0.3, 0.57], "content": [span("Plain Network")]},
+        ]
+        ir = convert(middle)
+        texts = [p.text for p in ir.paragraphs]
+        assert "VGG-19" not in texts
+        assert "See Fig. 3." in texts and "Plain Network" in texts
+        label = next(b for b in ir.pages[1].blocks if b.text == "VGG-19")
+        assert label.layout_class == "abandon"
+
     def test_furniture_is_abandoned_and_never_prose(self) -> None:
         ir = convert(middle_v4())
         assert all("arXiv" not in p.text for p in ir.paragraphs)

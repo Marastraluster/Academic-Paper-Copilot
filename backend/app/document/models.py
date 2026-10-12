@@ -186,6 +186,22 @@ class SectionIR(BaseModel):
     is_references: bool = False
 
 
+class InlineRun(BaseModel):
+    """A stretch of a paragraph's text set differently from the rest of it.
+
+    ``start``/``end`` index `ParagraphIR.text` (end exclusive). The text itself
+    carries no markup — retrieval, translation and anchors all read it as plain
+    prose — so the paper's own emphasis rides beside it, for the reader only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    #: ``bold``, ``italic``, ``superscript``, ``subscript``, ``underline``, ``code``.
+    styles: list[str]
+
+
 class ParagraphIR(BaseModel):
     """A semantic prose unit, assembled from one or more physical blocks."""
 
@@ -216,6 +232,10 @@ class ParagraphIR(BaseModel):
     #: Empty on an IR persisted before DS-DOC-003; `IR_PIPELINE_VERSION` makes
     #: that a re-extraction rather than a silent `""`.
     source_anchor_id: str = ""
+    #: The paper's own bold, italic and superscript inside this paragraph, where
+    #: the extraction recovered them (a MinerU parse does; the in-house extractor
+    #: flattens spans and leaves this empty). Never part of the anchor.
+    runs: list[InlineRun] = Field(default_factory=list)
 
 
 class DocumentIR(BaseModel):
