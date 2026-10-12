@@ -49,6 +49,7 @@ from app.document.models import (
     BoundingBox,
     DocumentIR,
     DocumentMetadata,
+    InlineRun,
     PageIR,
     ParagraphIR,
     SectionIR,
@@ -61,7 +62,9 @@ from app.document.models import (
 #: mineru-2: a paragraph continued past a floating figure or table, or over a
 #: column or page break MinerU left unmarked, is one paragraph again (mineru-1
 #: cut it in two there).
-MINERU_PIPELINE_VERSION = "mineru-2"
+#: mineru-3: a label printed inside a figure is no longer a paragraph, and the
+#: paper's bold and superscript runs are carried beside the text.
+MINERU_PIPELINE_VERSION = "mineru-3"
 
 _HEADING_NUMBER = re.compile(
     r"^\s*((?:\d+|[A-Z])(?:\.\d+)*)\.?\s+\S", re.IGNORECASE
@@ -102,6 +105,8 @@ class _Unit:
     group: int | None = None
     is_body: bool = False
     block_id: str = ""
+    #: Styled stretches of `text`, as ``(start, end, styles)``.
+    runs: list[tuple[int, int, tuple[str, ...]]] = field(default_factory=list)
 
 
 _LAYOUT_BY_KIND = {
@@ -123,17 +128,26 @@ _LAYOUT_BY_KIND = {
 # --- inline text -------------------------------------------------------------
 
 
-def _join_pieces(pieces: list[tuple[str, bool]]) -> str:
-    """Join inline runs, spacing an inline formula off the words around it.
+#: What MinerU names a span's style, and nothing else is carried.
+_STYLES = frozenset({"bold", "italic", "superscript", "subscript", "underline", "code"})
 
-    ``pieces`` are ``(text, is_math)``. Text runs are joined as they come — MinerU
-    carries the spaces between them — but a formula glued to a word
+Run = tuple[int, int, tuple[str, ...]]
+
+
+def _join_styled(pieces: list[tuple[str, bool, tuple[str, ...]]]) -> tuple[str, list[Run]]:
+    """Join inline runs, and say where the styled ones ended up.
+
+    ``pieces`` are ``(text, is_math, styles)``. Text runs are joined as they
+    come — MinerU carries the spaces between them — but a formula glued to a word
     (``where$x$is``) reads wrong and renders wrong, so one space is put on each
-    side where Latin text meets it.
+    side where Latin text meets it. Runs of spaces are collapsed afterwards, so
+    the positions are tracked through that rather than searched for: a
+    superscript ``1`` cannot be found again by looking for a "1".
     """
     out = ""
     previous_math = False
-    for text, is_math in pieces:
+    marks: list[Run] = []
+    for text, is_math, styles in pieces:
         if not text:
             continue
         if out and (is_math or previous_math):
@@ -142,18 +156,52 @@ def _join_pieces(pieces: list[tuple[str, bool]]) -> str:
                 _CJK.match(left) or _CJK.match(right)
             ) and right not in ",.;:)]}" and left not in "([{":
                 out += " "
+        if styles and not is_math:
+            marks.append((len(out), len(out) + len(text), styles))
         out += text
         previous_math = is_math
-    return re.sub(r"[ \t]+", " ", out).strip()
+
+    # Collapse spaces and tabs to one space, remembering where each character went.
+    kept: list[str] = []
+    moved: list[int] = []
+    for char in out:
+        moved.append(len(kept))
+        if char in " \t":
+            if kept and kept[-1] == " ":
+                continue
+            kept.append(" ")
+        else:
+            kept.append(char)
+    moved.append(len(kept))
+    collapsed = "".join(kept)
+    lead = len(collapsed) - len(collapsed.lstrip())
+    final = collapsed.strip()
+
+    runs: list[Run] = []
+    for start, end, styles in marks:
+        a = max(0, moved[start] - lead)
+        b = min(len(final), moved[end] - lead)
+        while a < b and final[a].isspace():
+            a += 1
+        while b > a and final[b - 1].isspace():
+            b -= 1
+        if a < b:
+            runs.append((a, b, styles))
+    return final, runs
 
 
-def _spans_text(spans: Any) -> str:
-    """MinerU 4 inline spans → text with ``$…$`` math."""
-    pieces: list[tuple[str, bool]] = []
+def _join_pieces(pieces: list[tuple[str, bool]]) -> str:
+    """`_join_styled` for runs that carry no style (the legacy format)."""
+    return _join_styled([(text, is_math, ()) for text, is_math in pieces])[0]
 
-    def walk(items: Any) -> None:
+
+def _spans_styled(spans: Any) -> tuple[str, list[Run]]:
+    """MinerU 4 inline spans → text with ``$…$`` math, and its styled stretches."""
+    pieces: list[tuple[str, bool, tuple[str, ...]]] = []
+
+    def walk(items: Any, inherited: tuple[str, ...] = ()) -> None:
         if isinstance(items, str):
-            pieces.append((items, False))
+            pieces.append((items, False, inherited))
             return
         if not isinstance(items, list):
             return
@@ -162,15 +210,29 @@ def _spans_text(spans: Any) -> str:
                 continue
             kind = span.get("type")
             content = span.get("content")
+            raw = span.get("styles")
+            styles = tuple(
+                dict.fromkeys(
+                    [*inherited, *(s for s in raw if isinstance(s, str) and s in _STYLES)]
+                    if isinstance(raw, list) else inherited
+                )
+            )
             if kind == "equation_inline" and isinstance(content, str) and content.strip():
-                pieces.append((f"${content.strip()}$", True))
+                pieces.append((f"${content.strip()}$", True, ()))
             elif kind == "hyperlink":
-                walk(content)
+                walk(content, styles)
+            elif kind == "code_inline" and isinstance(content, str):
+                pieces.append((content, False, tuple(dict.fromkeys([*styles, "code"]))))
             elif isinstance(content, str):
-                pieces.append((content, False))
+                pieces.append((content, False, styles))
 
     walk(spans)
-    return _join_pieces(pieces)
+    return _join_styled(pieces)
+
+
+def _spans_text(spans: Any) -> str:
+    """MinerU 4 inline spans → text with ``$…$`` math."""
+    return _spans_styled(spans)[0]
 
 
 def _legacy_lines_text(lines: Any) -> str:
@@ -283,11 +345,12 @@ def _units_v4(middle: dict[str, Any], pages: list[PageGeometry]) -> list[_Unit]:
                     )
                 )
             elif kind in ("text", "ref_text"):
+                text, runs = _spans_styled(block.get("content"))
                 units.append(
                     _Unit(
                         "ref" if kind == "ref_text" else "text",
-                        page_index, box(block), _spans_text(block.get("content")),
-                        continues=continues,
+                        page_index, box(block), text,
+                        continues=continues, runs=runs,
                     )
                 )
             elif kind == "list":
@@ -301,13 +364,14 @@ def _units_v4(middle: dict[str, Any], pages: list[PageGeometry]) -> list[_Unit]:
                     if child.get("type") == "list":
                         stack[0:0] = list(child.get("content") or [])
                         continue
+                    text, runs = _spans_styled(child.get("content"))
                     units.append(
                         _Unit(
                             "ref" if is_refs or child.get("type") == "ref_text" else "text",
                             page_index,
                             box(child) if child.get("bbox") else box(block),
-                            _spans_text(child.get("content")),
-                            continues=continues and first,
+                            text,
+                            continues=continues and first, runs=runs,
                         )
                     )
                     first = False
@@ -483,6 +547,42 @@ def _build_hierarchy(sections: list[SectionIR]) -> None:
         stack.append(section)
 
 
+_LABEL_MAX_CHARS = 40
+
+
+def _absorb_figure_labels(units: list[_Unit]) -> None:
+    """A label printed in a figure is part of the picture, not a paragraph.
+
+    Seen on a real paper: "VGG-19", "34-layer plain" and "34-layer residual" head
+    the three columns of an architecture diagram, and MinerU returns each as a
+    text block. As prose they are three one-word paragraphs sent to be
+    translated. They are recognised by where they are — short, and mostly inside
+    a figure's own rectangle on the same page — and set aside with the page's
+    other furniture; the figure, with its crop one click away, still shows them.
+    """
+    figures: dict[int, list[BoundingBox]] = {}
+    for unit in units:
+        if unit.kind == "figure" and unit.is_body:
+            figures.setdefault(unit.page_index, []).append(unit.bbox)
+    if not figures:
+        return
+    for unit in units:
+        if unit.kind != "text" or unit.continues or len(unit.text) > _LABEL_MAX_CHARS:
+            continue
+        if re.search(r"[.!?。！？:：]$", unit.text):
+            continue  # a sentence, however short, is prose
+        x0, y0, x1, y1 = unit.bbox
+        area = max(0.0, x1 - x0) * max(0.0, y1 - y0)
+        if area <= 0:
+            continue
+        for fx0, fy0, fx1, fy1 in figures.get(unit.page_index, []):
+            overlap = max(0.0, min(x1, fx1) - max(x0, fx0)) * max(0.0, min(y1, fy1) - max(y0, fy0))
+            if overlap / area >= 0.5:
+                unit.kind = "abandon"
+                unit.runs = []
+                break
+
+
 _UNFINISHED = re.compile(r"[A-Za-z,\-–—]$")
 
 
@@ -529,6 +629,7 @@ def middle_json_to_ir(
     else:
         raise MinerUConversionError("Not a MinerU middle JSON: no `pages` or `pdf_info`.")
 
+    _absorb_figure_labels(units)
     metadata = metadata.model_copy() if metadata is not None else DocumentMetadata()
 
     # Blocks, numbered per page in reading order.
@@ -620,6 +721,11 @@ def middle_json_to_ir(
                 last_paragraph.text.endswith("-") and unit.text[:1].islower()
             ) else ("" if _CJK.match(last_paragraph.text[-1:] or "a") and _CJK.match(unit.text[:1]) else " ")
             base = last_paragraph.text[:-1] if joiner == "" and last_paragraph.text.endswith("-") else last_paragraph.text
+            shift = len(base) + len(joiner)
+            last_paragraph.runs.extend(
+                InlineRun(start=start + shift, end=end + shift, styles=list(styles))
+                for start, end, styles in unit.runs
+            )
             last_paragraph.text = (base + joiner + unit.text).strip()
             last_paragraph.block_ids.append(unit.block_id)
             last_paragraph.bboxes.append(unit.bbox)
@@ -635,6 +741,7 @@ def middle_json_to_ir(
             page_range=(unit.page_index + 1, unit.page_index + 1),
             block_ids=[unit.block_id],
             bboxes=[unit.bbox],
+            runs=[InlineRun(start=start, end=end, styles=list(styles)) for start, end, styles in unit.runs],
         )
         paragraphs.append(paragraph)
         last_paragraph = paragraph
