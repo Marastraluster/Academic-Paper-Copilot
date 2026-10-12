@@ -77,7 +77,7 @@ the whole of the network surface.
   again (as a proposal) and points out related terms when one is changed; the translated count no
   longer counts the bibliography; 重译此段 is reachable from the keyboard.
 
-Details, and what was *not* done, are in the [Roadmap](#roadmap) and in
+What was *not* done is in the [Roadmap](#roadmap); how tables are drawn, and why, is in
 [`DS-DOC-011-disposition.md`](docs/acceptance/DS-DOC-011-disposition.md).
 
 ## What it does
@@ -434,8 +434,10 @@ assets/             project marks
 
 - **Tables for papers the built-in extractor reads** — after a MinerU parse a table is drawn as a
   table (merged cells kept, numeric columns aligned, fitted to the column or scrolled at its own
-  size; [`DS-DOC-011` disposition](docs/acceptance/DS-DOC-011-disposition.md)). The built-in
-  extractor still flattens a table to text, so those papers show the paper's crop.
+  size). That is the accepted design
+  ([`DS-DOC-011` disposition](docs/acceptance/DS-DOC-011-disposition.md)); the earlier KaTeX
+  proposal is withdrawn. The built-in extractor still flattens a table to text, so those papers
+  show the paper's crop.
 - **Inline formatting from the built-in extractor** — the paper's own bold, italic and superscript
   are carried and drawn after a MinerU parse; the built-in extractor still flattens text spans.
 - **Checking what a web-searching model returns** — with DeepSeek's search, later and similar
