@@ -149,6 +149,31 @@ def read_bilingual(
     return artifact
 
 
+def read_bilingual_of_any_extraction(
+    documents_dir: Path, *, content_hash: str, target_language: str
+) -> BilingualArtifact | None:
+    """The stored reading of this paper, whichever extraction it was made from.
+
+    Same paper, same language, same prompt and pipeline — only the paragraph
+    ids may belong to another extraction. Not a reading to *show* (its ids do
+    not address this IR), but its translations are still translations of this
+    paper's sentences: see `app.bilingual.carry`.
+    """
+    path = bilingual_path(documents_dir, content_hash, target_language)
+    if not path.is_file():
+        return None
+    try:
+        artifact = _from_payload(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, KeyError, TypeError, ValueError):
+        return None
+    if not cache_is_compatible(
+        artifact, content_hash=content_hash,
+        ir_pipeline_version=artifact.ir_pipeline_version, target_language=target_language,
+    ):
+        return None
+    return artifact
+
+
 def write_bilingual(documents_dir: Path, artifact: BilingualArtifact) -> Path:
     """Persist an artifact, completely or not at all.
 

@@ -170,11 +170,26 @@ Paragraph translation runs as a background job:
 | `DELETE /api/documents/{id}/bilingual-text/jobs` | stop; what landed is kept |
 | `GET /api/documents/{id}/bilingual-text` | the reading — while a job runs, what it has so far (`pending` paragraphs fill in) |
 | `POST /api/documents/{id}/bilingual-text/paragraphs/{pid}/retranslate` | one paragraph again, one call |
+| `GET /api/documents/{id}/bilingual-text/glossary` | the terms this paper is translated with; reads a file, reaches no provider |
+| `POST /api/documents/{id}/bilingual-text/glossary` `{"terms":[{"source","target"}]}` | save the reader's glossary; un-translates exactly the paragraphs that contain a changed term and returns `affected_paragraphs` — spends nothing (starting the job again translates those, and only those). `POST`, not `PUT`: the CORS policy does not admit `PUT` |
+| `POST /api/documents/{id}/bilingual-text/glossary/extract` `{"profile_id"}` | read the paper's terms again, one call; a proposal — nothing is stored |
 
-Each batch is saved as it lands (`_cache/bilingual/<hash>_<lang>.partial.json`),
-so a stopped or failed job resumes with only the missing batches. Up to
-`concurrency` batches (default 2, at most 4) run at once. The synchronous
-`POST /bilingual-text` still works and is unchanged.
+Each paragraph is saved as it lands (`_cache/bilingual/<hash>_<lang>.partial.json`,
+rewritten at most every 0.8 s): a batch's answer is read as the model writes it
+(Chat Completions `stream=True`), and a paragraph is kept the moment its own
+translation is whole and has passed the checks a finished answer gets. An adapter
+that cannot stream (the Responses one) is asked the ordinary way and lands a
+batch at a time. A stopped or failed job resumes with only the paragraphs still
+missing. Up to `concurrency` batches (default 2, at most 4) run at once.
+
+The first batch is small (3 paragraphs / 1 500 characters) so the opening
+arrives in seconds, and the glossary is read *beside* the translation, not before
+it: batches sent before it returns go without one, and afterwards only the
+paragraphs that contain a term and did not use its translation are translated
+again (`restated_paragraphs` in the job; measured on one 92-paragraph paper: 18).
+A streamed call reports no token usage, so `input_tokens`/`output_tokens` are
+`null` for a reading made this way. The synchronous `POST /bilingual-text` still
+works and is unchanged.
 
 Inline formulas stay in paragraph text as `$…$`. The paragraph translator
 replaces them with placeholders before a model sees the text and rejects any

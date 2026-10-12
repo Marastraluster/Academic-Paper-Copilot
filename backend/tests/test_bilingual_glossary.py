@@ -154,12 +154,55 @@ class TestTheJob:
         assert job.status == "completed" and job.translated_paragraphs == 3
         assert read_terms(tmp_path, ir.content_hash, "zh-CN") == []
 
-    async def test_a_refused_key_stops_the_job_before_any_batch(self, tmp_path: Path) -> None:
+    async def test_a_refused_key_stops_the_job_at_its_first_calls(self, tmp_path: Path) -> None:
         ir = three_paragraphs()
         provider = Translator(fail_after=-1, glossary=TERMS)  # noqa: F811
         job = await jobs.run(new_job(ir), ir=ir, provider=provider, documents_dir=tmp_path, make_glossary=True)
         assert job.status == "failed" and job.code == "LLM_AUTHENTICATION_ERROR"
-        assert provider.calls == 0 and read_terms(tmp_path, ir.content_hash, "zh-CN") is None
+        # The glossary and the first batches go out together; none got anywhere.
+        assert provider.sent_ids == [] and read_terms(tmp_path, ir.content_hash, "zh-CN") is None
+
+    def test_the_first_batch_is_small(self) -> None:
+        work = plan(three_paragraphs())
+        assert [[p.id for p in batch.paragraphs] for batch in work.batches] == [["p1", "p2"], ["p3"]]
+
+    async def test_translation_does_not_wait_for_the_glossary(self, tmp_path: Path) -> None:
+        # The glossary is the slowest call of a run. Here it is still being read
+        # when every batch has been sent — and nothing waited for it.
+        ir = three_paragraphs()
+        provider = Translator(glossary=TERMS, glossary_delay=0.15)  # noqa: F811
+        job = await jobs.run(new_job(ir), ir=ir, provider=provider, documents_dir=tmp_path, make_glossary=True)
+        assert job.status == "completed" and job.translated_paragraphs == 3 and job.glossary_terms == 2
+        first_pass = provider.prompts[:2]
+        assert all("Glossary for this paper" not in prompt for prompt in first_pass)
+        assert sorted(provider.sent_ids[:3]) == ["p1", "p2", "p3"]
+        # Then, one word per term: the two paragraphs that contain a term and
+        # did not use its translation go again, with the glossary. `p3` contains
+        # no term and is not paid for twice.
+        assert sorted(provider.sent_ids[3:]) == ["p1", "p2"] and job.restated_paragraphs == 2
+        assert all("Glossary for this paper" in prompt for prompt in provider.prompts[2:])
+        assert job.done_batches == job.total_batches == 2 and job.phase == "translating"
+
+    async def test_a_glossary_that_arrives_first_is_simply_used(self, tmp_path: Path) -> None:
+        ir = three_paragraphs()
+        provider = Translator(glossary=TERMS, delay=0.01)  # noqa: F811
+        job = await jobs.run(new_job(ir), ir=ir, provider=provider, documents_dir=tmp_path,
+                             make_glossary=True, concurrency=1)
+        assert job.status == "completed"
+        # The second batch was sent after the terms were known: nothing restated
+        # beyond the lead, which went out with them still unread.
+        assert provider.sent_ids.count("p3") == 1
+        assert any("Glossary for this paper" in prompt for prompt in provider.prompts)
+
+    async def test_early_paragraphs_that_already_agree_are_kept(self, tmp_path: Path) -> None:
+        ir = three_paragraphs()
+        # The only term is one the first batch does not contain.
+        provider = Translator(glossary=[{"source": "plain baselines", "target": "普通基线"}],  # noqa: F811
+                              glossary_delay=0.15)
+        job = await jobs.run(new_job(ir), ir=ir, provider=provider, documents_dir=tmp_path, make_glossary=True)
+        assert job.status == "completed"
+        # `p3` contains it and was translated without it: once more. The others: once.
+        assert sorted(provider.sent_ids) == ["p1", "p2", "p3", "p3"]
 
     async def test_only_missing_paragraphs_are_sent_not_their_batch(self, tmp_path: Path) -> None:
         ir = three_paragraphs()
@@ -194,6 +237,8 @@ class TestEditing:
         provider.glossary = [{"source": "deeper network", "target": "更深的网络"}]
         base = f"/api/documents/{document_id}/bilingual-text"
         assert client.get(f"{base}/glossary").json() == {"exists": False, "target_language": "zh-CN", "terms": []}
+        # The call that reads the paper for its terms is part of the disclosed cost.
+        assert client.get(base).json()["error"]["detail"]["plan"]["glossary_calls"] == 1
 
         client.post(f"{base}/jobs", json={"profile_id": profile_id})
         job = wait_for(client, f"{base}/jobs", lambda b: b["status"] != "running")
@@ -234,3 +279,22 @@ class TestEditing:
         assert final["status"] == "READY"
         assert {p["paragraph_id"]: p["translated_text"] for p in final["paragraphs"]
                 if p["paragraph_id"] in others} == others
+
+    def test_extracting_again_is_a_proposal_that_stores_and_touches_nothing(self, client, paper, provider) -> None:  # noqa: F811
+        document_id, profile_id = paper
+        base = f"/api/documents/{document_id}/bilingual-text"
+        provider.glossary = [{"source": "deeper network", "target": "更深的网络"}]
+        client.post(f"{base}/jobs", json={"profile_id": profile_id})
+        wait_for(client, f"{base}/jobs", lambda b: b["status"] != "running")
+        client.post(f"{base}/glossary", json={"terms": [{"source": "deeper network", "target": "深层网络"}]})
+        calls = provider.calls
+
+        provider.glossary = [{"source": "deeper network", "target": "较深的网络"},
+                             {"source": "attention", "target": "注意力"}]  # the second is not in the paper
+        proposed = client.post(f"{base}/glossary/extract", json={"profile_id": profile_id})
+        assert proposed.status_code == 200, proposed.text
+        assert proposed.json()["terms"] == [{"source": "deeper network", "target": "较深的网络"}]
+        assert provider.glossary_calls == 2 and provider.calls == calls
+        # The reader's own glossary is still the one on disk.
+        assert client.get(f"{base}/glossary").json()["terms"] == [
+            {"source": "deeper network", "target": "深层网络"}]

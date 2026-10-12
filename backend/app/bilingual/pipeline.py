@@ -31,8 +31,10 @@ in it is worth more than no reading, as long as the gap is said out loud.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from app.bilingual.glossary import Term, terms_for
@@ -44,6 +46,8 @@ from app.bilingual.models import (
 )
 from app.bilingual.mathguard import protect, restore
 from app.bilingual.prompt import (
+    LEAD_BATCH_CHARS,
+    LEAD_PARAGRAPHS,
     MAX_BATCH_CHARS,
     MAX_PARAGRAPHS_PER_BATCH,
     build_messages,
@@ -153,10 +157,14 @@ def plan(ir: DocumentIR) -> Plan:
             result.skipped[paragraph.id] = "文档题头信息"
             continue
         batch = result.batches[-1] if result.batches else None
-        too_many = batch is not None and len(batch.paragraphs) >= MAX_PARAGRAPHS_PER_BATCH
+        # The first batch is the lead: small, so the reader has something soon.
+        lead = len(result.batches) == 1
+        too_many = batch is not None and len(batch.paragraphs) >= (
+            LEAD_PARAGRAPHS if lead else MAX_PARAGRAPHS_PER_BATCH
+        )
         too_long = (
             batch is not None
-            and batch.characters() + len(paragraph.text) > MAX_BATCH_CHARS
+            and batch.characters() + len(paragraph.text) > (LEAD_BATCH_CHARS if lead else MAX_BATCH_CHARS)
         )
         if batch is None or too_many or too_long:
             result.batches.append(Batch(paragraphs=[paragraph]))
@@ -333,6 +341,70 @@ class BatchResult:
     model: str = ""
 
 
+class StreamedObjects:
+    """The complete ``{…}`` items of a JSON answer, found while it is still arriving.
+
+    The answer is ``{"headings": [{…}], "paragraphs": [{…}, {…}]}``; a paragraph is
+    readable the moment its own object closes, long before the array or the
+    answer does. This scans the text as it grows — strings and escapes respected,
+    so a brace inside a translation is not a brace — and hands back each object
+    that sits directly inside an array, once, when it is whole. Anything that is
+    not such an object (prose around the JSON, a code fence) is simply not found.
+    """
+
+    def __init__(self) -> None:
+        self._text = ""
+        self._position = 0
+        self._stack: list[str] = []
+        self._in_string = False
+        self._escape = False
+        self._start: int | None = None
+        self._start_depth = 0
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+    def feed(self, chunk: str) -> list[dict]:
+        self._text += chunk
+        found: list[dict] = []
+        text = self._text
+        for index in range(self._position, len(text)):
+            char = text[index]
+            if self._in_string:
+                if self._escape:
+                    self._escape = False
+                elif char == "\\":
+                    self._escape = True
+                elif char == '"':
+                    self._in_string = False
+            elif char == '"':
+                self._in_string = True
+            elif char == "{":
+                if self._start is None and self._stack and self._stack[-1] == "[":
+                    self._start, self._start_depth = index, len(self._stack)
+                self._stack.append("{")
+            elif char == "[":
+                self._stack.append("[")
+            elif char in "}]":
+                if self._stack:
+                    self._stack.pop()
+                if char == "}" and self._start is not None and len(self._stack) == self._start_depth:
+                    try:
+                        value = json.loads(text[self._start:index + 1])
+                    except ValueError:
+                        value = None
+                    if isinstance(value, dict):
+                        found.append(value)
+                    self._start = None
+        self._position = len(text)
+        return found
+
+
+#: Called with ``(paragraph_id, translation)`` the moment one is usable.
+OnParagraph = Callable[[str, str], Awaitable[None] | None]
+
+
 def heading_views_for(work: Plan) -> list[BilingualSection]:
     """The section titles every batch carries, untranslated."""
     return [
@@ -356,12 +428,19 @@ async def translate_batch(
     target_language: str,
     glossary: list[str] | None = None,
     terms: list[Term] | None = None,
+    on_paragraph: OnParagraph | None = None,
 ) -> BatchResult:
     """One provider call (and at most one repair) for one batch.
 
     Independent of every other batch, which is what lets a background run do
     them in any order, keep each one as it lands, and resume after a restart
     with only the batches that are still missing.
+
+    With ``on_paragraph`` the answer is read as it is written, and each
+    paragraph is handed over the moment its own translation is complete and has
+    passed every check a finished answer would be put through — the reader sees
+    the first paragraph after a few seconds instead of the fifteenth after a
+    minute. A provider that cannot stream is asked the ordinary way.
     """
     out = BatchResult()
     # Inline formulas travel as placeholders and come back verbatim; the model
@@ -386,17 +465,62 @@ async def translate_batch(
     )
     allowed = {paragraph.id for paragraph in batch.paragraphs}
     allowed_headings = {section.section_id for section in heading_views}
+    source_chars = {paragraph.paragraph_id: len(paragraph.source_text) for paragraph in rows}
 
-    result = await provider.generate(LLMRequest(messages=messages))
-    out.calls += 1
-    out.usages.append(result.usage)
-    out.model = getattr(result, "model", "") or ""
-    payload = _parse(result.text)
+    def usable(payload: dict) -> dict[str, str]:
+        """Paragraph translations that pass every check, formulas put back."""
+        kept: dict[str, str] = {}
+        for identifier, text in _translations(payload, "paragraphs", allowed, source_chars).items():
+            restored = restore(text, guarded[identifier][1])
+            if restored is not None:
+                kept[identifier] = restored
+        return kept
+
+    streamed_text: str | None = None
+    if on_paragraph is not None:
+        scanner = StreamedObjects()
+        try:
+            async for chunk in provider.generate_stream(LLMRequest(messages=messages)):
+                for item in scanner.feed(chunk):
+                    for identifier, text in usable({"paragraphs": [item]}).items():
+                        if identifier in out.translations:
+                            continue
+                        out.translations[identifier] = text
+                        handed = on_paragraph(identifier, text)
+                        if inspect.isawaitable(handed):
+                            await handed
+            streamed_text = scanner.text
+        except NotImplementedError:
+            streamed_text = None  # this adapter cannot stream: ask the ordinary way
+        if streamed_text is not None and not streamed_text.strip():
+            # Nothing was written (a reasoning model out of budget, typically).
+            # The ordinary call knows how to name that failure.
+            streamed_text = None
+
+    if streamed_text is not None:
+        out.calls += 1
+        out.usages.append(None)  # a streamed call reports no usage
+        out.model = getattr(provider, "model", "") or ""
+        payload = _parse(streamed_text)
+        if payload is None and out.translations:
+            # The answer was cut off or malformed after some paragraphs had
+            # arrived whole. Those stand; the rest are gaps a resumed run fills
+            # by sending only them — asking for the whole batch again would pay
+            # twice for what was just read.
+            return out
+        result_text = streamed_text
+    else:
+        result = await provider.generate(LLMRequest(messages=messages))
+        out.calls += 1
+        out.usages.append(result.usage)
+        out.model = getattr(result, "model", "") or ""
+        payload = _parse(result.text)
+        result_text = result.text
 
     if payload is None:
         out.repaired += 1
         retry = list(messages) + [
-            {"role": "assistant", "content": result.text[:2000]},
+            {"role": "assistant", "content": result_text[:2000]},
             {
                 "role": "user",
                 "content": (
@@ -415,13 +539,9 @@ async def translate_batch(
         out.failed = True
         return out
 
-    for identifier, text in _translations(
-        payload, "paragraphs", allowed,
-        {paragraph.paragraph_id: len(paragraph.source_text) for paragraph in rows},
-    ).items():
-        restored = restore(text, guarded[identifier][1])
-        if restored is not None:
-            out.translations[identifier] = restored
+    for identifier, text in usable(payload).items():
+        # What was handed over while streaming is what the reader already has.
+        out.translations.setdefault(identifier, text)
     for identifier, text in _translations(payload, "headings", allowed_headings).items():
         out.headings.setdefault(identifier, text)
     return out

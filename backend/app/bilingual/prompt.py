@@ -28,6 +28,14 @@ from app.bilingual.models import BilingualParagraph, BilingualSection
 MAX_PARAGRAPHS_PER_BATCH = 15
 MAX_BATCH_CHARS = 5_000
 
+#: The first call is kept small on purpose. A model thinks before it writes, and
+#: for longer than a reader will wait when it is handed a full batch — measured
+#: with a reasoning model, 15 s before the first word of a 5 000-character batch
+#: against 2 s for a short one. The paper's opening is what the reader is looking
+#: at, so it goes alone and arrives first.
+LEAD_PARAGRAPHS = 3
+LEAD_BATCH_CHARS = 1_500
+
 #: A translation that is many times its source is not a translation. Generous
 #: enough for Chinese prose (which is usually shorter than its English source)
 #: and strict enough to catch a model that answered with an essay.
