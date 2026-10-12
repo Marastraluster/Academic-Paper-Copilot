@@ -135,7 +135,7 @@ function GeneratedOverviewBody({
       {overview.status === "PARTIAL" && (
         <p
           data-testid="overview-partial"
-          className="mb-2 rounded-sm bg-amber-100 px-2 py-1 text-2xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+          className="mb-2 rounded-sm bg-amber-100 px-2 py-1 text-2xs text-warning dark:bg-amber-900/30 dark:text-amber-300"
         >
           部分概览已生成。
         </p>
@@ -236,7 +236,7 @@ function ItemRow({
       {item.partial && (
         <span
           data-testid="claim-caveat-pill"
-          className="ml-1 rounded-sm bg-amber-100 px-1 text-2xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+          className="ml-1 rounded-sm bg-amber-100 px-1 text-2xs text-warning dark:bg-amber-900/30 dark:text-amber-300"
         >
           部分证据支持
         </span>

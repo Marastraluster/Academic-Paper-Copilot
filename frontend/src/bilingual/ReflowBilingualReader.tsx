@@ -36,7 +36,7 @@
  * under its ceiling.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RotateCcw, Sparkles, Square, TriangleAlert } from "lucide-react";
+import { CornerUpLeft, Loader2, RotateCcw, Sparkles, Square, TriangleAlert } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -48,6 +48,13 @@ import {
   stopBilingual,
 } from "@/bilingual/session";
 import { GlossaryPanel } from "@/bilingual/GlossaryPanel";
+import {
+  buildReferenceIndex,
+  CitationContext,
+  referenceSectionIds,
+  type CitationLinks,
+  type ReferenceEntry,
+} from "@/bilingual/reflow/citations";
 import { MathText } from "@/bilingual/reflow/MathText";
 import { RecoveredFormula, RecoveredVisual } from "@/bilingual/reflow/Recovered";
 import { MinerUBanner } from "@/bilingual/reflow/MinerUBanner";
@@ -295,6 +302,44 @@ export default function ReflowBilingualReader({
     else itemRefs.current.set(id, element);
   }, []);
 
+  // The count is of what was meant to be translated. References and the title
+  // block are kept in the paper's words on purpose; counting them made a
+  // finished reading look two-fifths undone ("86 / 141").
+  const notTranslated = useMemo(
+    () => (view?.paragraphs ?? []).filter((paragraph) => paragraph.status === "skipped").length,
+    [view],
+  );
+  const toTranslate = Math.max(0, (view?.total_paragraphs ?? 0) - notTranslated);
+
+  // --- citations: `[24]` → its bibliography entry, and the way back -------------
+  const referenceIndex = useMemo(() => buildReferenceIndex(usable ? ir : null), [usable, ir]);
+  const referenceSections = useMemo(() => referenceSectionIds(ir), [ir]);
+  /** Where the reader was before following a citation; `null` when there is nowhere to return to. */
+  const [returnTo, setReturnTo] = useState<number | null>(null);
+  const jumpToReference = useCallback((entry: ReferenceEntry) => {
+    const container = containerRef.current;
+    if (container === null) return;
+    const target = container.querySelector<HTMLElement>(
+      `[data-paragraph-id="${CSS.escape(entry.paragraphId)}"]`,
+    );
+    if (target === null) return;
+    setReturnTo((previous) => previous ?? container.scrollTop);
+    target.scrollIntoView({ block: "center" });
+    target.classList.remove("reflow-cited");
+    // Restart the highlight when the same entry is followed twice in a row.
+    void target.offsetWidth;
+    target.classList.add("reflow-cited");
+  }, []);
+  const citationLinks = useMemo<CitationLinks | null>(
+    () => (referenceIndex.size > 0 ? { index: referenceIndex, jump: jumpToReference } : null),
+    [referenceIndex, jumpToReference],
+  );
+  const goBack = useCallback(() => {
+    const container = containerRef.current;
+    if (container !== null && returnTo !== null) container.scrollTop = returnTo;
+    setReturnTo(null);
+  }, [returnTo]);
+
   // --- nothing yet --------------------------------------------------------------
   if (!usable) {
     const waiting = status === "loading" && view === null;
@@ -321,7 +366,8 @@ export default function ReflowBilingualReader({
             </div>
             {plan !== null && (
               <p data-testid="bilingual-plan" className="mt-1 text-2xs text-muted-foreground">
-                共 {plan.paragraphs} 个段落 · 预计 {plan.batches} 次模型请求 · 原文约{" "}
+                共 {plan.paragraphs} 个段落 · 预计 {plan.batches + (plan.glossary_calls ?? 0)} 次模型请求
+                {(plan.glossary_calls ?? 0) > 0 ? "（含 1 次整理术语表）" : ""} · 原文约{" "}
                 {plan.characters.toLocaleString()} 字符
               </p>
             )}
@@ -334,7 +380,7 @@ export default function ReflowBilingualReader({
               <p
                 role="alert"
                 data-testid="bilingual-error"
-                className="mt-1 flex items-start gap-1 text-2xs text-amber-600 dark:text-amber-500"
+                className="mt-1 flex items-start gap-1 text-2xs text-warning dark:text-amber-500"
               >
                 <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
                 <span>{refusal ?? error ?? "逐段对照生成失败，请稍后重试。"}</span>
@@ -362,7 +408,7 @@ export default function ReflowBilingualReader({
               {status === "generating"
                 ? "正在翻译…"
                 : plan !== null
-                  ? `将调用 ${plan.batches} 次模型请求，可能耗时数分钟。`
+                  ? `将调用 ${plan.batches + (plan.glossary_calls ?? 0)} 次模型请求。译文逐段出现，开头几段几秒内可读，全文可能需要数分钟。`
                   : "将调用若干次模型请求，可能耗时数分钟。"}
             </p>
             {profileId === "" && (
@@ -397,7 +443,12 @@ export default function ReflowBilingualReader({
       >
         <span className="text-xs font-medium">逐段对照</span>
         <span data-testid="bilingual-counts" className="text-2xs text-muted-foreground">
-          {view.translated_paragraphs} / {view.total_paragraphs} 段已译
+          {view.translated_paragraphs} / {toTranslate} 段已译
+          {notTranslated > 0 && (
+            <span data-testid="bilingual-kept" title="参考文献与题头信息保持原文，不送去翻译">
+              {" "}· {notTranslated} 段保持原文
+            </span>
+          )}
         </span>
         {view.job?.status === "running" && (
           <span
@@ -412,8 +463,8 @@ export default function ReflowBilingualReader({
                 }}
               />
             </span>
-            {view.job.phase === "glossary"
-              ? "正在整理术语表…"
+            {view.job.phase === "terms"
+              ? `正在按术语表统一用词（${view.job.restated_paragraphs ?? 0} 段）…`
               : `翻译中 ${view.job.done_batches}/${view.job.total_batches} 批`}
             <button
               type="button"
@@ -440,7 +491,7 @@ export default function ReflowBilingualReader({
         {view.status === "PARTIAL" && view.job?.status !== "running" && (
           <span
             data-testid="bilingual-partial"
-            className="rounded-sm bg-amber-100 px-1 text-2xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+            className="rounded-sm bg-amber-100 px-1 text-2xs text-warning dark:bg-amber-900/30 dark:text-amber-300"
           >
             部分段落未翻译
           </span>
@@ -485,6 +536,7 @@ export default function ReflowBilingualReader({
       >
         {/* One sheet of paper, as a reflowed article: the paragraphs are
             separated by space alone, never boxed, so it reads as one text. */}
+        <CitationContext.Provider value={citationLinks}>
         <article
           data-testid="reflow-sheet"
           className="mx-auto w-full max-w-[760px] animate-pane-in rounded-md bg-page-surface px-10 pb-16 pt-12 shadow-[0_24px_60px_rgba(18,28,50,.14),0_2px_6px_rgba(18,28,50,.06)]"
@@ -681,6 +733,7 @@ export default function ReflowBilingualReader({
                 key={item.id}
                 pair={item}
                 mode={mode}
+                cite={item.sectionId === null || !referenceSections.has(item.sectionId)}
                 attach={attach}
                 onRetry={() => void generateBilingual()}
               />
@@ -694,6 +747,20 @@ export default function ReflowBilingualReader({
           逐段对照为针对段落语义的沉浸式翻译，与版面翻译 PDF 的文字排版与用词可能存在细微差异。
         </p>
         </article>
+        </CitationContext.Provider>
+        {returnTo !== null && (
+          <div className="pointer-events-none sticky bottom-4 z-10 mt-4 flex justify-center">
+            <button
+              type="button"
+              data-testid="citation-return"
+              onClick={goBack}
+              className="glass glass-solid pointer-events-auto flex animate-pop select-none items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium text-foreground"
+            >
+              <CornerUpLeft className="h-3.5 w-3.5" aria-hidden="true" />
+              返回刚才阅读的位置
+            </button>
+          </div>
+        )}
       </div>
 
     </div>
@@ -705,11 +772,14 @@ export default function ReflowBilingualReader({
 function PairItem({
   pair,
   mode,
+  cite,
   attach,
   onRetry,
 }: {
   pair: ReflowPair;
   mode: ViewMode;
+  /** False in the bibliography, where `[24]` is the entry rather than a pointer to it. */
+  cite: boolean;
   attach: (id: string, element: HTMLElement | null) => void;
   onRetry: () => void;
 }) {
@@ -748,7 +818,7 @@ function PairItem({
           mode === "target" && "hidden",
         )}
       >
-        <MathText text={pair.sourceText} />
+        <MathText text={pair.sourceText} cite={cite} runs={pair.sourceRuns} />
       </p>
 
       {pair.status === "translated" && pair.translatedText !== null && (
@@ -760,22 +830,30 @@ function PairItem({
             mode === "source" && "hidden",
           )}
         >
-          <MathText text={pair.translatedText} />
-          {hovered && (
-            <button
-              type="button"
-              data-testid="bilingual-retranslate"
-              disabled={busy}
-              onClick={fix}
-              className="ml-2 inline-flex translate-y-[1px] items-center gap-0.5 rounded px-1 align-baseline text-2xs text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              {busy ? (
-                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-              ) : (
-                <RotateCcw className="h-3 w-3" aria-hidden="true" />
-              )}
-              重译此段
-            </button>
+          <MathText text={pair.translatedText} cite={cite} />
+          {/* Always in the tree, so the keyboard reaches it: shown on hover, on
+              focus, and while it works. It used to exist only under a mouse. */}
+          <button
+            type="button"
+            data-testid="bilingual-retranslate"
+            disabled={busy}
+            onClick={fix}
+            className={cn(
+              "ml-2 inline-flex translate-y-[1px] select-none items-center gap-0.5 rounded px-1 align-baseline text-2xs text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              hovered || busy ? "opacity-100" : "opacity-0",
+            )}
+          >
+            {busy ? (
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+            ) : (
+              <RotateCcw className="h-3 w-3" aria-hidden="true" />
+            )}
+            重译此段
+          </button>
+          {problem !== null && (
+            <span role="alert" data-testid="bilingual-retranslate-error" className="ml-2 select-none text-2xs text-warning">
+              {problem}
+            </span>
           )}
         </p>
       )}
@@ -789,7 +867,7 @@ function PairItem({
       )}
 
       {pair.status === "untranslated" && (
-        <p className="mt-2 flex select-none items-start gap-1 text-xs text-amber-600">
+        <p className="mt-2 flex select-none items-start gap-1 text-xs text-warning">
           <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
           <span data-testid="bilingual-gap-badge">
             此段未翻译{pair.note !== "" ? `（${pair.note}）` : ""}

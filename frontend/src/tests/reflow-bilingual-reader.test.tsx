@@ -389,6 +389,60 @@ describe("DS-DOC-008 · the reading", () => {
     expect(screen.queryAllByTestId("bilingual-gap-badge")).toHaveLength(1);
   });
 
+  it("counts what was meant to be translated, and names what was kept as it is", async () => {
+    backend({ reading: reading() });
+    render(<App />);
+
+    // Three paragraphs, one of them a reference: the reading is 1 of 2, not 1 of 3.
+    const counts = await screen.findByTestId("bilingual-counts", {}, SLOW);
+    expect(counts).toHaveTextContent("1 / 2 段已译");
+    expect(screen.getByTestId("bilingual-kept")).toHaveTextContent("1 段保持原文");
+  });
+
+  it("offers the single-paragraph retranslation to the keyboard, not only to a mouse", async () => {
+    backend({ reading: reading() });
+    render(<App />);
+
+    const button = await screen.findByTestId("bilingual-retranslate", {}, SLOW);
+    // In the tree without a hover, hidden until it is focused or hovered.
+    expect(button.className).toContain("opacity-0");
+    expect(button.className).toContain("focus-visible:opacity-100");
+    button.focus();
+    expect(button).toHaveFocus();
+  });
+
+  it("links a citation to its bibliography entry and offers the way back", async () => {
+    const user = userEvent.setup();
+    const base = reading();
+    backend({
+      reading: reading({
+        paragraphs: base.paragraphs.map((paragraph) =>
+          paragraph.paragraph_id === "p_1"
+            ? { ...paragraph, source_text: "Deeper networks are harder to train [1].",
+                translated_text: "更深的网络更难训练 [1]。" }
+            : paragraph,
+        ),
+      }),
+    });
+    Element.prototype.scrollIntoView = vi.fn();
+    render(<App />);
+
+    const links = await screen.findAllByTestId("citation-link", {}, SLOW);
+    // In the translation (this fixture's source comes from the IR, which cites
+    // nothing); never inside the bibliography itself.
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute("title", "[1] Kaiming He et al. Deep Residual Learning.");
+    expect(screen.queryByTestId("citation-return")).toBeNull();
+
+    await user.click(links[0]!);
+    const entry = document.querySelector('[data-paragraph-id="p_ref"]')!;
+    expect(entry.scrollIntoView).toHaveBeenCalled();
+    expect(entry).toHaveClass("reflow-cited");
+
+    await user.click(screen.getByTestId("citation-return"));
+    expect(screen.queryByTestId("citation-return")).toBeNull();
+  });
+
   it("says a paragraph is untranslated instead of filling it in (AC-P0-18)", async () => {
     backend({ reading: reading() });
     render(<App />);
@@ -613,16 +667,19 @@ describe("DS-DOC-009 · the theme's contrast (AC-P0-11)", () => {
     // The tokens the application ships (src/index.css), as HSL.
     const background = hsl(0, 0, 100);
     const foreground = hsl(222, 15, 12);
-    const muted = hsl(220, 9, 42);
+    // 34 % since the glass theme: secondary text also sits on translucent panels.
+    const muted = hsl(220, 9, 34);
 
     expect(contrast(foreground, background)).toBeGreaterThanOrEqual(7);
     // The translation is foreground at 80 %, which is the value the criterion
     // freezes — 8.87:1, measured.
     expect(contrast(blend(foreground, background, 0.8), background)).toBeGreaterThanOrEqual(4.5);
-    // Captions and footnotes use the muted token at full strength: at 85 % it is
-    // 4.03:1 and misses the bar (AC_CHANGE_REQUEST 2).
+    // Captions and footnotes use the muted token at full strength. At the old
+    // 42 % an 85 % tint of it was 4.03:1 and missed the bar (AC_CHANGE_REQUEST 2);
+    // at 34 % the tint clears it too.
     expect(contrast(muted, background)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(blend(muted, background, 0.85), background)).toBeLessThan(4.5);
+    expect(contrast(blend(muted, background, 0.85), background)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(blend(hsl(220, 9, 42), background, 0.85), background)).toBeLessThan(4.5);
   });
 });
 

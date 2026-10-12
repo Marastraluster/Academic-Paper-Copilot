@@ -223,7 +223,7 @@ export function FormulaItem({
             {crop}
             <span
               data-testid="reflow-formula-badge"
-              className="mt-1 select-none rounded bg-amber-500/10 px-1.5 py-0.5 text-2xs text-amber-600"
+              className="mt-1 select-none rounded bg-amber-500/10 px-1.5 py-0.5 text-2xs text-warning"
             >
               {rendering.kind === "latex"
                 ? "原版 PDF 剪裁 · 点击切回 LaTeX"

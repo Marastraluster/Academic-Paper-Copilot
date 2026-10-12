@@ -177,7 +177,7 @@ export function LibraryDialog({ open, onClose, initialQuery = "" }: LibraryDialo
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(230,235,242,.45)] p-4 backdrop-blur-[6px]"
+      className="fixed inset-0 z-50 flex items-center justify-center dialog-scrim p-4 backdrop-blur-[6px]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -239,7 +239,7 @@ export function LibraryDialog({ open, onClose, initialQuery = "" }: LibraryDialo
                     "animate-rise rounded-2xl border px-3 py-2.5 transition-[background-color,transform] duration-300 ease-spring hover:-translate-y-px",
                     isCurrent
                       ? "border-primary/30 bg-primary/[.07]"
-                      : "border-[var(--glass-line)] bg-white/60 hover:bg-white/85",
+                      : "border-[var(--glass-line)] bg-[var(--field-bg)] hover:bg-[var(--glass-strong)]",
                   )}
                 >
                   <div className="flex items-start gap-2">
@@ -264,7 +264,7 @@ export function LibraryDialog({ open, onClose, initialQuery = "" }: LibraryDialo
                         {row.has_translation ? (
                           <span
                             data-testid="library-translated"
-                            className="rounded-sm bg-emerald-100 px-1 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300"
+                            className="rounded-sm bg-emerald-100 px-1 text-success dark:bg-emerald-900/30 dark:text-emerald-300"
                           >
                             已翻译
                           </span>
@@ -340,7 +340,7 @@ export function LibraryDialog({ open, onClose, initialQuery = "" }: LibraryDialo
         )}
 
         {error !== null && (
-          <p role="alert" data-testid="library-error" className="text-2xs text-amber-600">
+          <p role="alert" data-testid="library-error" className="text-2xs text-warning">
             {error}
           </p>
         )}

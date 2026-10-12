@@ -215,7 +215,7 @@ export async function generateBilingual(
 }
 
 /** How often a running job's reading is re-read. */
-const POLL_MS = 1500;
+const POLL_MS = 1000;
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {

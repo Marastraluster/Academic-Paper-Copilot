@@ -157,7 +157,7 @@ export function ParserSection() {
           <span
             role={message.ok ? "status" : "alert"}
             data-testid="parser-message"
-            className={message.ok ? "text-2xs text-emerald-700" : "text-2xs text-amber-600"}
+            className={message.ok ? "text-2xs text-success" : "text-2xs text-warning"}
           >
             {message.text}
           </span>

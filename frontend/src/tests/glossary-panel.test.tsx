@@ -9,7 +9,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { GlossaryPanel } from "@/bilingual/GlossaryPanel";
+import { GlossaryPanel, relatedEdits } from "@/bilingual/GlossaryPanel";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { seedDocument, TEST_DOCUMENT_ID } from "@/tests/fixtures";
 
@@ -98,6 +98,67 @@ describe("术语表", () => {
       terms: [TERMS[1], { source: "bottleneck", target: "瓶颈" }],
     });
     expect(calls.some((call) => call.url.endsWith("/bilingual-text/jobs"))).toBe(false);
+  });
+
+  it("points out terms built on the one just changed", async () => {
+    // A family: both translations share the stem being replaced.
+    expect(relatedEdits(
+      [{ source: "shortcut connection", target: "快捷连接" }, { source: "identity shortcut", target: "恒等快捷连接" }],
+      [{ source: "shortcut connection", target: "捷径连接" }, { source: "identity shortcut", target: "恒等快捷连接" }],
+    )).toEqual([{ from: "快捷连接", to: "捷径连接", sources: ["identity shortcut"] }]);
+
+    const user = await open();
+    const target = screen.getByLabelText("术语 1 译文");
+    await user.clear(target);
+    await user.type(target, "残差式学习");
+    // Nothing else in this glossary is built on 「残差学习」, so nothing is suggested.
+    expect(screen.queryByTestId("glossary-related")).toBeNull();
+  });
+
+  it("applies the same substitution to the related terms when asked", async () => {
+    const user = userEvent.setup();
+    const family = [
+      { source: "shortcut connection", target: "快捷连接" },
+      { source: "identity shortcut", target: "恒等快捷连接" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => json({ exists: true, terms: family })));
+    render(<GlossaryPanel documentId={TEST_DOCUMENT_ID} disabled={false} refreshKey="none:0" />);
+    await waitFor(() => expect(screen.getByTestId("glossary-toggle")).toHaveTextContent("术语表 2"));
+    await user.click(screen.getByTestId("glossary-toggle"));
+
+    const target = screen.getByLabelText("术语 1 译文");
+    await user.clear(target);
+    await user.type(target, "捷径连接");
+    expect(screen.getByTestId("glossary-related")).toHaveTextContent(
+      "「identity shortcut」的译法里也含有「快捷连接」",
+    );
+    await user.click(screen.getByTestId("glossary-related-apply"));
+    expect(screen.getByLabelText("术语 2 译文")).toHaveValue("恒等捷径连接");
+    expect(screen.queryByTestId("glossary-related")).toBeNull();
+  });
+
+  it("extracts again into the draft, and saves nothing by itself", async () => {
+    const user = userEvent.setup();
+    const proposed = [{ source: "bottleneck", target: "瓶颈" }];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      calls.push({ method, url: String(url), body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (String(url).endsWith("/glossary/extract")) return json({ terms: proposed });
+      return json({ exists: true, terms: TERMS });
+    }));
+    render(<GlossaryPanel documentId={TEST_DOCUMENT_ID} disabled={false} refreshKey="none:0" />);
+    await waitFor(() => expect(screen.getByTestId("glossary-toggle")).toHaveTextContent("术语表 2"));
+    await user.click(screen.getByTestId("glossary-toggle"));
+    await user.click(screen.getByTestId("glossary-extract"));
+
+    await waitFor(() => expect(screen.getByTestId("glossary-message")).toHaveTextContent("抽取到 1 个术语"));
+    expect(screen.getAllByTestId("glossary-row")).toHaveLength(1);
+    expect(screen.getByLabelText("术语 1 原文")).toHaveValue("bottleneck");
+    const extract = calls.find((call) => call.url.endsWith("/glossary/extract"))!;
+    expect(extract.body).toEqual({ profile_id: "prof_1", target_language: "zh-CN" });
+    // Only the extraction was sent: the glossary itself was not saved.
+    expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
+    expect(screen.getByTestId("glossary-save")).toBeEnabled();
   });
 
   it("is read-only while a translation is running", async () => {

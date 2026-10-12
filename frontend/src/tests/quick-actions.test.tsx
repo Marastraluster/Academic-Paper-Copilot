@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -32,7 +32,7 @@ vi.mock("@/pdf/pdfjs", () => {
 
 import { QUICK_ACTIONS } from "@/stores/workspace";
 import { useWorkspaceStore } from "@/stores/workspace";
-import {seedDocument, seedQaProvider, seedQaSections} from "@/tests/fixtures";
+import {seedDocument, seedQaProvider, seedQaSections, seedSelection} from "@/tests/fixtures";
 import { renderApp } from "@/tests/renderApp";
 
 /**
@@ -151,12 +151,26 @@ describe("DS-FE-001 · AC-35 quick actions", () => {
     expect(screen.getByTestId(/qa-turn-/)).toHaveTextContent("整篇论文");
   });
 
-  it("keeps the selection action disabled while it has no implementation (AC-P1-04)", async () => {
+  it("explains the selection once there is one, and says what it needs before that (AC-P1-04)", async () => {
+    const user = userEvent.setup();
     seedDocument();
     seedQaProvider();
+    replyWith(ANSWER);
     await renderApp();
 
-    expect(screen.getByTestId("quick-action-解释选中内容")).toBeDisabled();
+    const action = screen.getByTestId("quick-action-解释选中内容");
+    expect(action).toBeDisabled();
+    expect(action).toHaveAttribute("title", "先在论文中选中一段文字");
+
+    act(() => {
+      seedSelection(["p_0001", "p_0002"]);
+    });
+    await waitFor(() => expect(action).toBeEnabled());
+    await user.click(action);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    expect(body.scope).toEqual({ type: "selection", paragraph_ids: ["p_0001", "p_0002"] });
   });
 
   it("renders the scope selector, conversation area and composer (AC-06)", async () => {

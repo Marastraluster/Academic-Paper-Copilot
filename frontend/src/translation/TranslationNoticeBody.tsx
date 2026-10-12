@@ -78,7 +78,7 @@ export function TranslationNoticeBody() {
         role="status"
         className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground"
       >
-        <Info className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden="true" />
+        <Info className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
         <span>
           译文页数（{actual}）与原文页数（{expected}）不一致，双语对照的页码可能无法逐页对应。
         </span>
@@ -103,7 +103,7 @@ export function TranslationNoticeBody() {
       </span>
 
       {translation.degraded && (
-        <span data-testid="translation-degraded" className="text-amber-600">
+        <span data-testid="translation-degraded" className="text-warning">
           · 实时进度连接已断开，改用轮询
         </span>
       )}

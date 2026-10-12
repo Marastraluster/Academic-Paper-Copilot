@@ -5,12 +5,13 @@
  * `$…$` source, a table that runs a script, a figure drawn as a blurry crop when
  * the paper's own image exists, a job that never stops polling.
  */
+import { render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { BilingualView } from "@/api/bilingual";
 import type { DocumentIr } from "@/api/ir";
-import { splitMath } from "@/bilingual/reflow/MathText";
-import { sanitizeTableHtml } from "@/bilingual/reflow/Recovered";
+import { MathText, splitMath, styledSegments } from "@/bilingual/reflow/MathText";
+import { sanitizeTableHtml, tableToText } from "@/bilingual/reflow/Recovered";
 import { reflowStream } from "@/bilingual/reflow/stream";
 import { generateBilingual } from "@/bilingual/session";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -80,6 +81,75 @@ describe("table HTML from the parser", () => {
     expect(clean).not.toMatch(/onclick|onerror|script|style|<img|<a |href/);
     expect(clean).toContain("b");
     expect(clean).toContain("c");
+  });
+});
+
+describe("the paper's own emphasis", () => {
+  it("cuts the text at its runs and loses nothing", () => {
+    const text = "Residual Representations. In image recognition, VLAD1 is a representation.";
+    const runs = [
+      { start: 52, end: 53, styles: ["superscript"] },
+      { start: 0, end: 25, styles: ["bold"] },
+      { start: 10, end: 20, styles: ["italic"] }, // overlaps the first: ignored
+      { start: 70, end: 999, styles: ["bold"] }, // past the end: ignored
+    ];
+    const segments = styledSegments(text, runs);
+    expect(segments.map((segment) => segment.text).join("")).toBe(text);
+    expect(segments.filter((segment) => segment.styles.length > 0)).toEqual([
+      { text: "Residual Representations.", styles: ["bold"] },
+      { text: "1", styles: ["superscript"] },
+    ]);
+  });
+
+  it("sets a run-in heading in bold and a footnote mark above the line", () => {
+    const text = "Plain Network. Our baselines2 follow VGG.";
+    const { container } = render(
+      <p>
+        <MathText
+          text={text}
+          runs={[{ start: 0, end: 14, styles: ["bold"] }, { start: 28, end: 29, styles: ["superscript"] }]}
+        />
+      </p>,
+    );
+    expect(container.querySelector("strong")).toHaveTextContent("Plain Network.");
+    expect(container.querySelector("sup")).toHaveTextContent("2");
+    expect(container.textContent).toBe(text);
+  });
+});
+
+describe("table presentation", () => {
+  const cell = (clean: string, row: number, column: number) => {
+    const holder = document.createElement("div");
+    holder.innerHTML = clean;
+    return holder.querySelectorAll("tr")[row]!.children[column]!;
+  };
+
+  it("right-aligns a column only when every value in it is a number", () => {
+    const clean = sanitizeTableHtml(
+      "<table><tr><td>model</td><td>top-1 err.</td><td>FLOPs</td><td>note</td></tr>" +
+        "<tr><td>plain-18</td><td>27.94</td><td>1.8×10<sup>9</sup></td><td>baseline</td></tr>" +
+        "<tr><td>ResNet-34</td><td>25.03</td><td>3.6×10<sup>9</sup></td><td>-</td></tr>" +
+        "<tr><td>ResNet-152</td><td>21.43 ± 0.2</td><td>11.3×10<sup>9</sup></td><td>ours</td></tr></table>",
+    );
+    expect(cell(clean, 1, 1).hasAttribute("data-num")).toBe(true);
+    expect(cell(clean, 0, 1).hasAttribute("data-num")).toBe(true); // the header sits over its digits
+    expect(cell(clean, 1, 0).hasAttribute("data-num")).toBe(false); // row names
+    expect(cell(clean, 1, 3).hasAttribute("data-num")).toBe(false); // words
+  });
+
+  it("leaves a table with merged cells as it was, and drops glyphs that only a PDF font can draw", () => {
+    const merged = sanitizeTableHtml(
+      '<table><tr><td rowspan="2">a</td><td>1</td></tr><tr><td>2</td></tr><tr><td>b</td><td>3</td></tr></table>',
+    );
+    expect(merged).not.toContain("data-num");
+    expect(sanitizeTableHtml("<table><tr><td>\uF8EE3×3, 64\uF8F9×2</td></tr></table>")).toContain(
+      "<td>3×3, 64×2</td>",
+    );
+  });
+
+  it("copies as tab-separated rows a spreadsheet will take", () => {
+    expect(tableToText("<table><tr><td>model</td><td>err.</td></tr><tr><td>ResNet-34</td><td> 25.03 </td></tr></table>"))
+      .toBe("model\terr.\nResNet-34\t25.03");
   });
 });
 
