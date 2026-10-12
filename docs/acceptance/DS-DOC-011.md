@@ -5,7 +5,10 @@
 - **Date:** 2026-09-27
 - **Baseline:** commit `73d7597` / post-DS-DOC-010 (`IR_PIPELINE_VERSION = "5"`, `FORMULA_SCHEMA_VERSION = "1"`, `BILINGUAL_SCHEMA_VERSION = "1"`, initial chunk **304.54 kB** — measured after DS-QA-015's code splitting, 349.14 → 304.54 kB; AC-P0-52's frozen 300.0 kB target is **unmet**, with a proposal to amend the ceiling to 310.0 kB recorded in `DS-QA-015.md` §0.1)
 - **Measurement source:** `.agent/evidence/DS-MINERU-001.md` §7 (and §3–§4 for the fixtures it cites)
-- **Status:** **PROPOSED — 10 P0 · 4 P1 · 2 P2**
+- **Status:** **WITHDRAWN — superseded by [`DS-DOC-011-disposition.md`](DS-DOC-011-disposition.md)**
+  (2026-10-12). Tables are drawn from the parser's HTML, which keeps merged cells; the KaTeX
+  `array` route specified below was never built and will not be. This document is kept as the
+  record of what was proposed and measured (originally: PROPOSED — 10 P0 · 4 P1 · 2 P2).
 
 ---
 

@@ -2,12 +2,13 @@
 
 - **Date:** 2026-10-12
 - **Predecessor:** `docs/acceptance/DS-DOC-011.md` (PROPOSED — 10 P0 · 4 P1 · 2 P2; never frozen)
-- **Status:** **SUPERSEDED IN PART** — the tranche's purpose is delivered by a different mechanism
-  than the one the contract specifies. Four of its criteria are met as written, six are met in
-  intent by other means, and the rest are recorded below as not done, each with its reason.
-- **Decision needed from the maintainer:** accept this disposition, or reinstate the KaTeX route
-  (§3). Nothing here was frozen, so nothing frozen was broken; but a contract that says one thing
-  while the code does another must say so in the open.
+- **Status:** **CLOSED — ACCEPTED AS IMPLEMENTED.** The tranche's purpose is delivered by a different
+  mechanism than the one the contract specifies. Four of its criteria are met as written, six are
+  met in intent by other means, and the rest are recorded below as not done, each with its reason.
+- **Maintainer decision (2026-10-12):** the implemented route — the parser's HTML, sanitized and
+  drawn as a table — is the contract. The KaTeX `array` route of the original document is
+  withdrawn and will not be built. What §3 lists as open stays open as roadmap items, not as debts
+  against this tranche.
 
 ---
 
@@ -92,5 +93,6 @@ run.
    unexercised; a tier that emits `<eq>` runs would currently show their LaTeX source as text.
 4. AC-P0-08 (figure crops) and AC-P1-03 (keyboard step), as above.
 
-If the maintainer prefers the contract as written — KaTeX `array`, spans flattened, an artifact
-under `_cache/tables/` — that is a decision to reinstate it, and items 1–3 above would still stand.
+The contract as written — KaTeX `array`, spans flattened, an artifact under `_cache/tables/` — was
+considered against this and withdrawn (maintainer decision, 2026-10-12): it would give up the
+merged cells the implemented route keeps, and items 1–3 above would have stood either way.
