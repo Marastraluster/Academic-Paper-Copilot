@@ -1,7 +1,7 @@
 # ROADMAP.md — Academic PDF Copilot
 
-- **Status:** Phase 2 starting
-- **Updated:** 2026-09-15
+- **Status:** Phases 0–9 delivered; Phase 10 gated. What is left is listed in the README's Roadmap.
+- **Updated:** 2026-10-12
 - **Planning policy:** Rolling Wave (brief §85) — current phase detailed, later phases outlined.
 - **Phase order:** per brief §81. Updated from the earlier ordering, which placed the PDF
   adapter before the provider layer.
@@ -13,15 +13,19 @@
 | 0 | Repository Audit | ✅ **Complete** — `docs/REPO_AUDIT.md` |
 | 1 | Architecture Review | ✅ **Complete** — `ARCHITECTURE.md`, `API_CONTRACT.md`, `TEST_PLAN.md`, ADR-001/002 |
 | — | Frontend shell (DS-FE-001) | ✅ **Complete** — 38/38 AC PASS, 27/27 tests green |
-| 2 | **LLM Provider** | 🔄 **Current** |
-| 3 | PDFMathTranslate Adapter | ⏳ |
-| 4 | PDF Reader | ⏳ |
-| 5 | Document Intelligence | ⏳ |
-| 6 | Academic Context Translation | ⏳ |
-| 7 | Translation Task System | ⏳ |
-| 8 | AI Paper Assistant | ⏳ |
-| 9 | UI Polish | ⏳ |
+| 2 | LLM Provider | ✅ **Complete** — DS-BE-001 … 007 |
+| 3 | PDFMathTranslate Adapter | ✅ **Complete** — DS-PDF-001 |
+| 4 | PDF Reader | ✅ **Complete** — DS-FE-002/003; panes navigate independently (sync not built) |
+| 5 | Document Intelligence | ✅ **Complete** — DS-DOC-001 … 005; MinerU as an optional second extractor (ADR-003) |
+| 6 | Academic Context Translation | ✅ **Complete** — DS-CTX-001 … 004; per-paper glossary for the paragraph reading |
+| 7 | Translation Task System | ✅ **Complete** — tasks, SSE progress, cancel, retry; resumable paragraph jobs |
+| 8 | AI Paper Assistant | ✅ **Complete** — DS-QA-001 … 015 |
+| 9 | UI Polish | ✅ **Complete** — settings, glass shell, light and dark themes |
 | 10 | Desktop Packaging | ⏳ **gated on ADR-002 + Rust toolchain** |
+
+The phase sections below are kept as they were written — the plan each phase started from, not a
+description of what was built. The acceptance documents in `docs/acceptance/` are the record of
+that.
 
 DS-FE-001 delivered the application shell ahead of Phase 4 so that every later feature has a
 place to land. It is not redone.

@@ -36,6 +36,7 @@ the whole of the network surface.
 
 ## Contents
 
+- [What's new](#whats-new)
 - [What it does](#what-it-does)
 - [Screenshots](#screenshots)
 - [Quick start](#quick-start)
@@ -49,6 +50,35 @@ the whole of the network surface.
 - [Contributing](#contributing)
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
+
+## What's new
+
+**2026-10-12**
+
+- **A translation appears a paragraph at a time.** A batch's answer is read as the model writes it,
+  and each paragraph is shown the moment its own translation is whole and checked — not when the
+  other fourteen are. The first batch is three paragraphs, so the opening arrives in seconds, and
+  the glossary is read *beside* the translation instead of before it. Measured on a paper never
+  translated before (92 paragraphs, a reasoning model): the first paragraph at 11 s, the screen
+  updating 45 times on the way to the end, where it used to update once per batch.
+- **A reading survives the paper being parsed again.** A converter upgrade rebuilds a MinerU parse
+  from the result already on disk; and when an extraction changes, paragraphs whose text did not
+  change keep their translations — only what is really new is translated again. (Before this, both
+  cases asked for the whole paper to be paid for twice.)
+- **`[24]` is a link.** In the paragraph reading a citation shows its reference on hover, scrolls
+  to it on click, and offers the way back.
+- **Tables fit the column, or scroll at their own size.** After a MinerU parse a table is laid out
+  by a measured rule — as extracted, with wrapped prose cells, scaled down to 70 % and never below
+  11 px, or at natural size in its own scroller — with numeric columns aligned and a copy-as-table
+  control. The paper's own bold, italic and superscript are drawn too.
+- **Dark theme**, chosen in settings or followed from the system. Body, secondary and status text
+  are checked at WCAG AA in both themes from the shipped tokens. A PDF page stays as printed.
+- **Smaller things.** 解释选中内容 works once there is a selection; the glossary can be extracted
+  again (as a proposal) and points out related terms when one is changed; the translated count no
+  longer counts the bibliography; 重译此段 is reachable from the keyboard.
+
+Details, and what was *not* done, are in the [Roadmap](#roadmap) and in
+[`DS-DOC-011-disposition.md`](docs/acceptance/DS-DOC-011-disposition.md).
 
 ## What it does
 
@@ -66,17 +96,21 @@ because they are keyed to the document's content rather than to a database row.
 
 **Copilot.** Asking about a paper no longer displaces the outline: the question box has its own
 column on the right, toggled from the top bar. It answers from retrieved paragraphs, cites them,
-and says when the evidence is insufficient rather than guessing.
+and says when the evidence is insufficient rather than guessing. Select a passage and
+**解释选中内容** asks about exactly that.
 
 **Translation.** Whole-paper translation through a local PDF translation kernel, producing a
 translated document and a 2N-page interleaved original/translation artifact for export. The
-paragraph-by-paragraph reading is translated as a **background job**: it fills in batch by batch
-(two at a time by default, at most four), every batch is written to disk as it lands, **停止** keeps
-what has already been paid for, and a stopped or failed run offers **继续翻译剩余段落** instead of
-starting over. Any one paragraph can be re-translated on its own — one call, from the paragraph's
-own hover control. Every paper also gets its own **术语表**: the terms it is translated with, listed
-with their translations and corrected in one place. Saving a correction spends nothing and says how
-many paragraphs it affected; only those are translated again.
+paragraph-by-paragraph reading is translated as a **background job**: it fills in **paragraph by
+paragraph** — each one shown and written to disk as the model finishes it, in batches of which two
+run at once by default (at most four) — **停止** keeps what has already been paid for, and a stopped
+or failed run offers **继续翻译剩余段落** instead of starting over. Any one paragraph can be
+re-translated on its own — one call, from the paragraph's own control. Every paper also gets its own
+**术语表**: the terms it is translated with, listed with their translations and corrected in one
+place. It is read alongside the translation rather than ahead of it; paragraphs translated before it
+arrived that disagree with it are translated once more. Saving a correction spends nothing and says
+how many paragraphs it affected; only those are translated again. A reading is kept when the paper
+is parsed again: paragraphs whose text is unchanged carry their translations across.
 
 **逐段对照 · Paragraph-aligned reading.** The paper reflowed into one readable column: the
 prose set at a reading measure with each paragraph's translation directly beneath it, and
@@ -84,7 +118,8 @@ everything whose pixels *are* the content — figures, tables, display formulas,
 carried as crops of the paper's own pages, magnified from the vector source rather than
 stretched. Headings come from the sections the extractor derived (never from the layout class
 that calls a table sub-label a title), the bibliography is kept in the original and says so,
-and captions are placed by convention — figures below, tables above. The translation is
+and captions are placed by convention — figures below, tables above. A citation such as `[24]` is
+a link to its bibliography entry, with the way back offered after the jump. The translation is
 generated once per paper, in bounded batches, and cached by content hash.
 
 **公式重建 · Formulas, typeset.** A display formula in a PDF is a picture: its extracted text
@@ -106,7 +141,9 @@ and a paper can be re-parsed by it instead: real LaTeX for display *and* inline 
 come back as tables, headings the built-in extractor misses. **MinerU is reached over HTTP and never
 installed into this application**; its tier (`flash` · `basic` · `standard` · `advanced`) is the
 profile's model field, and it is never the default. What it returned is kept beside the document, so
-a later rebuild costs no second parse. Everything it recovers is badged **MinerU 识别**, and one
+when the converter improves the paper is rebuilt from it automatically — no second parse. Its tables
+are fitted to the column or scrolled at their own size, and the paper's own bold, italic and
+superscript are drawn. Everything it recovers is badged **MinerU 识别**, and one
 click puts the paper's own crop back — a parser can be wrong, and the page is always one click away.
 Pointing it at mineru.net means uploading the paper to their server, and the setting says so before
 you save it.
@@ -132,6 +169,7 @@ never to the database**: the client is only ever told whether a key is set, and 
 is optional, because a local OpenAI-compatible server needs none. A second screen lets each kind of
 work use a different profile — cheap and fast for 翻译, stronger for 问答 — with everything following
 the default until you say otherwise; the choices persist as profile ids, never as key material.
+**外观** switches between light, dark, and the system's own choice.
 
 > **Language note.** The interface is Chinese-first (简体中文). The Reader Overview can be
 > generated in Chinese or English; the rest of the UI is not yet localised.
@@ -394,22 +432,23 @@ assets/             project marks
 
 ## Roadmap
 
-- **Tables typeset** — a table is the opposite case to a formula: its structure is *extracted*,
-  not guessed, so it can be typeset with no model at all. The contract is frozen
-  ([`DS-DOC-011`](docs/acceptance/DS-DOC-011.md), 10 P0 · 4 P1 · 2 P2) and not yet implemented;
-  measured, 24 of 24 fixture tables convert and parse, 14 of the 20 that pair typeset at the
-  0.70 floor, and the other 6 keep the paper's crop because a 19-column table would land at
-  5.7 px.
-- **Inline formatting runs** — the paper's own bold and italic inside a paragraph. The built-in
-  extractor flattens text spans, so a run-in heading like **Abstract** arrives as plain text;
-  measured, 22–57 % of the lines of the papers here carry a styled span, which is the difference
-  between a text dump and the printed page. A MinerU parse already delivers the runs, so this is
-  the first place the second backend may pay for itself.
-- **Citation linking** — `[24]` resolved to the reference it names, in the reflowed column.
+- **Tables for papers the built-in extractor reads** — after a MinerU parse a table is drawn as a
+  table (merged cells kept, numeric columns aligned, fitted to the column or scrolled at its own
+  size; [`DS-DOC-011` disposition](docs/acceptance/DS-DOC-011-disposition.md)). The built-in
+  extractor still flattens a table to text, so those papers show the paper's crop.
+- **Inline formatting from the built-in extractor** — the paper's own bold, italic and superscript
+  are carried and drawn after a MinerU parse; the built-in extractor still flattens text spans.
+- **Checking what a web-searching model returns** — with DeepSeek's search, later and similar
+  papers all arrive flagged 待核对, because the search returns secondary pages and the model
+  answers with canonical links. Confirming them needs a second lookup, which is a decision about
+  what leaves the machine, not a missing line of code.
 - **Persisted run telemetry** — tokens and latency per generation, so the library's record can
   say what a translation cost instead of staying silent about it.
+- **Synchronised panes** — the original and its translation scroll independently today.
+- **Notes across papers** — search and export are per paper; import is not built.
 - **Localised interface** — the UI is Chinese-first today; English and others to follow.
 - **English UI screenshots and documentation pass.**
+- **Desktop packaging** — gated on reopening ADR-002 and a Rust toolchain.
 
 ## Contributing
 
