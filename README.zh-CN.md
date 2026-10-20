@@ -153,6 +153,22 @@ start.bat
 
 `<数据目录>` 在 Windows 上是 `%LOCALAPPDATA%\AcademicPDFCopilot`，在 Linux/macOS 上是 `~/.local/share/AcademicPDFCopilot`。
 
+### 4. 桌面版（Windows）
+
+同一套程序也可以作为桌面应用运行：一个窗口、一个由窗口自己启停的本地后端，不需要浏览器，也不需要第二个终端。完整说明见 [docs/DESKTOP.md](docs/DESKTOP.md)。
+
+```powershell
+pwsh ./scripts/build-desktop.ps1      # 图标 → 前端 → 冻结后端 → 安装包
+```
+
+产物在 `desktop/release/`：NSIS 安装包，以及一份同内容的 zip（解压即用，适合不能安装软件的机器）。改代码时的调试启动：
+
+```powershell
+pwsh ./scripts/run-desktop.ps1        # 或直接双击 start-desktop.bat
+```
+
+桌面版由后端自己托管前端（同源），因此没有 CORS、没有构建期协商端口，窗口就是唯一客户端。
+
 ## 配置模型服务
 
 打开顶栏的**设置**，新建一条配置：名称、服务地址（endpoint）、模型名，以及可选的 API Key。**测试连接**只在点击时探测端点并报告结果；打开界面、选中配置、编辑字段都不会探测。

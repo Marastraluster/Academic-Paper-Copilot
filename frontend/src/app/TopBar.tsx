@@ -2,6 +2,7 @@ import { useState } from "react";
 import { BookOpen, Library, MessageSquare, PanelLeft, Search, Settings, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { WindowControls } from "@/app/WindowControls";
 import {
   Tooltip,
   TooltipContent,
@@ -109,8 +110,10 @@ export function TopBar() {
         </TooltipContent>
       </Tooltip>
 
-      {/* Product mark, with the open paper's name beneath it. */}
-      <div className="flex min-w-0 shrink items-center gap-2 pr-1">
+      {/* Product mark, with the open paper's name beneath it.
+          `app-drag`: in the desktop shell this is one of the two places the
+          window can be grabbed (see src/index.css). */}
+      <div className="app-drag flex min-w-0 shrink items-center gap-2 pr-1">
         <span
           aria-hidden="true"
           className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[10px] bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgba(255,255,255,.35),0_4px_12px_hsl(var(--primary)/.35)]"
@@ -132,9 +135,12 @@ export function TopBar() {
         </div>
       </div>
 
-      <div className="min-w-2 flex-1" />
+      {/* Drag handles. Both gaps are empty boxes, so the window can be moved by
+          the space between control groups without any control losing its own
+          mouse events. */}
+      <div className="app-drag min-w-2 flex-1 self-stretch" />
       <ReaderModeSwitch />
-      <div className="min-w-2 flex-1" />
+      <div className="app-drag min-w-2 flex-1 self-stretch" />
 
       {/* Search — the library's other door. It was an inert field for four
           tasks; a reader who wants a different paper will reach for the control
@@ -244,6 +250,10 @@ export function TopBar() {
         </TooltipTrigger>
         <TooltipContent>设置</TooltipContent>
       </Tooltip>
+
+      {/* Desktop shell only (renders nothing in a browser): the window is
+          frameless, so these *are* the title-bar buttons. */}
+      <WindowControls />
 
     </header>
 

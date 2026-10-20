@@ -1,0 +1,57 @@
+appId: com.sciprograms.academicpdfcopilot
+productName: Academic PDF Copilot
+copyright: Copyright © 2026 SciPrograms
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the shell's own code ships inside the asar. The backend, the built
+# frontend and the model cache are real directories on disk (extraResources):
+# a child process cannot execute out of an asar, and an ONNX model is read by a
+# native library that expects a path.
+files:
+  - electron/**/*
+  - package.json
+  - "!**/*.map"
+
+extraResources:
+  - from: ../frontend/dist
+    to: web
+  # The bundle's own directory (`backend-dist/apc-backend/`) becomes
+  # `resources/backend/`, so the executable sits at a predictable path next to
+  # its `_internal` directory — the one-dir layout PyInstaller expects.
+  - from: backend-dist/apc-backend
+    to: backend
+  - from: babeldoc-cache
+    to: babeldoc_cache
+
+asar: true
+compression: normal
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    # A zip of the unpacked tree, not the NSIS `portable` target. That target
+    # re-extracts the whole ~1 GB application into %TEMP% on every launch: first
+    # paint took ~35 s here, and a second double-click while the first copy is
+    # still unpacking looks like nothing happened at all. A zip is the same
+    # promise ("no installer") without the unpack — the user extracts once.
+    - target: zip
+      arch: [x64]
+  icon: assets/icon.ico
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Academic PDF Copilot
+  uninstallDisplayName: Academic PDF Copilot
+  # The library, the notes and the provider profiles are the user's; an
+  # uninstall must not silently take them.
+  deleteAppDataOnUninstall: false

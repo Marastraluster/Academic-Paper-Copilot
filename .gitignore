@@ -61,3 +61,17 @@ Thumbs.db
 # The agent workspace: task briefs, raw model output, run logs. Not the product,
 # and it carries local measurement detail that does not belong in a public tree.
 .agent/
+
+# --- Desktop shell (desktop/) ---
+# Build outputs only. The Electron sources, the electron-builder config and the
+# generated icon stay in the tree: a desktop build should need no image
+# toolchain, and the shell is source, not an artefact.
+desktop/node_modules/
+desktop/backend-dist/
+desktop/babeldoc-cache/
+desktop/release/
+desktop/.pyinstaller/
+desktop/*.log
+desktop/.smoke-*
+desktop/.smoke-data*
+desktop/.src.*

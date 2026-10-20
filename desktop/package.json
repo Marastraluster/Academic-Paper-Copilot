@@ -1,0 +1,24 @@
+{
+  "name": "academic-pdf-copilot-desktop",
+  "productName": "Academic PDF Copilot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop shell for Academic PDF Copilot: one window, one local backend.",
+  "author": {
+    "name": "SciPrograms"
+  },
+  "license": "AGPL-3.0",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "icon": "node scripts/make-icon.mjs",
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win nsis portable"
+  },
+  "devDependencies": {
+    "electron": "^44.9.1",
+    "electron-builder": "^26.15.3",
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.5"
+  }
+}

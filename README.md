@@ -257,6 +257,27 @@ start.bat
 `<data dir>` is `%LOCALAPPDATA%\AcademicPDFCopilot` on Windows and
 `~/.local/share/AcademicPDFCopilot` on Linux/macOS.
 
+### 4. Desktop app (Windows)
+
+The same application ships as a single desktop program: one window, one local backend started
+and stopped by the shell, no browser and no second terminal. See
+[docs/DESKTOP.md](docs/DESKTOP.md) for the full account.
+
+```powershell
+pwsh ./scripts/build-desktop.ps1      # icon → frontend → frozen backend → installer
+```
+
+Output lands in `desktop/release/`: an NSIS installer and a zip of the same app for machines where
+nothing may be installed (extract once, run the `.exe` inside). To run the desktop shell from
+source while changing code:
+
+```powershell
+pwsh ./scripts/run-desktop.ps1        # or: start-desktop.bat
+```
+
+The desktop build serves the frontend from the backend's own origin, so there is no CORS
+configuration, no port to agree on at build time, and the window is the only client.
+
 ## Configuring a model service
 
 Open the top bar's **设置** screen and add a profile: a name, the endpoint, the model, and —

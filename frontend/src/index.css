@@ -549,3 +549,24 @@ input[type="range"] {
   0%, 35% { background-color: hsl(var(--primary) / 0.16); box-shadow: 0 0 0 6px hsl(var(--primary) / 0.16); }
   100% { background-color: transparent; box-shadow: 0 0 0 6px transparent; }
 }
+
+/*
+ * Desktop shell: the packaged window is frameless, so the top bar is the title
+ * bar.
+ *
+ * `-webkit-app-region: drag` is applied to *deliberate* grab areas — the product
+ * mark and the flexible gaps between control groups — and never to the bar as a
+ * whole. A drag region swallows the mouse events of everything inside it, and on
+ * a `backdrop-filter` surface (`.glass`) the children of a drag region do not
+ * reliably receive hover or click at all. Handing the drag to a few empty boxes
+ * keeps every real control behaving like a web control, which is also why no
+ * `no-drag` cascade is needed here.
+ */
+.app-drag {
+  -webkit-app-region: drag;
+}
+.app-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+
