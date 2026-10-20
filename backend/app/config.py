@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     #: accidental enormous uploads rather than a security boundary.
     max_upload_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
 
+    #: Directory holding a built frontend (``index.html`` + ``assets/``). Unset in
+    #: web mode — Vite serves the shell there. The desktop launcher sets
+    #: ``FRONTEND_DIR`` so one process owns both the API and the window's origin.
+    frontend_dir: Path | None = None
+
     @field_validator("host")
     @classmethod
     def _reject_non_loopback(cls, value: str) -> str:

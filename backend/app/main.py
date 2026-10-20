@@ -182,6 +182,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     if instrumentation.enabled():
         app.include_router(instrumentation.router, prefix="/api")
+
+    # Desktop mode: one process serves both the API and the built frontend, so the
+    # window loads same-origin and CORS never applies. Registered last, so the
+    # SPA catch-all sits behind every /api route. A web-mode run leaves
+    # `frontend_dir` unset and nothing is mounted.
+    if resolved.frontend_dir is not None:
+        from app.webapp import mount_frontend
+
+        mount_frontend(app, resolved.frontend_dir)
     return app
 
 
