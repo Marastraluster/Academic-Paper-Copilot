@@ -260,7 +260,9 @@ start.bat
 ### 4. Desktop app (Windows)
 
 The same application ships as a single desktop program: one window, one local backend started
-and stopped by the shell, no browser and no second terminal. See
+and stopped by the shell, no browser and no second terminal. Prebuilt downloads are on the
+[releases page](https://github.com/Marastraluster/Academic-Paper-Copilot/releases/latest) — an
+installer, and a zip for machines where nothing may be installed. See
 [docs/DESKTOP.md](docs/DESKTOP.md) for the full account.
 
 ```powershell

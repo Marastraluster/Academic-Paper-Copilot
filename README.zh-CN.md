@@ -155,7 +155,7 @@ start.bat
 
 ### 4. 桌面版（Windows）
 
-同一套程序也可以作为桌面应用运行：一个窗口、一个由窗口自己启停的本地后端，不需要浏览器，也不需要第二个终端。完整说明见 [docs/DESKTOP.md](docs/DESKTOP.md)。
+同一套程序也可以作为桌面应用运行：一个窗口、一个由窗口自己启停的本地后端，不需要浏览器，也不需要第二个终端。现成安装包在 [Releases](https://github.com/Marastraluster/Academic-Paper-Copilot/releases/latest)：安装版，以及给不能装软件的机器的 zip。完整说明见 [docs/DESKTOP.md](docs/DESKTOP.md)。
 
 ```powershell
 pwsh ./scripts/build-desktop.ps1      # 图标 → 前端 → 冻结后端 → 安装包
